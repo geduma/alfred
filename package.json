@@ -1,0 +1,65 @@
+{
+  "name": "alfred-personal",
+  "version": "2.0.0",
+  "description": "Personal AI Agent - Multicanal, agnóstico a LLM, con SOUL.md",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src --ext .ts",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f alfred"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.1",
+    "@google/generative-ai": "^0.19.0",
+    "axios": "^1.7.4",
+    "cheerio": "^1.0.0-rc.12",
+    "grammy": "^1.27.1",
+    "js-yaml": "^4.1.0",
+    "marked": "^11.1.1",
+    "openai": "^4.68.1",
+    "pino": "^8.18.0",
+    "sqlite3": "^5.1.7",
+    "undici": "^6.13.0",
+    "whatsapp-web.js": "^1.25.1",
+    "ws": "^8.17.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "keywords": [
+    "ai-agent",
+    "llm",
+    "multicanal",
+    "telegram",
+    "whatsapp",
+    "personal-assistant"
+  ],
+  "author": "Señor Felipe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/alfred-personal.git"
+  }
+}

@@ -1,0 +1,11 @@
+dist/
+node_modules/
+*.log
+.env
+.DS_Store
+workspace/db/*.db
+workspace/logs/*
+workspace/memory/*
+workspace/config/alfred.json
+workspace/config/whatsapp-session.json
+workspace/config/SOUL.md

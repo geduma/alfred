@@ -1,0 +1,34 @@
+version: '3.9'
+
+services:
+  alfred:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: alfred-agent
+    hostname: alfred
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:18789:18789"
+
+    volumes:
+      - ~/.alfred-personal:/workspace
+
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CONFIG_PATH: /workspace/config/alfred.json
+
+    networks:
+      - alfred-net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
+networks:
+  alfred-net:
+    driver: bridge
