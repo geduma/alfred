@@ -122,11 +122,11 @@ Reduces the system prompt size by 20-45% before every LLM call using pure-TypeSc
 
 ### Layer 3: Vector Store (RAG) with LanceDB
 
-Provides cross-session semantic memory via vector search. Every message is embedded and stored; before each response, Alfred retrieves the most relevant chunks from past conversations.
+Provides cross-session semantic memory via vector search. Every message is embedded and stored locally using Transformers.js (ONNX, no external API); before each response, Alfred retrieves the most relevant chunks from past conversations.
 
-- **Embedding provider**: Agnostic — `openai-compatible` (Ollama, RunPod, LocalAI), `openai`, `ollama` (native API)
-- **Provider reference**: Can reuse existing LLM provider's `api_url`/`api_key` via `provider_ref`. Only `openai-compatible` and `openai` providers support embeddings — Anthropic and Gemini are ignored with a warning
-- **Latency added**: ~100-300ms (search + embedding), offset by 2-4s LLM savings from smaller prompts
+- **Embedding provider**: Local ONNX via `@xenova/transformers` — no external APIs, no API keys, zero cost. Falls back gracefully if unavailable.
+- **Supported models**: `Xenova/all-MiniLM-L6-v2` (384-dim, ~80MB) or `Xenova/bge-small-en-v1.5` (384-dim, ~33MB) — configurable in `alfred.json`
+- **Latency added**: ~50-200ms (search + embedding), offset by 2-4s LLM savings from smaller prompts
 - **Token reduction**: ~46% vs non-RAG sliding window approach
 
 ### Snapshots
@@ -153,10 +153,9 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
       "type": "lancedb",
       "path": "/workspace/memory/vectors",
       "embedding": {
-        "type": "openai-compatible",
-        "provider_ref": "ollama-runpod",
-        "model": "nomic-embed-text",
-        "dimension": 768
+        "type": "transformers",
+        "model": "Xenova/bge-small-en-v1.5",
+        "dimension": 384
       },
       "ingest": { "on_message": true, "max_chunk_size": 512 },
       "search": { "top_k": 5, "min_score": 0.5 }

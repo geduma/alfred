@@ -142,6 +142,44 @@ class OpenAICompatibleEmbedder implements Embedder {
   }
 }
 
+class TransformersEmbedder implements Embedder {
+  public readonly dimension: number;
+  private model: string;
+  private pipeline: any = null;
+  private pipelinePromise: Promise<any> | null = null;
+
+  constructor(config: { model: string; dimension: number }) {
+    this.model = config.model || 'Xenova/all-MiniLM-L6-v2';
+    this.dimension = config.dimension || 384;
+  }
+
+  async embed(text: string): Promise<number[]> {
+    const pipe = await this.getPipeline();
+    const result = await pipe(text, { pooling: 'mean', normalize: true });
+    return Array.from(result.data);
+  }
+
+  private async getPipeline(): Promise<any> {
+    if (this.pipeline) return this.pipeline;
+    if (this.pipelinePromise) return this.pipelinePromise;
+
+    this.pipelinePromise = this.initPipeline();
+    try {
+      const pipe = await this.pipelinePromise;
+      this.pipeline = pipe;
+      return pipe;
+    } catch (e) {
+      this.pipelinePromise = null;
+      throw e;
+    }
+  }
+
+  private async initPipeline(): Promise<any> {
+    const { pipeline } = await import('@xenova/transformers');
+    return await pipeline('feature-extraction', this.model);
+  }
+}
+
 export function createEmbedder(
   embeddingConfig: EmbeddingConfig,
   allProviders?: Record<string, ProviderConfig>
@@ -205,6 +243,9 @@ function buildEmbedder(config: EmbeddingConfig): Embedder {
       }
       const key = apiKey || '';
       return new OpenAICompatibleEmbedder({ api_url: apiUrl, api_key: key, model, dimension });
+    }
+    case 'transformers': {
+      return new TransformersEmbedder({ model, dimension });
     }
     default:
       throw new Error(`Unsupported embedding type: ${config.type}`);

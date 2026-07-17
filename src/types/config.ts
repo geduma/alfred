@@ -71,7 +71,7 @@ export interface PromptCompressionConfig {
 }
 
 export interface EmbeddingConfig {
-  type: 'ollama' | 'openai' | 'openai-compatible';
+  type: 'ollama' | 'openai' | 'openai-compatible' | 'transformers';
   model: string;
   dimension: number;
   config?: {

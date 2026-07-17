@@ -198,7 +198,7 @@ Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, e
 | Provider no conecta | Verificar API key en alfred.json |
 | Telegram no responde | Verificar bot_token y allow_from |
 | Archivo no se crea | Verificar permisos en `/workspace/files` |
-| Vector store falla | Verificar que el embedder endpoint este disponible o deshabilitar `memory.vector_store.enabled: false` |
+| Vector store falla | Verificar que haya suficiente RAM disponible o deshabilitar `memory.vector_store.enabled: false` |
 | Health alert sin mensaje | Verificar `health_monitor.severity_threshold` — con `"warn"` captura todo, con `"error"` solo graves |
 
 ---
