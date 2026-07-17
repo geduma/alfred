@@ -123,6 +123,10 @@
     "job": {
       "enabled": true,
       "config": {}
+    },
+    "system": {
+      "enabled": true,
+      "config": {}
     }
   },
   "database": {

@@ -80,7 +80,7 @@ async function main(): Promise<void> {
 
   const gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager);
 
-  const tools = createTools(configLoader, gateway);
+  const tools = createTools(configLoader);
   gateway.setTools(tools);
   getLogger().info({ tools: tools.map(t => t.tool.name) }, 'Tools registered');
 

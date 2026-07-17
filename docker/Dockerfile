@@ -23,6 +23,9 @@ RUN npm ci --omit=dev
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/
 
+RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
+    chmod +x /usr/local/bin/alfred-cli
+
 RUN mkdir -p /workspace/{db,files,skills,config,logs,memory}
 
 RUN chown -R node:node /app /workspace

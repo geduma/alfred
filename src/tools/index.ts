@@ -4,9 +4,9 @@ import { ExecTool } from './exec';
 import { FileOpsTool } from './file-ops';
 import { WebTool } from './web';
 import { JobSchedulerTool } from './job-scheduler';
-import { Gateway } from '../gateway';
+import { SystemTool } from './system';
 
-export function createTools(config: ConfigLoader, gateway?: Gateway): ToolHandler[] {
+export function createTools(config: ConfigLoader): ToolHandler[] {
   const tools: ToolHandler[] = [];
   const enabledTools = config.enabledTools;
 
@@ -22,8 +22,12 @@ export function createTools(config: ConfigLoader, gateway?: Gateway): ToolHandle
     tools.push(new WebTool(config.allConfig.tools.web?.config as any));
   }
 
-  if (enabledTools.includes('job') && gateway) {
+  if (enabledTools.includes('job')) {
     tools.push(new JobSchedulerTool());
+  }
+
+  if (enabledTools.includes('system')) {
+    tools.push(new SystemTool(config));
   }
 
   return tools;
