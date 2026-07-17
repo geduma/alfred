@@ -127,6 +127,10 @@
     "system": {
       "enabled": true,
       "config": {}
+    },
+    "health": {
+      "enabled": true,
+      "config": {}
     }
   },
   "memory": {
@@ -146,11 +150,9 @@
       "path": "/workspace/memory/vectors",
       "embedding": {
         "type": "openai-compatible",
+        "provider_ref": "ollama-runpod",
         "model": "nomic-embed-text",
-        "dimension": 768,
-        "config": {
-          "api_url": "http://localhost:11434/v1"
-        }
+        "dimension": 768
       },
       "ingest": {
         "on_message": true,
@@ -198,6 +200,16 @@
     "audit_logging": {
       "enabled": true,
       "log_file": "/workspace/logs/audit.log"
+    }
+  },
+  "health_monitor": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "severity_threshold": "warn",
+    "notifications": {
+      "telegram": {
+        "enabled": true
+      }
     }
   }
 }

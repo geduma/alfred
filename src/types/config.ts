@@ -116,4 +116,5 @@ export interface AlfredConfig {
   memory?: MemoryConfig;
   logging: LoggingConfig;
   security: SecurityConfig;
+  health_monitor?: import('./notification').HealthMonitorConfig;
 }

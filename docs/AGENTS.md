@@ -50,12 +50,15 @@ src/
 │   ├── vector-store/
 │   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
 │   │   └── embedder.ts      ← Agnostic embedder factory (Ollama, OpenAI, OpenAI-compatible)
-│   └── snapshot.ts           ← Session snapshots for long-term memory checkpoints
-├── tools/                    ← 4 universal tools
+│   ├── snapshot.ts           ← Session snapshots for long-term memory checkpoints
+│   ├── health-monitor.ts     ← Periodic log scanner, error categorizer, alert generator
+│   └── notification.ts      ← Alert delivery (Telegram, with email-ready architecture)
+├── tools/                    ← 5 universal tools (exec, file_ops, web, job, health)
 │   ├── exec.ts               ← Shell with allowlist/denylist
 │   ├── file-ops.ts           ← File CRUD with multi-path permission rules
 │   ├── web.ts                ← Unified web search + fetch (action: "search" | "fetch")
-│   └── job-scheduler.ts      ← Create/list/update/cancel reminders
+│   ├── job-scheduler.ts      ← Create/list/update/cancel reminders
+│   └── health.ts             ← Query health monitor, view findings, trigger checks
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
@@ -101,7 +104,7 @@ Single file: `workspace/config/alfred.json`
 - `memory.snapshots` → Session snapshot config (auto interval, max per session)
 - `security.gateway_auth_token` → Minimum 16 characters
 
-## 4 Universal Tools
+## 5 Universal Tools
 
 | Tool | File | Domain |
 |---|---|---|
@@ -109,6 +112,7 @@ Single file: `workspace/config/alfred.json`
 | `file_ops` | `src/tools/file-ops.ts` | Read/write/edit/delete/list files in permitted paths |
 | `web` | `src/tools/web.ts` | Web search (DuckDuckGo) and URL fetch (cheerio) |
 | `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/ |
+| `health` | `src/tools/health.ts` | Query health monitor findings, trigger checks |
 
 ## Personality System
 
@@ -229,6 +233,50 @@ Key implementation files:
 // Inline Ollama native API (no provider_ref, no config override from LLM provider)
 "embedding": { "type": "ollama", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "http://localhost:11434" } }
 ```
+
+## Health Monitor
+
+Alfred includes a periodic **health monitor** that scans application logs for errors and warnings:
+
+- **Interval**: Configurable via `health_monitor.check_interval_minutes` (default: 60 min)
+- **Severity threshold**: `warn` (level >= 40) or `error` (level >= 50) — configurable
+- **Categories**: `vector_store`, `llm_provider`, `telegram`, `database`, `tool_execution`, `session`, `snapshot`, `job_scheduler`, `other`
+- **State persistence**: Tracks last scanned byte position across restarts (`workspace/memory/health-monitor-state.json`)
+- **Alert delivery**: Telegram (via `channelManager.sendMessage`). Email-ready architecture via `NotificationService`.
+- **LLM-accessible**: The `health` tool allows Alfred to respond to queries like _"health findings"_ or _"trigger a health check now"_
+
+### Health Tool
+
+```json
+{
+  "name": "health",
+  "actions": ["status", "findings", "check", "configure"],
+  "filters": { "severity_threshold": "warn|error", "category": "string" }
+}
+```
+
+**Available via CLI/Telegram:** `health findings`, `health findings severity=error`, `health check`
+
+### Config
+
+```json
+{
+  "health_monitor": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "severity_threshold": "warn",
+    "notifications": {
+      "telegram": { "enabled": true }
+    }
+  }
+}
+```
+
+Key implementation files:
+- `src/services/health-monitor.ts` — Log scanner, error categorization, state management, alert triggering
+- `src/services/notification.ts` — Alert delivery to Telegram and future email channels
+- `src/tools/health.ts` — LLM-accessible health tool
+- `src/types/notification.ts` — TypeScript interfaces
 
 ## Snapshots
 

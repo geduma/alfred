@@ -154,9 +154,9 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
       "path": "/workspace/memory/vectors",
       "embedding": {
         "type": "openai-compatible",
+        "provider_ref": "ollama-runpod",
         "model": "nomic-embed-text",
-        "dimension": 768,
-        "config": { "api_url": "http://localhost:11434/v1" }
+        "dimension": 768
       },
       "ingest": { "on_message": true, "max_chunk_size": 512 },
       "search": { "top_k": 5, "min_score": 0.5 }
@@ -170,7 +170,31 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
 }
 ```
 
-## 4 Universal Tools
+### Layer 4: Health Monitor
+
+Periodically scans application logs for errors and warnings, categorizes them, and sends alerts via Telegram.
+
+- **Log scanner**: Reads `alfred.log` from last known position, parses JSON entries, filters by severity
+- **Categories**: `vector_store`, `llm_provider`, `telegram`, `database`, `tool_execution`, `session`, `snapshot`, `job_scheduler`, `other`
+- **Alert delivery**: Telegram (configurable `chat_id`), with email-ready architecture
+- **Interval**: Configurable via `health_monitor.check_interval_minutes` (default: 60 min)
+- **LLM-accessible**: The `health` tool lets Alfred respond to queries like _"health findings"_ or _"trigger a health check now"_
+- **Stateful**: Tracks last scanned byte position across restarts
+
+```json
+{
+  "health_monitor": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "severity_threshold": "warn",
+    "notifications": {
+      "telegram": { "enabled": true }
+    }
+  }
+}
+```
+
+## 5 Universal Tools
 
 | Tool | Domain |
 |---|---|
@@ -178,6 +202,7 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
 | `file_ops` | Read/write/edit/list files within permitted paths |
 | `web` | Web search (DuckDuckGo) and URL content fetch |
 | `job` | Schedule one-time and recurring reminders |
+| `health` | Query health monitor findings and trigger checks |
 
 ## Personality System
 
@@ -219,14 +244,16 @@ Supported: OpenAI-compatible (Ollama, RunPod, LocalAI), Anthropic Claude, OpenAI
 ```
 src/
 ├── index.ts                  ← Entry point
-├── gateway.ts                ← WebSocket + session store + job runner + context compressor + RAG + prompt compression
+├── gateway.ts                ← WebSocket + session store + job runner + context compressor + RAG + prompt compression + health monitor
 ├── agent/                    ← LLM router, prompt builder, providers
 ├── services/
 │   ├── context-compressor.ts ← Sliding window + summarization for context management
 │   ├── prompt-compressor.ts  ← Telegraph English rule-based compression
 │   ├── vector-store/         ← LanceDB vector store + agnostic embedder
-│   └── snapshot.ts           ← Session checkpoints
-├── tools/                    ← 4 universal tools
+│   ├── snapshot.ts           ← Session checkpoints
+│   ├── health-monitor.ts     ← Log scanner + alert generator
+│   └── notification.ts      ← Alert delivery (Telegram)
+├── tools/                    ← 5 universal tools (exec, file_ops, web, job, health)
 ├── channels/                 ← Telegram, WhatsApp, CLI
 ├── db/                       ← SQLite + session persistence (with summary field)
 ├── security/                 ← Rate limiter, auth

@@ -19,19 +19,32 @@ class OllamaEmbedder implements Embedder {
     this.dimension = config.dimension || 768;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const res = await axios.post(
-      `${this.baseUrl}/api/embeddings`,
-      { model: this.model, prompt: text },
-      { timeout: 10000 }
-    );
+   async embed(text: string): Promise<number[]> {
+    const url = `${this.baseUrl}/api/embeddings`;
+    try {
+      const res = await axios.post(
+        url,
+        { model: this.model, prompt: text },
+        { timeout: 10000 }
+      );
 
-    const embedding = res.data?.embedding || res.data?.embeddings?.[0];
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('Invalid embedding response from Ollama');
+      const embedding = res.data?.embedding || res.data?.embeddings?.[0];
+      if (!embedding || !Array.isArray(embedding)) {
+        throw new Error(`Invalid embedding response from Ollama: missing embedding field in response data`);
+      }
+
+      return embedding;
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(
+          `Ollama embedding failed [${error.response.status}]: ${JSON.stringify(error.response.data)}`
+        );
+      }
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error(`Ollama embedding connection refused at ${url}`);
+      }
+      throw new Error(`Ollama embedding error: ${error.message || error}`);
     }
-
-    return embedding;
   }
 }
 
@@ -46,22 +59,35 @@ class OpenAIEmbedder implements Embedder {
     this.dimension = config.dimension || 1536;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const res = await axios.post(
-      'https://api.openai.com/v1/embeddings',
-      { model: this.model, input: text },
-      {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-        timeout: 15000,
+   async embed(text: string): Promise<number[]> {
+    const url = 'https://api.openai.com/v1/embeddings';
+    try {
+      const res = await axios.post(
+        url,
+        { model: this.model, input: text },
+        {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          timeout: 15000,
+        }
+      );
+
+      const embedding = res.data?.data?.[0]?.embedding;
+      if (!embedding || !Array.isArray(embedding)) {
+        throw new Error(`Invalid embedding response from OpenAI: missing embedding in response data`);
       }
-    );
 
-    const embedding = res.data?.data?.[0]?.embedding;
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('Invalid embedding response from OpenAI');
+      return embedding;
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(
+          `OpenAI embedding failed [${error.response.status}]: ${JSON.stringify(error.response.data)}`
+        );
+      }
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error(`OpenAI embedding connection refused at ${url}`);
+      }
+      throw new Error(`OpenAI embedding error: ${error.message || error}`);
     }
-
-    return embedding;
   }
 }
 
@@ -78,25 +104,41 @@ class OpenAICompatibleEmbedder implements Embedder {
     this.dimension = config.dimension || 768;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const res = await axios.post(
-      `${this.baseUrl}/embeddings`,
-      { model: this.model, input: text },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
+   async embed(text: string): Promise<number[]> {
+    const url = `${this.baseUrl}/embeddings`;
+    try {
+      const res = await axios.post(
+        url,
+        { model: this.model, input: text },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }
+      );
+
+      const embedding = res.data?.data?.[0]?.embedding || res.data?.embedding;
+      if (!embedding || !Array.isArray(embedding)) {
+        throw new Error(`Invalid embedding response from ${this.baseUrl}: no embedding array in response`);
       }
-    );
 
-    const embedding = res.data?.data?.[0]?.embedding;
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('Invalid embedding response from OpenAI-compatible API');
+      return embedding;
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(
+          `Embedding failed [${error.response.status}] at ${url}: ${JSON.stringify(error.response.data)}`
+        );
+      }
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error(`Embedding connection refused at ${url}`);
+      }
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        throw new Error(`Embedding timed out at ${url} (model: ${this.model})`);
+      }
+      throw new Error(`Embedding error at ${url}: ${error.message || error}`);
     }
-
-    return embedding;
   }
 }
 

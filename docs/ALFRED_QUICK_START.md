@@ -98,6 +98,7 @@ Edita `~/.alfred-personal/config/alfred.json`:
 ✅ Discord/Slack  
 ✅ Llamadas por voz  
 ✅ Embeddings + búsqueda semántica  
+✅ Health monitor — detección automática de fallos y alertas por Telegram  
 
 ---
 
@@ -177,6 +178,16 @@ sqlite3 ~/.alfred-personal/db/alfred.db
 cat ~/.alfred-personal/config/alfred.json | jq
 ```
 
+### Health Monitor automático
+
+Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, envía una alerta por Telegram.
+
+**Comandos disponibles** (via Telegram o CLI):
+- `health findings` — ver todos los hallazgos recientes
+- `health findings severity=error` — solo errores graves
+- `health check` — forzar escaneo inmediato
+- `health status` — estado del monitor
+
 ---
 
 ## TROUBLESHOOTING
@@ -187,6 +198,8 @@ cat ~/.alfred-personal/config/alfred.json | jq
 | Provider no conecta | Verificar API key en alfred.json |
 | Telegram no responde | Verificar bot_token y allow_from |
 | Archivo no se crea | Verificar permisos en `/workspace/files` |
+| Vector store falla | Verificar que el embedder endpoint este disponible o deshabilitar `memory.vector_store.enabled: false` |
+| Health alert sin mensaje | Verificar `health_monitor.severity_threshold` — con `"warn"` captura todo, con `"error"` solo graves |
 
 ---
 

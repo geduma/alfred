@@ -12,8 +12,6 @@
 ✅ 11 tests pass (`jest`)
 ✅ Build successful (`npm run build`)
 
-**Phase 12-14 (Prompt Compression + RAG + Snapshots) pending `npm install @lancedb/lancedb` and `npm run build` verification.**
-
 ---
 
 ## Phases
@@ -125,13 +123,26 @@
 - [x] `src/gateway.ts` — Auto-snapshot hook after each interaction
 - [x] Manual snapshots available via future tool integration
 
+### ✅ Phase 15: Health Monitor + Alerting
+- [x] `src/services/health-monitor.ts` — Log scanner (parses alfred.log, filters by severity, categorizes findings)
+- [x] `src/services/notification.ts` — Alert delivery (Telegram, with email-ready architecture)
+- [x] `src/tools/health.ts` — LLM-accessible health tool (status, findings, check)
+- [x] `src/types/notification.ts` — HealthMonitorConfig + HealthFinding interfaces
+- [x] `src/config/loader.ts` — HealthMonitorConfigSchema
+- [x] `src/gateway.ts` — Health monitor initialization + periodic scan
+- [x] `src/tools/index.ts` — Health tool registration
+- [x] `workspace/config/alfred.json` — health_monitor section + health tool
+- [x] Auto-disable: vector store gracefully disabled when embedder unavailable
+- [x] Embedder test: `initialize()` now probes embedder before enabling vector store
+- [x] Detailed error logging: all embedder errors include URL, HTTP status, response data, connection refused, timeouts
+
 ---
 
 ## Key Architecture Decisions
 
 | Decision | Choice |
 |---|---|
-| **Tools** | 4 universal tools: exec, file_ops, web, job (replaces 7 specific tools) |
+| **Tools** | 5 universal tools: exec, file_ops, web, job, health (replaces 7 specific tools) |
 | **Personality** | SOUL.md (base) + preferences.md (LLM-managed) + alfred-rules.md (protocol) |
 | **Config** | Auto-created from .example on startup if missing |
 | **Sessions** | Serialized to workspace/memory/sessions/ — survive restarts |
@@ -142,3 +153,5 @@
 | **Language** | All response strings are in English; LLM controls language via preferences.md |
 | **User Name** | Dynamic from preferences.md (`user_name` field). Asked on first interaction if unknown. No hardcoded names in prompts. |
 | **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
+| **Vector Store Embedding** | Uses `provider_ref` to reuse LLM provider's api_url/api_key. Tested on init — graceful disable if unavailable. Detailed error logging with URL, HTTP status, connection refused, timeout. |
+| **Health Monitor** | Periodic log scanner (60 min default). Categorizes errors (vector_store, llm_provider, telegram, database, etc.). Alerts via Telegram. Exposed as `health` tool to LLM. |

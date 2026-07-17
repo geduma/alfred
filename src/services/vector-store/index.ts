@@ -56,9 +56,27 @@ export class VectorStoreManager {
         getLogger().info({ path: this.config.path }, 'Vector store created');
       }
 
+      // test embedding to verify embedder is reachable
+      try {
+        await this.embedder.embed('ping');
+        getLogger().info({ dimension: this.embedder.dimension }, 'Embedder verified');
+      } catch (embedError: any) {
+        getLogger().warn(
+          { error: { message: embedError.message, stack: embedError.stack }, embeddingType: this.config.embedding.type, model: this.config.embedding.model },
+          'Embedder test failed — vector store disabled'
+        );
+        this.db.close();
+        this.db = null;
+        this.table = null;
+        throw embedError;
+      }
+
       this.initialized = true;
     } catch (error: any) {
-      getLogger().error({ error: error.message }, 'Failed to initialize vector store');
+      getLogger().error(
+        { error: { message: error.message, code: error.code, stack: error.stack } },
+        'Failed to initialize vector store'
+      );
       throw error;
     }
   }
@@ -86,7 +104,10 @@ export class VectorStoreManager {
         ]);
       }
     } catch (error: any) {
-      getLogger().warn({ error: error.message }, 'Failed to ingest into vector store');
+      getLogger().warn(
+        { error: { message: error.message, code: error.code, stack: error.stack } },
+        'Failed to ingest into vector store'
+      );
     }
   }
 
@@ -118,7 +139,10 @@ export class VectorStoreManager {
           },
         }));
     } catch (error: any) {
-      getLogger().warn({ error: error.message }, 'Vector search failed');
+      getLogger().warn(
+        { error: { message: error.message, code: error.code, stack: error.stack } },
+        'Vector search failed'
+      );
       return [];
     }
   }

@@ -5,8 +5,10 @@ import { FileOpsTool } from './file-ops';
 import { WebTool } from './web';
 import { JobSchedulerTool } from './job-scheduler';
 import { SystemTool } from './system';
+import { HealthTool } from './health';
+import { HealthMonitor } from '../services/health-monitor';
 
-export function createTools(config: ConfigLoader): ToolHandler[] {
+export function createTools(config: ConfigLoader, healthMonitor?: HealthMonitor): ToolHandler[] {
   const tools: ToolHandler[] = [];
   const enabledTools = config.enabledTools;
 
@@ -28,6 +30,10 @@ export function createTools(config: ConfigLoader): ToolHandler[] {
 
   if (enabledTools.includes('system')) {
     tools.push(new SystemTool(config));
+  }
+
+  if (enabledTools.includes('health') && healthMonitor) {
+    tools.push(new HealthTool(healthMonitor));
   }
 
   return tools;

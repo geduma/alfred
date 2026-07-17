@@ -132,6 +132,15 @@ const MemoryConfigSchema = z.object({
   snapshots: SnapshotConfigSchema.optional(),
 });
 
+const HealthMonitorConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  check_interval_minutes: z.number().positive().default(60),
+  severity_threshold: z.enum(['warn', 'error']).default('warn'),
+  notifications: z.object({
+    telegram: z.object({ enabled: z.boolean().default(false), chat_id: z.string().optional() }).optional(),
+  }).default({}),
+});
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
@@ -146,6 +155,7 @@ const AlfredConfigSchema = z.object({
   memory: MemoryConfigSchema.optional(),
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
+  health_monitor: HealthMonitorConfigSchema.optional(),
 });
 
 export class ConfigLoader {
@@ -255,5 +265,9 @@ export class ConfigLoader {
     return Object.entries(this.config.tools)
       .filter(([_, t]) => t.enabled)
       .map(([name]) => name);
+  }
+
+  get healthMonitor() {
+    return this.config.health_monitor;
   }
 }

@@ -1,3 +1,4 @@
+import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
@@ -14,6 +15,8 @@ import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
 import { SnapshotManager } from './services/snapshot';
 import { approximateSystemPromptTokens } from './utils/token-counter';
+import { HealthMonitor } from './services/health-monitor';
+import { NotificationService } from './services/notification';
 
 interface GatewayRequest {
   type: 'req';
@@ -38,6 +41,7 @@ export class Gateway {
   private promptCompressor: PromptCompressor;
   private vectorStore: VectorStoreManager | null = null;
   private snapshotManager: SnapshotManager | null = null;
+  private healthMonitor: HealthMonitor | null = null;
 
   constructor(
     config: ConfigLoader,
@@ -65,10 +69,21 @@ export class Gateway {
     if (snapshotConfig?.enabled) {
       this.snapshotManager = new SnapshotManager(snapshotConfig);
     }
+
+    const healthConfig = config.healthMonitor;
+    if (healthConfig?.enabled) {
+      const notifier = new NotificationService(healthConfig, this.channelManager);
+      const logDir = config.logging.config.file_path || '/workspace/logs';
+      this.healthMonitor = new HealthMonitor(healthConfig, notifier, path.join(logDir, 'alfred.log'));
+    }
   }
 
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
+  }
+
+  getHealthMonitor(): HealthMonitor | null {
+    return this.healthMonitor;
   }
 
   getJobScheduler(): JobSchedulerTool {
@@ -87,12 +102,22 @@ export class Gateway {
         await this.vectorStore.initialize();
         getLogger().info('Vector store initialized');
       } catch (error: any) {
-        getLogger().warn({ error: error.message }, 'Vector store init failed, RAG disabled');
+        getLogger().warn(
+          { error: { message: error.message, code: error.code, stack: error.stack } },
+          'Vector store init failed, RAG disabled'
+        );
         this.vectorStore = null;
       }
     }
 
     getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
+
+    if (this.healthMonitor) {
+      this.healthMonitor.start();
+      const newTools = createTools(this.config, this.healthMonitor);
+      this.setTools(newTools);
+      getLogger().info({ tools: newTools.map(t => t.tool.name) }, 'Tools updated with health monitor');
+    }
 
     await this.channelManager.startAll();
   }
