@@ -89,10 +89,10 @@ Edita `~/.alfred-personal/config/alfred.json`:
 ✅ Leer/escribir archivos en `/workspace/files/`  
 ✅ Ejecutar comandos shell  
 
-### Próxima Versión (v1.5)
+### v1.5
 ✅ WhatsApp  
 ✅ Dashboard web  
-✅ Skills personalizados  
+✅ Skills personalizados — SKILL.md via `file_ops`
 
 ### v2.0
 ✅ Discord/Slack  
@@ -146,9 +146,11 @@ Edit `/workspace/config/SOUL.md` para cambiar.
 ├── config/
 │   ├── alfred.json        ← Configuración principal
 │   ├── SOUL.md            ← Personalidad de Alfred
+│   ├── secrets.env        ← Secretos para skills (IMAP, APIs, etc.)
 │
 ├── files/                 ← Tus archivos (puede leer/escribir)
-├── skills/                ← Skills personalizados (.md)
+├── skills/
+│   └── custom/            ← Skills personalizados (SKILL.md)
 ├── db/
 │   └── alfred.db          ← Base de datos (conversaciones, audit)
 └── logs/                  ← Logs de auditoría

@@ -19,6 +19,8 @@ function ensureConfigFiles(): void {
   const pairs = [
     { example: path.resolve(__dirname, '../system/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
     { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
+    { example: path.resolve(__dirname, '../system/secrets.env.example'), target: path.resolve(__dirname, '../workspace/config/secrets.env') },
+    { example: path.resolve(__dirname, '../system/preferences.md.example'), target: path.resolve(__dirname, '../workspace/memory/personality/preferences.md') },
   ];
 
   for (const { example, target } of pairs) {

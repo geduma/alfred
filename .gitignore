@@ -9,3 +9,4 @@ workspace/memory/*
 workspace/config/alfred.json
 workspace/config/whatsapp-session.json
 workspace/config/SOUL.md
+workspace/config/secrets.env

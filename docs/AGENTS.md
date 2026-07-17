@@ -114,8 +114,43 @@ Single file: `workspace/config/alfred.json`
 
 - **SOUL.md** (`workspace/config/SOUL.md`) — Core identity, user-editable only
 - **preferences.md** (`workspace/memory/personality/preferences.md`) — Dynamic preferences managed by the LLM via `file_ops`
-- **alfred-rules.md** (`config/alfred-rules.md`) — File access rules + personality protocol + job protocol, injected into system prompt
+- **alfred-rules.md** (`config/alfred-rules.md`) — File access rules + personality protocol + job protocol + skill implementation protocol, injected into system prompt
 - The LLM reads/writes `preferences.md` when the user requests behavior changes (language, tone, formality, etc.)
+
+## Skill Implementation Protocol
+
+When the user requests new functionality via any channel, Alfred's default
+response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/`.
+
+- **SKILL.md format**: YAML frontmatter (name, description, metadata) + markdown body (overview, when to use, how to use)
+- **Tools used**: The skill instructs Alfred how to orchestrate `exec`, `file_ops`, `web`, `job`, and `system` tools
+- **Fallback**: If the functionality requires capabilities beyond these tools, Alfred explains why and requests code implementation
+- **Rule location**: `system/alfred-rules.md` → section "Skill Implementation Protocol"
+
+Skills directories:
+```
+/workspace/skills/
+├── custom/    ← User-requested custom skills
+├── system/    ← System-level skills
+├── web/       ← Web-oriented skills
+└── files/     ← File-oriented skills
+```
+
+## Secrets Management
+
+Skill credentials (API keys, tokens, passwords for external services) are stored
+in `workspace/config/secrets.env`. This file is **read-only** for Alfred (enforced
+by `file-ops.ts` permissions on `/workspace/config`).
+
+- **Not for LLM config**: Provider API keys remain in `alfred.json`
+- **SKILL.md references**: Skills declare required env vars via `metadata.requires.env`
+- **exec tool**: Supports an `env` parameter — secrets are passed to the child
+  process and automatically sanitized from logs (`src/tools/exec.ts`)
+- **Protocol**: Documented in `system/alfred-rules.md` → "Secrets Management Protocol"
+- **Template**: `system/secrets.env.example` — auto-created on first startup
+
+Alfred must never output secret values in responses or log them. The `exec` tool's
+`env` parameter is the only approved channel for passing secrets to commands.
 
 ## Job Scheduler
 

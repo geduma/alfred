@@ -19,6 +19,7 @@ export class ExecTool implements ToolHandler {
         command: { type: 'string' },
         cwd: { type: 'string' },
         timeout: { type: 'number' },
+        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables (secrets are sanitized from logs)' },
       },
       required: ['command'],
     },
@@ -38,12 +39,14 @@ export class ExecTool implements ToolHandler {
     const command = params.command as string;
     const cwd = (params.cwd as string) || process.cwd();
     const timeout = (params.timeout as number || this.timeout / 1000) * 1000;
+    const env = params.env as Record<string, string> | undefined;
 
     if (!command) {
       return { success: false, output: '', error: 'Command is required' };
     }
 
-    if (!this.isCommandAllowed(command)) {
+    const sanitizedCommand = this.sanitizeCommand(command, env);
+    if (!this.isCommandAllowed(sanitizedCommand)) {
       return { success: false, output: '', error: 'Command denied by policy' };
     }
 
@@ -55,6 +58,7 @@ export class ExecTool implements ToolHandler {
         timeout,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
+        env: env ? { ...process.env, ...env } : undefined,
       });
 
       return {
@@ -71,6 +75,17 @@ export class ExecTool implements ToolHandler {
         duration_ms: Date.now() - startTime,
       };
     }
+  }
+
+  private sanitizeCommand(command: string, env?: Record<string, string>): string {
+    if (!env) return command;
+    let sanitized = command;
+    for (const value of Object.values(env)) {
+      if (value) {
+        sanitized = sanitized.split(value).join('***');
+      }
+    }
+    return sanitized;
   }
 
   private isCommandAllowed(command: string): boolean {
