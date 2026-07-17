@@ -1,97 +1,137 @@
-# AGENTS.md — Instrucciones para Agentes IA
+# AGENTS.md — Instructions for AI Agents
 
-## Proyecto: Alfred Pennyworth — Agente IA Personal Multicanal
+## Project: Alfred Pennyworth — Multi-channel Personal AI Agent
 
 ---
 
 ## Stack
 
 - **Runtime:** Node.js 22 LTS
-- **Lenguaje:** TypeScript 5.4+ (strict mode)
-- **Base de datos:** SQLite3 embebido
+- **Language:** TypeScript 5.4+ (strict mode)
+- **Database:** SQLite3 embedded
 - **WebSocket:** ws@8.17
 - **Logging:** pino@8.18
-- **Validación:** zod@3.22
+- **Validation:** zod@3.22
 - **Test:** Jest + ts-jest
 - **Docker:** node:22-alpine (~180MB)
 
-## Comandos
+## Commands
 
 ```bash
-npm run build        # Compilar TypeScript
-npm run dev          # Desarrollo con hot-reload (tsx watch)
-npm start            # Producción
+npm run build        # Compile TypeScript
+npm run dev          # Development with hot-reload (tsx watch)
+npm start            # Production
 npm test             # Jest
 npm run lint         # ESLint
 npm run docker:build # docker compose build
 npm run docker:up    # docker compose up -d
 ```
 
-## Estructura
+## Project Structure
 
 ```
 src/
-├── index.ts              ← Entry point (wiring de todos los módulos)
-├── gateway.ts            ← WebSocket server (puerto 18789)
-├── config/loader.ts      ← Config loader con validación Zod
+├── index.ts                  ← Entry point (wires all modules, auto-creates configs)
+├── gateway.ts                ← WebSocket server (port 18789) + SessionStore + JobRunner
+├── config/loader.ts          ← Config loader with Zod validation
 ├── agent/
-│   ├── llm-router.ts     ← Router con fallback chain automático
-│   ├── prompt-builder.ts ← System prompt + SOUL.md injection
-│   ├── soul-loader.ts    ← Carga de personalidad
-│   └── providers/        ← Abstraction layer de LLM
-│       ├── base.ts       ← Provider abstracto
-│       ├── factory.ts    ← Factory pattern
-│       ├── openai-compatible.ts
-│       ├── anthropic.ts
-│       └── gemini.ts
-├── tools/                ← Tool suite
-│   ├── exec.ts           ← Shell con allowlist/denylist
-│   ├── file-ops.ts       ← CRUD archivos confinado a /workspace/files
-│   ├── web-search.ts     ← DuckDuckGo scraping
-│   └── web-fetch.ts      ← HTML fetch + cheerio parsing
-├── channels/             ← Canales de comunicación
+│   ├── llm-router.ts         ← Router with automatic fallback chain
+│   ├── prompt-builder.ts     ← System prompt = SOUL.md + preferences.md + rules.md + base
+│   ├── soul-loader.ts        ← Personality file loader
+│   └── providers/            ← LLM abstraction layer
+│       ├── base.ts           ← Abstract provider
+│       ├── factory.ts        ← Factory pattern
+│       ├── openai-compatible.ts  ← Ollama, RunPod, LocalAI
+│       ├── anthropic.ts      ← Claude
+│       └── gemini.ts         ← Gemini
+├── tools/                    ← 4 universal tools
+│   ├── exec.ts               ← Shell with allowlist/denylist
+│   ├── file-ops.ts           ← File CRUD with multi-path permission rules
+│   ├── web.ts                ← Unified web search + fetch (action: "search" | "fetch")
+│   └── job-scheduler.ts      ← Create/list/update/cancel reminders
+├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
-│   ├── telegram.ts       ← Grammy bot
-│   ├── whatsapp.ts       ← whatsapp-web.js
-│   └── cli.ts            ← Readline interactivo
-├── db/                   ← Persistencia SQLite
-│   ├── schema.sql        ← 5 tablas
-│   ├── index.ts          ← Init + migrations
-│   └── repositories/     ← Sessions, Messages, Commands
+│   ├── telegram.ts           ← Grammy bot
+│   ├── whatsapp.ts           ← whatsapp-web.js
+│   └── cli.ts                ← Interactive readline
+├── db/                       ← Persistence
+│   ├── schema.sql            ← 5 tables
+│   ├── index.ts              ← Init + migrations
+│   ├── session-store.ts      ← Session serialization to workspace/memory/sessions/
+│   └── repositories/         ← Sessions, Messages, Commands
 ├── security/
-│   ├── rate-limiter.ts   ← Rate limiting por usuario/canal
-│   └── auth.ts           ← Gateway token + ACL
-├── types/                ← TypeScript interfaces
-└── utils/logger.ts       ← Pino logger estructurado
+│   ├── rate-limiter.ts       ← Rate limiting by user/channel
+│   └── auth.ts               ← Gateway token + ACL
+├── types/                    ← TypeScript interfaces
+└── utils/logger.ts           ← Pino structured logger
 ```
 
-## Convenciones de Código
+## Code Conventions
 
 - TypeScript strict: `strict: true`, `noUnusedLocals`, `noUnusedParameters`
-- Clases exportadas, interfaces en `src/types/`
-- Sin comentarios en código
-- Errores se manejan con try/catch y se loggean con `getLogger()`
-- Nombres de archivos: kebab-case (ej: `web-search.ts`, `file-ops.ts`)
-- Las tools implementan la interfaz `ToolHandler` de `src/types/tool.ts`
-- Los canales implementan la interfaz `Channel` de `src/types/channel.ts`
+- Exported classes, interfaces in `src/types/`
+- No comments in code
+- Errors handled with try/catch and logged via `getLogger()`
+- File names: kebab-case (e.g. `web-search.ts`, `file-ops.ts`)
+- Tools implement `ToolHandler` from `src/types/tool.ts`
+- Channels implement `Channel` from `src/types/channel.ts`
 
-## Configuración
+## Configuration
 
-Un solo archivo: `workspace/config/alfred.json`
+Single file: `workspace/config/alfred.json`
 
-- `llm.primary_provider` → Provider activo
-- `llm.fallback_providers` → Cadena de fallback
-- `providers` → Lista completa de providers (cada uno con `type`, `enabled`, `model`, `config`)
-- `tools` → Configuración individual por tool
-- `channels` → Canal + permisos (ACL via `allow_from`)
-- `database` → Ruta SQLite + settings
-- `security.gateway_auth_token` → Token mínimo 16 caracteres
+- `llm.primary_provider` → Active provider
+- `llm.fallback_providers` → Fallback chain
+- `providers` → Full provider list (each with `type`, `enabled`, `model`, `config`)
+- `tools` → Per-tool configuration
+- `channels` → Channel + permissions (ACL via `allow_from`)
+- `database` → SQLite path + settings
+- `security.gateway_auth_token` → Minimum 16 characters
+
+## 4 Universal Tools
+
+| Tool | File | Domain |
+|---|---|---|
+| `exec` | `src/tools/exec.ts` | Shell commands with allowlist/denylist |
+| `file_ops` | `src/tools/file-ops.ts` | Read/write/edit/delete/list files in permitted paths |
+| `web` | `src/tools/web.ts` | Web search (DuckDuckGo) and URL fetch (cheerio) |
+| `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/ |
+
+## Personality System
+
+- **SOUL.md** (`workspace/config/SOUL.md`) — Core identity, user-editable only
+- **preferences.md** (`workspace/memory/personality/preferences.md`) — Dynamic preferences managed by the LLM via `file_ops`
+- **alfred-rules.md** (`config/alfred-rules.md`) — File access rules + personality protocol + job protocol, injected into system prompt
+- The LLM reads/writes `preferences.md` when the user requests behavior changes (language, tone, formality, etc.)
+
+## Job Scheduler
+
+- Reminders stored as JSON in `workspace/memory/jobs/{id}.json`
+- Supports: one-time (`delay_minutes`), daily, weekly (`day_of_week`), monthly (`day_of_month`)
+- Recurring jobs auto-compute next fire time
+- JobRunner in gateway checks every 30 seconds
+- Notifications sent to the originating channel (or all channels if not specified)
+- User can list, update, and cancel any job
+
+## Session Persistence
+
+- Sessions stored in `workspace/memory/sessions/{sessionId}.json`
+- Loaded from disk on startup, saved after each interaction
+- Survives container restarts
+
+## Auto-Created Configs
+
+On first startup, if `workspace/config/alfred.json` or `workspace/config/SOUL.md` don't exist, they are auto-created from:
+- `config/alfred.json.example`
+- `config/SOUL.md.example`
+
+The user is prompted to edit these files with real API keys.
 
 ## Testing
 
-- Tests unitarios en `tests/unit/`
-- Usar Jest con `ts-jest`
-- Correr: `npm test`
+- Unit tests in `tests/unit/`
+- Jest with `ts-jest`
+- Run: `npm test`
 
 ## Docker
 
@@ -106,14 +146,14 @@ docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml logs -f alfred
 ```
 
-Volumen: `~/.alfred-personal:/workspace`
+Volume: `~/.alfred-personal:/workspace`
 
-## Notas para Agentes
+## Agent Notes
 
-1. **No modificar** `workspace/config/alfred.json` con valores reales de API keys — es template
-2. **No instalar** dependencias adicionales sin evaluar si son necesarias
-3. **Preservar** el patrón de Provider Factory al agregar nuevos LLM providers
-4. **Preservar** la interfaz `Channel` al agregar nuevos canales
-5. Si se agrega un nuevo tool, registrarlo en `src/tools/index.ts`
-6. **Compilar siempre** (`npx tsc --noEmit`) antes de finalizar cambios
-7. **Ejecutar tests** (`npm test`) para verificar que no se rompe nada
+1. **Do not modify** `workspace/config/alfred.json` with real API keys — it's committed as template
+2. **Do not install** additional dependencies without evaluating necessity
+3. **Preserve** the Provider Factory pattern when adding new LLM providers
+4. **Preserve** the `Channel` interface when adding new channels
+5. Register new tools in `src/tools/index.ts`
+6. **Always compile** (`npx tsc --noEmit`) before finalizing changes
+7. **Run tests** (`npm test`) to verify nothing is broken

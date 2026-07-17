@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
@@ -13,11 +14,33 @@ import { initializeLogger, getLogger } from './utils/logger';
 
 const CONFIG_PATH = process.env.CONFIG_PATH || path.resolve(__dirname, '../workspace/config/alfred.json');
 
+function ensureConfigFiles(): void {
+  const pairs = [
+    { example: path.resolve(__dirname, '../config/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
+    { example: path.resolve(__dirname, '../config/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
+  ];
+
+  for (const { example, target } of pairs) {
+    if (!fs.existsSync(target) && fs.existsSync(example)) {
+      const dir = path.dirname(target);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.copyFileSync(example, target);
+      console.log(`\n⚠️  Created ${target} from template.`);
+      console.log(`   Edit this file with your API keys and settings before using Alfred.\n`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════╗');
   console.log('║     Alfred Pennyworth — AI Assistant      ║');
   console.log('║          Version 2.0.0                    ║');
   console.log('╚═══════════════════════════════════════════╝');
+
+  console.log('\n🔧 Checking configuration files...');
+  ensureConfigFiles();
 
   const configLoader = new ConfigLoader(CONFIG_PATH);
   const config = configLoader.allConfig;
@@ -46,7 +69,7 @@ async function main(): Promise<void> {
 
   const gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager);
 
-  const tools = createTools(configLoader);
+  const tools = createTools(configLoader, gateway);
   gateway.setTools(tools);
   getLogger().info({ tools: tools.map(t => t.tool.name) }, 'Tools registered');
 

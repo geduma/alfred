@@ -2,10 +2,11 @@ import { ToolHandler } from '../types/tool';
 import { ConfigLoader } from '../config/loader';
 import { ExecTool } from './exec';
 import { FileOpsTool } from './file-ops';
-import { WebSearchTool } from './web-search';
-import { WebFetchTool } from './web-fetch';
+import { WebTool } from './web';
+import { JobSchedulerTool } from './job-scheduler';
+import { Gateway } from '../gateway';
 
-export function createTools(config: ConfigLoader): ToolHandler[] {
+export function createTools(config: ConfigLoader, gateway?: Gateway): ToolHandler[] {
   const tools: ToolHandler[] = [];
   const enabledTools = config.enabledTools;
 
@@ -17,12 +18,12 @@ export function createTools(config: ConfigLoader): ToolHandler[] {
     tools.push(new FileOpsTool(config.allConfig.tools.file_ops?.config as any));
   }
 
-  if (enabledTools.includes('web_search')) {
-    tools.push(new WebSearchTool(config.allConfig.tools.web_search?.config as any));
+  if (enabledTools.includes('web')) {
+    tools.push(new WebTool(config.allConfig.tools.web?.config as any));
   }
 
-  if (enabledTools.includes('web_fetch')) {
-    tools.push(new WebFetchTool(config.allConfig.tools.web_fetch?.config as any));
+  if (enabledTools.includes('job') && gateway) {
+    tools.push(new JobSchedulerTool());
   }
 
   return tools;

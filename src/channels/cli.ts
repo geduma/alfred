@@ -32,7 +32,7 @@ export class CLIChannel implements Channel {
       }
 
       if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
-        console.log('\n👋 Hasta luego, Señor Felipe.\n');
+        console.log('\n👋 Goodbye, Señor Felipe.\n');
         this.running = false;
         this.rl?.close();
         return;

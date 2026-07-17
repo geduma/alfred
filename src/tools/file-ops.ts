@@ -3,13 +3,25 @@ import path from 'path';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 
+interface PathRule {
+  path: string;
+  permissions: 'r' | 'rw';
+}
+
+const DEFAULT_RULES: PathRule[] = [
+  { path: '/workspace/files', permissions: 'rw' },
+  { path: '/workspace/memory', permissions: 'rw' },
+  { path: '/workspace/skills', permissions: 'rw' },
+  { path: '/workspace/config', permissions: 'r' },
+];
+
 export class FileOpsTool implements ToolHandler {
-  private baseDirectory: string;
+  private rules: PathRule[];
   private maxFileSize: number;
 
   tool: Tool = {
     name: 'file_ops',
-    description: 'Read/write/edit files in the workspace',
+    description: 'Read/write/edit/list files in the workspace with permission control',
     inputSchema: {
       type: 'object',
       properties: {
@@ -21,8 +33,8 @@ export class FileOpsTool implements ToolHandler {
     },
   };
 
-  constructor(config?: { base_directory?: string; max_file_size_mb?: number }) {
-    this.baseDirectory = config?.base_directory || '/workspace/files';
+  constructor(config?: { allowed_paths?: PathRule[]; max_file_size_mb?: number }) {
+    this.rules = config?.allowed_paths || DEFAULT_RULES;
     this.maxFileSize = (config?.max_file_size_mb || 100) * 1024 * 1024;
   }
 
@@ -35,9 +47,16 @@ export class FileOpsTool implements ToolHandler {
       return { success: false, output: '', error: 'action and path are required' };
     }
 
-    const safePath = this.resolveSafePath(filePath);
+    const needsWrite = ['write', 'edit', 'delete'].includes(action);
+    const safePath = this.resolveSafePath(filePath, needsWrite);
     if (!safePath) {
-      return { success: false, output: '', error: 'Access denied: path outside workspace' };
+      return {
+        success: false,
+        output: '',
+        error: needsWrite
+          ? 'Access denied: you do not have write permission for this path'
+          : 'Access denied: path is not accessible',
+      };
     }
 
     try {
@@ -60,11 +79,18 @@ export class FileOpsTool implements ToolHandler {
     }
   }
 
-  private resolveSafePath(filePath: string): string | null {
-    const resolved = path.resolve(this.baseDirectory, filePath.replace(/^\/+/, ''));
-    if (!resolved.startsWith(this.baseDirectory)) {
+  private resolveSafePath(filePath: string, needsWrite: boolean): string | null {
+    const resolved = path.resolve(filePath);
+    const matchingRule = this.rules.find(rule => resolved.startsWith(rule.path));
+
+    if (!matchingRule) {
       return null;
     }
+
+    if (needsWrite && matchingRule.permissions === 'r') {
+      return null;
+    }
+
     return resolved;
   }
 
@@ -74,6 +100,10 @@ export class FileOpsTool implements ToolHandler {
     }
 
     const stats = fs.statSync(filePath);
+    if (stats.isDirectory()) {
+      return this.listFiles(filePath);
+    }
+
     if (stats.size > this.maxFileSize) {
       return { success: false, output: '', error: 'File exceeds maximum size' };
     }

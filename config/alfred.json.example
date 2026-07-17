@@ -1,0 +1,161 @@
+{
+  "agent": {
+    "name": "Alfred",
+    "version": "2.0.0",
+    "personality_file": "/workspace/config/SOUL.md"
+  },
+  "llm": {
+    "primary_provider": "ollama-runpod",
+    "fallback_providers": ["ollama-local", "anthropic"],
+    "model_selection": "automatic"
+  },
+  "providers": {
+    "ollama-runpod": {
+      "type": "openai-compatible",
+      "enabled": true,
+      "model": "mistral-large",
+      "config": {
+        "api_url": "https://api.runpod.io/v1/YOUR_ENDPOINT_ID/openai/v1",
+        "api_key": "YOUR_RUNPOD_API_KEY",
+        "temperature": 0.8,
+        "max_tokens": 4096,
+        "timeout_seconds": 30
+      },
+      "capabilities": {
+        "supports_tools": true,
+        "supports_vision": false,
+        "supports_streaming": true
+      }
+    },
+    "ollama-local": {
+      "type": "openai-compatible",
+      "enabled": false,
+      "model": "mistral",
+      "config": {
+        "api_url": "http://localhost:11434/v1",
+        "api_key": "ollama",
+        "temperature": 0.8,
+        "max_tokens": 4096,
+        "timeout_seconds": 30
+      },
+      "capabilities": {
+        "supports_tools": true,
+        "supports_vision": false,
+        "supports_streaming": true
+      }
+    },
+    "anthropic": {
+      "type": "anthropic",
+      "enabled": true,
+      "model": "claude-3-5-sonnet-20241022",
+      "config": {
+        "api_url": "https://api.anthropic.com/v1",
+        "api_key": "sk-ant-XXXXX",
+        "temperature": 0.8,
+        "max_tokens": 4096,
+        "timeout_seconds": 30
+      },
+      "capabilities": {
+        "supports_tools": true,
+        "supports_vision": true,
+        "supports_streaming": true
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "type": "telegram",
+      "config": {
+        "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+        "polling": true
+      },
+      "permissions": {
+        "allow_from": ["YOUR_USER_ID"]
+      }
+    },
+    "whatsapp": {
+      "enabled": false,
+      "type": "whatsapp",
+      "config": {
+        "session_file": "/workspace/config/whatsapp-session.json",
+        "timeout_seconds": 60,
+        "qr_timeout_seconds": 120
+      },
+      "permissions": {
+        "allow_from": ["+34123456789"]
+      }
+    },
+    "cli": {
+      "enabled": true,
+      "type": "cli",
+      "config": {
+        "interactive": true
+      }
+    }
+  },
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "config": {
+        "timeout_seconds": 30,
+        "allowed_patterns": ["find", "grep", "curl", "git", "node", "npm", "tar", "ls", "cat", "echo"],
+        "denied_patterns": ["rm -rf", "dd", "mkfs", ":(){:|:&", "fork()"]
+      }
+    },
+    "file_ops": {
+      "enabled": true,
+      "config": {
+        "base_directory": "/workspace/files",
+        "max_file_size_mb": 100,
+        "timeout_seconds": 30
+      }
+    },
+    "web": {
+      "enabled": true,
+      "config": {
+        "timeout_seconds": 15,
+        "max_size_mb": 10,
+        "results_limit": 5,
+        "user_agent": "Alfred/2.0"
+      }
+    },
+    "job": {
+      "enabled": true,
+      "config": {}
+    }
+  },
+  "database": {
+    "type": "sqlite",
+    "config": {
+      "path": "/workspace/db/alfred.db",
+      "memory": false,
+      "timeout_seconds": 30,
+      "journal_mode": "WAL",
+      "foreign_keys": true
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "targets": ["console", "file"],
+    "config": {
+      "file_path": "/workspace/logs",
+      "max_size_mb": 50,
+      "retention_days": 30,
+      "rotate": true
+    }
+  },
+  "security": {
+    "gateway_auth_token": "CHANGE_ME_TO_A_SECURE_RANDOM_TOKEN_32_CHARS",
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_user_per_hour": 100,
+      "requests_per_channel_per_hour": 1000
+    },
+    "audit_logging": {
+      "enabled": true,
+      "log_file": "/workspace/logs/audit.log"
+    }
+  }
+}

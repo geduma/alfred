@@ -44,7 +44,7 @@ export class TelegramChannel implements Channel {
         }
       } catch (error: any) {
         getLogger().error({ error: error.message }, 'Telegram message handling failed');
-        await ctx.reply('Lo siento, ocurrió un error interno.');
+        await ctx.reply('Sorry, an internal error occurred.');
       }
     });
 

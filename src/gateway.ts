@@ -5,19 +5,14 @@ import { PromptBuilder } from './agent/prompt-builder';
 import { ChannelManager } from './channels/channel-manager';
 import { getLogger } from './utils/logger';
 import { ToolHandler } from './types/tool';
-import { Message } from './types/llm';
+import { SessionStore, StoredSession } from './db/session-store';
+import { JobSchedulerTool } from './tools/job-scheduler';
 
 interface GatewayRequest {
   type: 'req';
   id: string;
   method: string;
   params: Record<string, unknown>;
-}
-
-interface Session {
-  id: string;
-  messages: Message[];
-  createdAt: Date;
 }
 
 export class Gateway {
@@ -27,7 +22,10 @@ export class Gateway {
   private promptBuilder: PromptBuilder;
   private channelManager: ChannelManager;
   private tools: ToolHandler[] = [];
-  private sessions: Map<string, Session> = new Map();
+  private sessions: Map<string, StoredSession> = new Map();
+  private sessionStore: SessionStore;
+  private jobScheduler: JobSchedulerTool;
+  private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
   private port: number;
 
   constructor(
@@ -41,15 +39,24 @@ export class Gateway {
     this.promptBuilder = promptBuilder;
     this.channelManager = channelManager;
     this.port = 18789;
+    this.sessionStore = new SessionStore();
+    this.jobScheduler = new JobSchedulerTool();
   }
 
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
   }
 
+  getJobScheduler(): JobSchedulerTool {
+    return this.jobScheduler;
+  }
+
   async start(): Promise<void> {
     this.wss = new WebSocketServer({ port: this.port });
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
+
+    this.loadSessions();
+    this.startJobRunner();
 
     getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
 
@@ -57,11 +64,34 @@ export class Gateway {
   }
 
   async stop(): Promise<void> {
+    this.stopJobRunner();
     if (this.wss) {
       this.wss.close();
     }
     await this.channelManager.stopAll();
     getLogger().info('Gateway stopped');
+  }
+
+  private loadSessions(): void {
+    const stored = this.sessionStore.listActive();
+    for (const session of stored) {
+      this.sessions.set(session.id, session);
+    }
+    getLogger().info({ sessionCount: stored.length }, 'Sessions loaded from disk');
+  }
+
+  private startJobRunner(): void {
+    this.jobRunnerTimer = setInterval(() => {
+      this.jobScheduler.fireDueJobs(this.channelManager);
+    }, 30000);
+    getLogger().info('Job runner started (30s interval)');
+  }
+
+  private stopJobRunner(): void {
+    if (this.jobRunnerTimer) {
+      clearInterval(this.jobRunnerTimer);
+      this.jobRunnerTimer = null;
+    }
   }
 
   private onClientConnect(ws: WebSocket): void {
@@ -91,8 +121,8 @@ export class Gateway {
         case 'agent':
           await this.handleAgentRequest(ws, req);
           break;
-        case 'skill_list':
-          this.handleSkillList(ws);
+        case 'tool_list':
+          this.handleToolList(ws);
           break;
         default:
           this.sendError(ws, req.id, `Unknown method: ${req.method}`);
@@ -127,7 +157,13 @@ export class Gateway {
       return;
     }
 
-    const session = this.getOrCreateSession(sessionId || 'default');
+    const sessionKey = sessionId || 'default';
+    let session = this.sessions.get(sessionKey);
+    if (!session) {
+      session = this.sessionStore.getOrCreate(sessionKey);
+      this.sessions.set(sessionKey, session);
+    }
+
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     try {
@@ -161,6 +197,7 @@ export class Gateway {
         });
 
         session.messages.push({ role: 'assistant', content: finalResponse.content });
+        this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
           runId,
@@ -170,6 +207,7 @@ export class Gateway {
         });
       } else {
         session.messages.push({ role: 'assistant', content: response.content });
+        this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
           runId,
@@ -192,8 +230,13 @@ export class Gateway {
     sessionId: string;
     metadata?: Record<string, unknown>;
   }): Promise<string | null> {
-    const sessionId = params.sessionId || `${params.channel}_${params.userId}`;
-    const session = this.getOrCreateSession(sessionId);
+    const sessionKey = params.sessionId || `${params.channel}_${params.userId}`;
+    let session = this.sessions.get(sessionKey);
+    if (!session) {
+      session = this.sessionStore.getOrCreate(sessionKey);
+      this.sessions.set(sessionKey, session);
+    }
+
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     try {
@@ -227,36 +270,27 @@ export class Gateway {
         });
 
         session.messages.push({ role: 'assistant', content: finalResponse.content });
+        this.sessionStore.save(session);
         return finalResponse.content;
       }
 
       session.messages.push({ role: 'assistant', content: response.content });
+      this.sessionStore.save(session);
       return response.content;
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');
-      return `Lo siento, Señor Felipe. Ocurrió un error: ${error.message}`;
+      return `I'm sorry, Señor Felipe. An error occurred: ${error.message}`;
     }
   }
 
-  private handleSkillList(ws: WebSocket): void {
-    const skills = this.tools.map(t => ({
+  private handleToolList(ws: WebSocket): void {
+    const toolList = this.tools.map(t => ({
       name: t.tool.name,
       description: t.tool.description,
       enabled: true,
     }));
 
-    this.sendResponse(ws, 'skill_list', { skills });
-  }
-
-  private getOrCreateSession(sessionId: string): Session {
-    if (!this.sessions.has(sessionId)) {
-      this.sessions.set(sessionId, {
-        id: sessionId,
-        messages: [],
-        createdAt: new Date(),
-      });
-    }
-    return this.sessions.get(sessionId)!;
+    this.sendResponse(ws, 'tool_list', { tools: toolList });
   }
 
   private sendResponse(ws: WebSocket, id: string, payload: unknown): void {
