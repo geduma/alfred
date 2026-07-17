@@ -1,17 +1,24 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse } from '../../types/llm';
 
 export class GeminiProvider extends BaseProvider {
-  private client: GoogleGenerativeAI;
+  private client: any = null;
 
   constructor(config: any) {
     super(config);
-    this.client = new GoogleGenerativeAI(this.config.config.api_key);
+  }
+
+  private async getClient(): Promise<any> {
+    if (!this.client) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      this.client = new GoogleGenerativeAI(this.config.config.api_key);
+    }
+    return this.client;
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
-    const model = this.client.getGenerativeModel({ model: this.getModel() });
+    const client = await this.getClient();
+    const model = client.getGenerativeModel({ model: this.getModel() });
 
     const prompt = [
       ...(params.system ? [{ role: 'user', parts: [{ text: `System: ${params.system}` }] }] : []),

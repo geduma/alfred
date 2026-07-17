@@ -1,19 +1,26 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse, ToolCall } from '../../types/llm';
 
 export class AnthropicProvider extends BaseProvider {
-  private client: Anthropic;
+  private client: any = null;
 
   constructor(config: any) {
     super(config);
-    this.client = new Anthropic({
-      apiKey: this.config.config.api_key,
-      baseURL: this.getApiUrl(),
-    });
+  }
+
+  private async getClient(): Promise<any> {
+    if (!this.client) {
+      const { default: Anthropic } = await import('@anthropic-ai/sdk');
+      this.client = new Anthropic({
+        apiKey: this.config.config.api_key,
+        baseURL: this.getApiUrl(),
+      });
+    }
+    return this.client;
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
+    const client = await this.getClient();
     const systemMessage = params.messages.find(m => m.role === 'user')?.content || '';
     const messages = params.messages
       .filter(m => m.role !== 'user' || m !== params.messages[0])
@@ -22,7 +29,7 @@ export class AnthropicProvider extends BaseProvider {
         content: m.content,
       }));
 
-    const response = await this.client.messages.create({
+    const response = await client.messages.create({
       model: this.getModel(),
       max_tokens: this.getMaxTokens(),
       system: params.system || systemMessage,

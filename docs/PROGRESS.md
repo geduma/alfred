@@ -106,14 +106,14 @@
 
 ### ✅ Phase 13: Vector Store + RAG (LanceDB)
 - [x] `src/services/vector-store/index.ts` — VectorStoreManager (LanceDB init, ingest, search, delete)
-- [x] `src/services/vector-store/embedder.ts` — Embedder abstraction (Transformers.js + Ollama + OpenAI + OpenAI-compatible)
+- [x] `src/services/vector-store/embedder.ts` — Embedder abstraction (hashing + Ollama + OpenAI + OpenAI-compatible)
 - [x] `src/types/vector.ts` — ChunkMetadata, SearchResult, IndexedMessage interfaces
 - [x] `src/types/config.ts` — VectorStoreConfig interface
 - [x] `src/config/loader.ts` — VectorStoreConfigSchema
 - [x] `src/gateway.ts` — RAG hook in prepareContext(), ingest hook on messages
 - [x] `system/system-prompt-base.txt` — RAG context awareness section
-- [x] Dependency: `@lancedb/lancedb` (~15MB), `@xenova/transformers` (~8MB in node_modules, model ~33-80MB cached on first run)
-- [x] Latency added: ~50-200ms search + embedding; offset by ~2-4s LLM token savings
+- [x] Dependency: `@lancedb/lancedb` (~15MB). Embedding via built-in hashing vectorizer (zero deps, ~5KB RAM, ~5μs)
+- [x] Latency added: ~5μs search + embedding (hashing vectorizer); offset by ~2-4s LLM token savings
 - [x] Token reduction per request: ~46% (RAG only) vs non-RAG sliding window
 
 ### ✅ Phase 14: Snapshots
@@ -145,13 +145,14 @@
 | **Tools** | 5 universal tools: exec, file_ops, web, job, health (replaces 7 specific tools) |
 | **Personality** | SOUL.md (base) + preferences.md (LLM-managed) + alfred-rules.md (protocol) |
 | **Config** | Auto-created from .example on startup if missing |
-| **Sessions** | Serialized to workspace/memory/sessions/ — survive restarts |
+| **Sessions** | Lazy-loaded on first access (not all read at startup). LRU eviction at 100 sessions. Truncated after compaction. Async write (non-blocking). Compact JSON (no pretty-print). |
 | **Jobs** | JSON files in workspace/memory/jobs/ — 30s interval runner |
-| **Context Compression** | Sliding window + LLM summarization. Keeps last N messages verbatim, compresses older ones into structured summary. Configurable via alfred.json. |
-| **Token Budget** | Soft limit of 32K tokens (configurable). Compression triggers at 80% threshold. |
+| **Context Compression** | Sliding window + LLM summarization. Keeps last N messages verbatim, compresses older ones into structured summary. Session.messages truncated after compaction. Configurable via alfred.json. |
+| **Token Budget** | Soft limit of 32K tokens (configurable). Compression triggers at 65% threshold with 1.3x safety multiplier to prevent context overflow. |
 | **Storage vs Context** | Full message history preserved on disk; compacted version sent to LLM. Summary stored in session file. |
 | **Language** | All response strings are in English; LLM controls language via preferences.md |
 | **User Name** | Dynamic from preferences.md (`user_name` field). Asked on first interaction if unknown. No hardcoded names in prompts. |
 | **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
-| **Vector Store Embedding** | Local ONNX via `@xenova/transformers` — zero-cost, no external APIs. Falls back to OpenAI-compatible, OpenAI, or Ollama if configured. Tested on init — graceful disable if model loading fails. Detailed error logging. |
+| **Vector Store Embedding** | Built-in hashing vectorizer — zero dependencies, ~5KB RAM, ~5μs per embedding. No external APIs, no model downloads. Graceful disable if unavailable. Detailed error logging. |
 | **Health Monitor** | Periodic log scanner (60 min default). Categorizes errors (vector_store, llm_provider, telegram, database, etc.). Alerts via Telegram. Exposed as `health` tool to LLM. |
+| **Dependencies** | Dynamic `import()` for all optional deps (provider SDKs, LanceDB, cheerio, whatsapp-web.js). Only loaded when feature is enabled. Zero runtime overhead for unused features. |

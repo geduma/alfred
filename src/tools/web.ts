@@ -1,5 +1,4 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
@@ -88,6 +87,7 @@ export class WebTool implements ToolHandler {
         },
       });
 
+      const cheerio = await import('cheerio');
       const $ = cheerio.load(response.data);
       $('script, style, nav, footer, header, iframe, noscript').remove();
 

@@ -49,7 +49,7 @@ src/
 │   ├── prompt-compressor.ts  ← Telegraph English — rule-based prompt compression
 │   ├── vector-store/
 │   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
-│   │   └── embedder.ts      ← Agnostic embedder factory (Transformers.js, Ollama, OpenAI, OpenAI-compatible)
+│   │   └── embedder.ts      ← Agnostic embedder factory (hashing, Ollama, OpenAI, OpenAI-compatible)
 │   ├── snapshot.ts           ← Session snapshots for long-term memory checkpoints
 │   ├── health-monitor.ts     ← Periodic log scanner, error categorizer, alert generator
 │   └── notification.ts      ← Alert delivery (Telegram, with email-ready architecture)
@@ -203,12 +203,12 @@ Alfred applies **Telegraph English** compression to the system prompt before eve
 
 Alfred uses **LanceDB** (embedded vector database) for long-term semantic memory:
 
-- **Embedding**: Local ONNX via `@xenova/transformers` — zero-cost, no external APIs, no API keys
+- **Embedding**: Built-in hashing vectorizer — zero dependencies, no external APIs, no API keys, ~5μs per embedding
 - **Ingest**: Every user message, tool response, and assistant reply is embedded and stored
 - **Search**: On each query, Alfred retrieves top-K semantically similar chunks from past sessions
 - **Injection**: Results are injected as `[RAG CONTEXT — Retrieved from long-term memory]` messages
 - **Config**: `memory.vector_store` in alfred.json (model, paths, search params)
-- **Auto-disable**: If model loading fails (e.g. OOM), vector store is gracefully disabled with a log warning
+- **Auto-disable**: If embedder initialization fails, vector store is gracefully disabled with a log warning
 
 Key implementation files:
 - `src/services/vector-store/index.ts` — LanceDB init, ingest, search, delete
@@ -216,27 +216,24 @@ Key implementation files:
 
 ### Embedding
 
-**Default provider:** `transformers` — runs ONNX models locally via `@xenova/transformers`. No API keys, no external services, zero cost. Model is downloaded once on first run (~33-80MB) and cached in `~/.cache/huggingface/`.
+**Default provider:** `hashing` — zero-dependency hashing vectorizer built into Alfred. No API keys, no external services, no model downloads, ~5μs per embedding. Uses word frequency hashing (djb2) + L2 normalization. Configurable dimension (default: 256).
 
 **Other supported providers:** `openai-compatible` (Ollama, RunPod, LocalAI), `openai`, `ollama` (native API). These require API keys or a running external service.
 
 `provider_ref` references an existing LLM provider to reuse its `api_url`/`api_key` (only for `openai-compatible` and `openai` types).
 
 ```json
-// Local ONNX embeddings (recommended — zero cost, no external deps)
-"embedding": { "type": "transformers", "model": "Xenova/bge-small-en-v1.5", "dimension": 384 }
-
-// Lighter model for low-RAM devices (RPi 3B, etc.)
-"embedding": { "type": "transformers", "model": "Xenova/bge-small-en-v1.5", "dimension": 384 }
-
-// All-MiniLM-L6-v2 for better accuracy (~80MB cache)
-"embedding": { "type": "transformers", "model": "Xenova/all-MiniLM-L6-v2", "dimension": 384 }
+// Built-in hashing vectorizer (recommended — zero deps, no external APIs)
+"embedding": { "type": "hashing", "dimension": 256 }
 
 // Using OpenAI API (requires api_key)
 "embedding": { "type": "openai", "model": "text-embedding-3-small", "dimension": 1536, "config": { "api_key": "sk-..." } }
 
 // Using local Ollama (requires Ollama running)
 "embedding": { "type": "ollama", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "http://localhost:11434" } }
+
+// Any OpenAI-compatible endpoint
+"embedding": { "type": "openai-compatible", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "https://your-endpoint/v1", "api_key": "..." } }
 ```
 
 ## Health Monitor

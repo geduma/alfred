@@ -122,11 +122,11 @@ Reduces the system prompt size by 20-45% before every LLM call using pure-TypeSc
 
 ### Layer 3: Vector Store (RAG) with LanceDB
 
-Provides cross-session semantic memory via vector search. Every message is embedded and stored locally using Transformers.js (ONNX, no external API); before each response, Alfred retrieves the most relevant chunks from past conversations.
+Provides cross-session semantic memory via vector search. Every message is embedded locally using a zero-dependency hashing vectorizer (no ML models, no external APIs); before each response, Alfred retrieves the most relevant chunks from past conversations.
 
-- **Embedding provider**: Local ONNX via `@xenova/transformers` — no external APIs, no API keys, zero cost. Falls back gracefully if unavailable.
-- **Supported models**: `Xenova/all-MiniLM-L6-v2` (384-dim, ~80MB) or `Xenova/bge-small-en-v1.5` (384-dim, ~33MB) — configurable in `alfred.json`
-- **Latency added**: ~50-200ms (search + embedding), offset by 2-4s LLM savings from smaller prompts
+- **Embedding provider**: Built-in hashing vectorizer — zero dependencies, zero downloads, zero cost. Uses word frequency hashing with L2 normalization.
+- **Dimension**: 256 (configurable) — tiny vectors, fast cosine similarity
+- **Latency added**: ~5μs (search + embedding), offset by 2-4s LLM savings from smaller prompts
 - **Token reduction**: ~46% vs non-RAG sliding window approach
 
 ### Snapshots
@@ -153,9 +153,8 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
       "type": "lancedb",
       "path": "/workspace/memory/vectors",
       "embedding": {
-        "type": "transformers",
-        "model": "Xenova/bge-small-en-v1.5",
-        "dimension": 384
+        "type": "hashing",
+        "dimension": 256
       },
       "ingest": { "on_message": true, "max_chunk_size": 512 },
       "search": { "top_k": 5, "min_score": 0.5 }

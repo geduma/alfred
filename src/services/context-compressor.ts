@@ -22,7 +22,7 @@ export interface MemoryConfig {
 const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   max_context_tokens: 32000,
   max_verbatim_messages: 20,
-  compaction_threshold: 0.8,
+  compaction_threshold: 0.65,
   compaction_model: 'auto',
   summary_sections: ['decisions', 'preferences', 'pending', 'context'],
 };

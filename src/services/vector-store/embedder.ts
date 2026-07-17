@@ -142,41 +142,43 @@ class OpenAICompatibleEmbedder implements Embedder {
   }
 }
 
-class TransformersEmbedder implements Embedder {
+class HashingVectorizerEmbedder implements Embedder {
   public readonly dimension: number;
-  private model: string;
-  private pipeline: any = null;
-  private pipelinePromise: Promise<any> | null = null;
 
-  constructor(config: { model: string; dimension: number }) {
-    this.model = config.model || 'Xenova/all-MiniLM-L6-v2';
-    this.dimension = config.dimension || 384;
+  constructor(config: { dimension: number }) {
+    this.dimension = config.dimension || 256;
   }
 
   async embed(text: string): Promise<number[]> {
-    const pipe = await this.getPipeline();
-    const result = await pipe(text, { pooling: 'mean', normalize: true });
-    return Array.from(result.data);
-  }
+    const vec = new Array(this.dimension).fill(0);
+    const cleaned = text.toLowerCase().replace(/[^a-z0-9áéíóúüñ\s]/g, ' ');
+    const words = cleaned.split(/\s+/).filter(w => w.length > 1);
 
-  private async getPipeline(): Promise<any> {
-    if (this.pipeline) return this.pipeline;
-    if (this.pipelinePromise) return this.pipelinePromise;
-
-    this.pipelinePromise = this.initPipeline();
-    try {
-      const pipe = await this.pipelinePromise;
-      this.pipeline = pipe;
-      return pipe;
-    } catch (e) {
-      this.pipelinePromise = null;
-      throw e;
+    for (const word of words) {
+      const idx = this.hash(word) % this.dimension;
+      vec[idx] += 1;
     }
+
+    let norm = 0;
+    for (let i = 0; i < this.dimension; i++) {
+      norm += vec[i] * vec[i];
+    }
+    norm = Math.sqrt(norm);
+    if (norm > 0) {
+      for (let i = 0; i < this.dimension; i++) {
+        vec[i] /= norm;
+      }
+    }
+
+    return vec;
   }
 
-  private async initPipeline(): Promise<any> {
-    const { pipeline } = await import('@xenova/transformers');
-    return await pipeline('feature-extraction', this.model);
+  private hash(str: string): number {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    }
+    return hash >>> 0;
   }
 }
 
@@ -244,8 +246,8 @@ function buildEmbedder(config: EmbeddingConfig): Embedder {
       const key = apiKey || '';
       return new OpenAICompatibleEmbedder({ api_url: apiUrl, api_key: key, model, dimension });
     }
-    case 'transformers': {
-      return new TransformersEmbedder({ model, dimension });
+    case 'hashing': {
+      return new HashingVectorizerEmbedder({ dimension });
     }
     default:
       throw new Error(`Unsupported embedding type: ${config.type}`);

@@ -1,29 +1,28 @@
-import { Client, LocalAuth } from 'whatsapp-web.js';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
 import { getLogger } from '../utils/logger';
 
 export class WhatsAppChannel implements Channel {
-  private client: Client;
+  private client: any = null;
   private channelManager: ChannelManager;
   private allowList: string[];
   private ready: boolean = false;
+  private sessionFile?: string;
 
   constructor(channelManager: ChannelManager, config: Record<string, unknown>) {
     this.channelManager = channelManager;
     this.allowList = (config as any).permissions?.allow_from || [];
-
-    const sessionFile = (config as any).config?.session_file;
-
-    this.client = new Client({
-      puppeteer: { headless: true },
-      ...(sessionFile
-        ? { authStrategy: new LocalAuth({ dataPath: sessionFile }) }
-        : {}),
-    });
+    this.sessionFile = (config as any).config?.session_file;
   }
 
   async start(): Promise<void> {
+    const { Client, LocalAuth } = await import('whatsapp-web.js');
+    this.client = new Client({
+      puppeteer: { headless: true },
+      ...(this.sessionFile
+        ? { authStrategy: new LocalAuth({ dataPath: this.sessionFile }) }
+        : {}),
+    });
     this.client.on('qr', (qr: string) => {
       getLogger().info('WhatsApp QR code received. Scan with WhatsApp.');
       console.log('Scan this QR code with WhatsApp:\n', qr);
@@ -34,7 +33,7 @@ export class WhatsAppChannel implements Channel {
       getLogger().info('WhatsApp client is ready');
     });
 
-    this.client.on('message', async (message) => {
+    this.client.on('message', async (message: any) => {
       if (!this.ready) return;
 
       if (message.hasMedia) return;

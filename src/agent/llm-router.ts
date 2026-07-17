@@ -20,7 +20,7 @@ export class LLMRouter {
       const providerConfig = this.config.providers[name];
       if (!providerConfig.enabled) continue;
 
-      const provider = ProviderFactory.createProvider(providerConfig);
+      const provider = await ProviderFactory.createProvider(providerConfig);
       const valid = await provider.validateConfig();
 
       if (valid) {

@@ -52,7 +52,7 @@ export class SessionStore {
     return session;
   }
 
-  save(session: StoredSession): void {
+  async save(session: StoredSession): Promise<void> {
     session.updatedAt = new Date().toISOString();
     const filePath = this.sessionPath(session.id);
 
@@ -60,7 +60,7 @@ export class SessionStore {
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
     }
 
-    fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf-8');
+    await fs.promises.writeFile(filePath, JSON.stringify(session), 'utf-8');
   }
 
   delete(sessionId: string): void {

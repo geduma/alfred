@@ -1,21 +1,28 @@
-import OpenAI from 'openai';
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse } from '../../types/llm';
 
 export class OpenAICompatibleProvider extends BaseProvider {
-  private client: OpenAI;
+  private client: any = null;
 
   constructor(config: any) {
     super(config);
-    this.client = new OpenAI({
-      baseURL: this.getApiUrl(),
-      apiKey: this.config.config.api_key,
-      timeout: this.getTimeout() * 1000,
-    });
+  }
+
+  private async getClient(): Promise<any> {
+    if (!this.client) {
+      const { default: OpenAI } = await import('openai');
+      this.client = new OpenAI({
+        baseURL: this.getApiUrl(),
+        apiKey: this.config.config.api_key,
+        timeout: this.getTimeout() * 1000,
+      });
+    }
+    return this.client;
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create({
+    const client = await this.getClient();
+    const response = await client.chat.completions.create({
       model: this.getModel(),
       messages: [
         ...(params.system ? [{ role: 'system' as const, content: params.system }] : []),

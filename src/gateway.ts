@@ -25,6 +25,8 @@ interface GatewayRequest {
   params: Record<string, unknown>;
 }
 
+const MAX_SESSIONS = 100;
+
 export class Gateway {
   private wss: WebSocketServer | null = null;
   private config: ConfigLoader;
@@ -32,6 +34,7 @@ export class Gateway {
   private promptBuilder: PromptBuilder;
   private channelManager: ChannelManager;
   private tools: ToolHandler[] = [];
+  private cachedToolSchemas: any[] | null = null;
   private sessions: Map<string, StoredSession> = new Map();
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
@@ -80,6 +83,14 @@ export class Gateway {
 
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
+    this.cachedToolSchemas = null;
+  }
+
+  private getToolSchemas(): any[] {
+    if (!this.cachedToolSchemas) {
+      this.cachedToolSchemas = this.tools.map(t => t.tool);
+    }
+    return this.cachedToolSchemas;
   }
 
   getHealthMonitor(): HealthMonitor | null {
@@ -94,7 +105,6 @@ export class Gateway {
     this.wss = new WebSocketServer({ port: this.port });
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
 
-    this.loadSessions();
     this.startJobRunner();
 
     if (this.vectorStore) {
@@ -134,12 +144,13 @@ export class Gateway {
     getLogger().info('Gateway stopped');
   }
 
-  private loadSessions(): void {
-    const stored = this.sessionStore.listActive();
-    for (const session of stored) {
-      this.sessions.set(session.id, session);
+  private evictSession(): void {
+    if (this.sessions.size < MAX_SESSIONS) return;
+    const oldest = [...this.sessions.entries()]
+      .sort(([, a], [, b]) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (oldest) {
+      this.sessions.delete(oldest[0]);
     }
-    getLogger().info({ sessionCount: stored.length }, 'Sessions loaded from disk');
   }
 
   private startJobRunner(): void {
@@ -173,6 +184,7 @@ export class Gateway {
 
       if (result.wasCompacted) {
         session.summary = result.summary;
+        session.messages = result.messages;
         messages = result.messages;
       }
     }
@@ -307,6 +319,7 @@ export class Gateway {
     let session = this.sessions.get(sessionKey);
     if (!session) {
       session = this.sessionStore.getOrCreate(sessionKey);
+      this.evictSession();
       this.sessions.set(sessionKey, session);
     }
 
@@ -314,17 +327,19 @@ export class Gateway {
     const ingestParams = { channel: 'ws', userId: sessionKey };
 
     try {
-      const systemPrompt = await this.promptBuilder.buildSystemPrompt();
-
-      session.messages.push({ role: 'user', content: message });
-      await this.ingestMessage(session, session.messages[session.messages.length - 1], ingestParams);
+      const userMsg: Message = { role: 'user', content: message };
+      session.messages.push(userMsg);
+      const [systemPrompt] = await Promise.all([
+        this.promptBuilder.buildSystemPrompt(),
+        this.ingestMessage(session, userMsg, ingestParams),
+      ]);
 
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, systemPrompt, message);
 
       const response = await this.llmRouter.call({
         messages: contextMessages,
         system: finalSystem,
-        tools: this.tools.map(t => t.tool),
+        tools: this.getToolSchemas(),
       });
 
       if (response.tool_calls && response.tool_calls.length > 0) {
@@ -350,7 +365,7 @@ export class Gateway {
         session.messages.push(assistantMsg);
         await this.ingestMessage(session, assistantMsg, ingestParams);
         await this.checkAutoSnapshot(session);
-        this.sessionStore.save(session);
+        await this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
           runId,
@@ -363,7 +378,7 @@ export class Gateway {
         session.messages.push(assistantMsg);
         await this.ingestMessage(session, assistantMsg, ingestParams);
         await this.checkAutoSnapshot(session);
-        this.sessionStore.save(session);
+        await this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
           runId,
@@ -390,6 +405,7 @@ export class Gateway {
     let session = this.sessions.get(sessionKey);
     if (!session) {
       session = this.sessionStore.getOrCreate(sessionKey);
+      this.evictSession();
       this.sessions.set(sessionKey, session);
     }
 
@@ -397,17 +413,19 @@ export class Gateway {
     const ingestParams = { channel: params.channel, userId: params.userId };
 
     try {
-      session.messages.push({ role: 'user', content: params.content });
-      await this.ingestMessage(session, session.messages[session.messages.length - 1], ingestParams);
-
-      const systemPrompt = await this.promptBuilder.buildSystemPrompt();
+      const userMsg: Message = { role: 'user', content: params.content };
+      session.messages.push(userMsg);
+      const [systemPrompt] = await Promise.all([
+        this.promptBuilder.buildSystemPrompt(),
+        this.ingestMessage(session, userMsg, ingestParams),
+      ]);
 
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, systemPrompt, params.content);
 
       const response = await this.llmRouter.call({
         messages: contextMessages,
         system: finalSystem,
-        tools: this.tools.map(t => t.tool),
+        tools: this.getToolSchemas(),
       });
 
       if (response.tool_calls && response.tool_calls.length > 0) {
@@ -433,7 +451,7 @@ export class Gateway {
         session.messages.push(assistantMsg);
         await this.ingestMessage(session, assistantMsg, ingestParams);
         await this.checkAutoSnapshot(session);
-        this.sessionStore.save(session);
+        await this.sessionStore.save(session);
         return finalResponse.content;
       }
 
@@ -441,7 +459,7 @@ export class Gateway {
       session.messages.push(assistantMsg);
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
-      this.sessionStore.save(session);
+      await this.sessionStore.save(session);
       return response.content;
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');

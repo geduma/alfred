@@ -90,7 +90,7 @@ const PromptCompressionConfigSchema = z.object({
 });
 
 const EmbeddingConfigSchema = z.object({
-  type: z.enum(['ollama', 'openai', 'openai-compatible', 'transformers']).default('ollama'),
+  type: z.enum(['ollama', 'openai', 'openai-compatible', 'hashing']).default('hashing'),
   model: z.string().default('nomic-embed-text'),
   dimension: z.number().positive().default(768),
   config: z.object({

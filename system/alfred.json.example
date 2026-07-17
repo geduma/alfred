@@ -149,9 +149,8 @@
       "type": "lancedb",
       "path": "/workspace/memory/vectors",
       "embedding": {
-        "type": "transformers",
-        "model": "Xenova/bge-small-en-v1.5",
-        "dimension": 384
+        "type": "hashing",
+        "dimension": 256
       },
       "ingest": {
         "on_message": true,
