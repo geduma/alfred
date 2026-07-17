@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
+import { getLogger } from '../utils/logger';
 
 interface PathRule {
   path: string;
@@ -81,7 +82,13 @@ export class FileOpsTool implements ToolHandler {
 
   private resolveSafePath(filePath: string, needsWrite: boolean): string | null {
     const resolved = path.resolve(filePath);
-    const matchingRule = this.rules.find(rule => resolved.startsWith(rule.path));
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(resolved);
+    } catch {
+      realPath = resolved;
+    }
+    const matchingRule = this.rules.find(rule => realPath.startsWith(rule.path));
 
     if (!matchingRule) {
       return null;
@@ -109,7 +116,7 @@ export class FileOpsTool implements ToolHandler {
     }
 
     const content = fs.readFileSync(filePath, 'utf-8');
-    return { success: true, output: content };
+    return { success: true, output: this.filterSecrets(filePath, content) };
   }
 
   private writeFile(filePath: string, content?: string): ToolExecutionResult {
@@ -146,6 +153,23 @@ export class FileOpsTool implements ToolHandler {
 
     fs.unlinkSync(filePath);
     return { success: true, output: `File deleted: ${filePath}` };
+  }
+
+  private filterSecrets(filePath: string, content: string): string {
+    const fileName = path.basename(filePath);
+    if (fileName !== 'alfred.json' && !fileName.endsWith('.env')) return content;
+
+    getLogger().debug({ file: fileName }, 'Filtering secrets from file output');
+    return content
+      .replace(/"api_key"\s*:\s*"[^"]+"/g, '"api_key": "***"')
+      .replace(/"bot_token"\s*:\s*"[^"]+"/g, '"bot_token": "***"')
+      .replace(/"auth_token"\s*:\s*"[^"]+"/g, '"auth_token": "***"')
+      .replace(/"password"\s*:\s*"[^"]+"/g, '"password": "***"')
+      .replace(/"token"\s*:\s*"[^"]+"/g, '"token": "***"')
+      .replace(/^.*_KEY=.*$/gm, (m) => m.replace(/=.*/, '=***'))
+      .replace(/^.*_TOKEN=.*$/gm, (m) => m.replace(/=.*/, '=***'))
+      .replace(/^.*_SECRET=.*$/gm, (m) => m.replace(/=.*/, '=***'))
+      .replace(/^.*PASSWORD=.*$/gm, (m) => m.replace(/=.*/, '=***'));
   }
 
   private listFiles(filePath: string): ToolExecutionResult {

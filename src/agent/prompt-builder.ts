@@ -26,9 +26,11 @@ export class PromptBuilder {
   }
 
   async buildSystemPrompt(skillsContext?: string): Promise<string> {
-    const basePrompt = this.loadBasePrompt();
-    const rules = this.loadRules();
-    const preferences = this.loadPreferences();
+    const [basePrompt, rules, preferences] = await Promise.all([
+      this.loadBasePrompt(),
+      this.loadRules(),
+      this.loadPreferences(),
+    ]);
     const userName = this.getUserName(preferences);
 
     let systemPrompt = `${this.soulMd}\n\n---\n\n${basePrompt}`;
@@ -63,25 +65,28 @@ export class PromptBuilder {
     return null;
   }
 
-  private loadBasePrompt(): string {
+  private async loadBasePrompt(): Promise<string> {
     const promptPath = process.env.BASE_PROMPT_PATH || DEFAULT_BASE_PROMPT_PATH;
-    if (fs.existsSync(promptPath)) {
-      return fs.readFileSync(promptPath, 'utf-8');
+    try {
+      return await fs.promises.readFile(promptPath, 'utf-8');
+    } catch {
+      return 'You are Alfred, a helpful AI assistant.';
     }
-    return 'You are Alfred, a helpful AI assistant.';
   }
 
-  private loadRules(): string {
-    if (fs.existsSync(RULES_PATH)) {
-      return fs.readFileSync(RULES_PATH, 'utf-8');
+  private async loadRules(): Promise<string> {
+    try {
+      return await fs.promises.readFile(RULES_PATH, 'utf-8');
+    } catch {
+      return '';
     }
-    return '';
   }
 
-  private loadPreferences(): string {
-    if (fs.existsSync(PREFERENCES_PATH)) {
-      return fs.readFileSync(PREFERENCES_PATH, 'utf-8');
+  private async loadPreferences(): Promise<string> {
+    try {
+      return await fs.promises.readFile(PREFERENCES_PATH, 'utf-8');
+    } catch {
+      return '';
     }
-    return '';
   }
 }

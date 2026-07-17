@@ -11,4 +11,5 @@ export interface ToolExecutionResult {
 export interface ToolHandler {
   tool: Tool;
   execute(params: Record<string, unknown>): Promise<ToolExecutionResult>;
+  validate?(params: Record<string, unknown>): { success: boolean; errors?: string[] };
 }

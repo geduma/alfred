@@ -8,9 +8,7 @@ let dbInstance: Database.Database | null = null;
 export function initializeDatabase(dbPath: string): Promise<Database.Database> {
   return new Promise((resolve, reject) => {
     const dir = path.dirname(dbPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    fs.promises.mkdir(dir, { recursive: true }).catch(() => {});
 
     const db = new Database.Database(dbPath, (err) => {
       if (err) {
@@ -32,16 +30,18 @@ export function initializeDatabase(dbPath: string): Promise<Database.Database> {
   });
 }
 
-function runSchema(db: Database.Database): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const schemaPath = path.resolve(__dirname, 'schema.sql');
-    if (!fs.existsSync(schemaPath)) {
-      getLogger().warn('schema.sql not found, creating tables inline');
-      resolve();
-      return;
-    }
+async function runSchema(db: Database.Database): Promise<void> {
+  const schemaPath = path.resolve(__dirname, 'schema.sql');
 
-    const schema = fs.readFileSync(schemaPath, 'utf-8');
+  let schema: string;
+  try {
+    schema = await fs.promises.readFile(schemaPath, 'utf-8');
+  } catch {
+    getLogger().warn('schema.sql not found, creating tables inline');
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
     const statements = schema.split(';').filter(s => s.trim());
 
     let idx = 0;

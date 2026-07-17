@@ -30,9 +30,7 @@ export function initializeLogger(config: {
   if (config.targets.includes('file') && config.config.file_path) {
     const logDir = config.config.file_path;
     try {
-      if (!fs.existsSync(logDir)) {
-        fs.mkdirSync(logDir, { recursive: true });
-      }
+      fs.mkdirSync(logDir, { recursive: true });
       transportTargets.push({
         target: 'pino/file',
         options: {
@@ -42,7 +40,6 @@ export function initializeLogger(config: {
         level: config.level,
       });
     } catch {
-      // fall back to stdout if file target fails
       transportTargets.push({
         target: 'pino/file',
         options: { destination: 1 },

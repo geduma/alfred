@@ -47,8 +47,8 @@ export class HealthTool implements ToolHandler {
     };
   }
 
-  private findings(params: Record<string, unknown>): ToolExecutionResult {
-    const findings = this.monitor.getFindings();
+  private async findings(params: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const findings = await this.monitor.getFindings();
     if (findings.length === 0) {
       return { success: true, output: 'No health issues found in recent logs.' };
     }

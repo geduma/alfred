@@ -2,15 +2,18 @@ import { LLMCallParams, LLMResponse, LLMProvider } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
+import { CircuitBreaker } from '../services/circuit-breaker';
 
 export class LLMRouter {
   private providers: Map<string, LLMProvider> = new Map();
   private providerChain: string[] = [];
   private currentIndex: number = 0;
   private config: ConfigLoader;
+  private circuitBreaker: CircuitBreaker;
 
   constructor(config: ConfigLoader) {
     this.config = config;
+    this.circuitBreaker = new CircuitBreaker();
   }
 
   async initialize(): Promise<void> {
@@ -51,13 +54,25 @@ export class LLMRouter {
       const providerName = this.providerChain[idx];
       const provider = this.providers.get(providerName)!;
 
+      if (!this.circuitBreaker.isAllowed(providerName)) {
+        const state = this.circuitBreaker.getState(providerName);
+        getLogger().debug(
+          { provider: providerName, remainingMs: state.remainingMs },
+          'Circuit breaker blocked provider'
+        );
+        attempts.push({ provider: providerName, error: 'Circuit breaker open' });
+        continue;
+      }
+
       try {
         getLogger().debug({ provider: providerName }, 'Calling LLM provider');
         const response = await provider.call(params);
 
+        this.circuitBreaker.recordSuccess(providerName);
         this.currentIndex = 0;
         return response;
       } catch (error: any) {
+        this.circuitBreaker.recordFailure(providerName);
         getLogger().warn({ provider: providerName, error: error.message }, 'Provider failed');
         attempts.push({ provider: providerName, error: error.message });
 
@@ -91,5 +106,9 @@ export class LLMRouter {
       current: this.getCurrentProvider(),
       chain: this.providerChain,
     };
+  }
+
+  getCircuitBreakerState(provider: string): { open: boolean; failures: number; remainingMs: number } {
+    return this.circuitBreaker.getState(provider);
   }
 }

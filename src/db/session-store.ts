@@ -21,26 +21,36 @@ export interface StoredSession {
 }
 
 export class SessionStore {
+  private ready: Promise<void>;
+
   constructor() {
-    if (!fs.existsSync(SESSIONS_DIR)) {
-      fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-    }
+    this.ready = fs.promises.mkdir(SESSIONS_DIR, { recursive: true }).then(() => {}).catch(() => {});
   }
 
-  get(sessionId: string): StoredSession | null {
+  private async ensureDir(): Promise<void> {
+    await this.ready;
+  }
+
+  async get(sessionId: string): Promise<StoredSession | null> {
+    await this.ensureDir();
     const filePath = this.sessionPath(sessionId);
-    if (!fs.existsSync(filePath)) return null;
 
     try {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      await fs.promises.access(filePath);
+    } catch {
+      return null;
+    }
+
+    try {
+      return JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
     } catch (error: any) {
       getLogger().warn({ sessionId, error: error.message }, 'Failed to load session, starting fresh');
       return null;
     }
   }
 
-  getOrCreate(sessionId: string): StoredSession {
-    const existing = this.get(sessionId);
+  async getOrCreate(sessionId: string): Promise<StoredSession> {
+    const existing = await this.get(sessionId);
     if (existing) return existing;
 
     const session: StoredSession = {
@@ -53,36 +63,43 @@ export class SessionStore {
   }
 
   async save(session: StoredSession): Promise<void> {
+    await this.ensureDir();
     session.updatedAt = new Date().toISOString();
     const filePath = this.sessionPath(session.id);
-
-    if (!fs.existsSync(SESSIONS_DIR)) {
-      fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-    }
-
     await fs.promises.writeFile(filePath, JSON.stringify(session), 'utf-8');
   }
 
-  delete(sessionId: string): void {
+  async delete(sessionId: string): Promise<void> {
+    await this.ensureDir();
     const filePath = this.sessionPath(sessionId);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    try {
+      await fs.promises.unlink(filePath);
+    } catch { /* not found */ }
   }
 
-  listActive(): StoredSession[] {
-    if (!fs.existsSync(SESSIONS_DIR)) return [];
+  async listActive(): Promise<StoredSession[]> {
+    await this.ensureDir();
 
-    return fs.readdirSync(SESSIONS_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try {
-          return JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf-8')) as StoredSession;
-        } catch {
-          return null;
-        }
-      })
-      .filter((s): s is StoredSession => s !== null);
+    let files: string[];
+    try {
+      files = await fs.promises.readdir(SESSIONS_DIR);
+    } catch {
+      return [];
+    }
+
+    const results = await Promise.all(
+      files
+        .filter(f => f.endsWith('.json'))
+        .map(async f => {
+          try {
+            return JSON.parse(await fs.promises.readFile(path.join(SESSIONS_DIR, f), 'utf-8')) as StoredSession;
+          } catch {
+            return null;
+          }
+        })
+    );
+
+    return results.filter((s): s is StoredSession => s !== null);
   }
 
   private sessionPath(sessionId: string): string {

@@ -186,7 +186,7 @@ export function createEmbedder(
   embeddingConfig: EmbeddingConfig,
   allProviders?: Record<string, ProviderConfig>
 ): Embedder {
-  let effectiveConfig = { ...embeddingConfig };
+  const effectiveConfig = { ...embeddingConfig };
 
   if (effectiveConfig.provider_ref && allProviders) {
     const refProvider = allProviders[effectiveConfig.provider_ref];

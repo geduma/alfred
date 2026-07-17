@@ -22,7 +22,8 @@ export class HealthMonitor {
     this.config = config;
     this.notifier = notifier;
     this.logPath = logPath;
-    this.state = this.loadState();
+    this.state = { last_scan_bytes: 0, last_scan_time: new Date().toISOString() };
+    this.loadState().then(s => { this.state = s; });
   }
 
   start(): void {
@@ -45,7 +46,7 @@ export class HealthMonitor {
 
   async check(): Promise<void> {
     try {
-      const findings = this.scan();
+      const findings = await this.scan();
       if (findings.length > 0) {
         const summary = this.buildSummary(findings);
         await this.notifier.sendAlert(
@@ -59,25 +60,30 @@ export class HealthMonitor {
     }
   }
 
-  scan(): HealthFinding[] {
-    if (!fs.existsSync(this.logPath)) return [];
+  async scan(): Promise<HealthFinding[]> {
+    try {
+      await fs.promises.access(this.logPath);
+    } catch {
+      return [];
+    }
 
-    const stats = fs.statSync(this.logPath);
+    const stats = await fs.promises.stat(this.logPath);
     const fileSize = stats.size;
     const startByte = Math.min(this.state.last_scan_bytes, fileSize);
 
     if (startByte >= fileSize) return [];
 
-    const fd = fs.openSync(this.logPath, 'r');
-    const buffer = Buffer.alloc(fileSize - startByte);
-    fs.readSync(fd, buffer, 0, buffer.length, startByte);
-    fs.closeSync(fd);
+    const content = await fs.promises.readFile(this.logPath, {
+      encoding: 'utf-8',
+      flag: 'r',
+    });
 
+    const newContent = content.slice(startByte);
     this.state.last_scan_bytes = fileSize;
     this.state.last_scan_time = new Date().toISOString();
-    this.saveState();
+    await this.saveState();
 
-    const lines = buffer.toString('utf-8').split('\n').filter(Boolean);
+    const lines = newContent.split('\n').filter(Boolean);
     const findingsMap = new Map<string, HealthFinding>();
     const threshold = this.config.severity_threshold === 'error' ? 50 : 40;
 
@@ -120,7 +126,7 @@ export class HealthMonitor {
     return Array.from(findingsMap.values());
   }
 
-  getFindings(): HealthFinding[] {
+  async getFindings(): Promise<HealthFinding[]> {
     return this.scan();
   }
 
@@ -144,22 +150,18 @@ export class HealthMonitor {
     return parts.join('\n\n');
   }
 
-  private loadState(): ScanState {
+  private async loadState(): Promise<ScanState> {
     try {
-      if (fs.existsSync(STATE_FILE)) {
-        return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-      }
+      return JSON.parse(await fs.promises.readFile(STATE_FILE, 'utf-8'));
     } catch {
-      // ignore
+      return { last_scan_bytes: 0, last_scan_time: new Date().toISOString() };
     }
-    return { last_scan_bytes: 0, last_scan_time: new Date().toISOString() };
   }
 
-  private saveState(): void {
+  private async saveState(): Promise<void> {
     try {
-      const dir = path.dirname(STATE_FILE);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(STATE_FILE, JSON.stringify(this.state, null, 2), 'utf-8');
+      await fs.promises.mkdir(path.dirname(STATE_FILE), { recursive: true });
+      await fs.promises.writeFile(STATE_FILE, JSON.stringify(this.state), 'utf-8');
     } catch {
       // ignore
     }

@@ -18,59 +18,75 @@ export interface Snapshot {
 }
 
 export interface SnapshotStore {
-  get(snapshotId: string): Snapshot | null;
-  list(sessionId: string): Snapshot[];
-  save(snapshot: Snapshot): void;
-  delete(snapshotId: string): void;
+  get(snapshotId: string): Promise<Snapshot | null>;
+  list(sessionId: string): Promise<Snapshot[]>;
+  save(snapshot: Snapshot): Promise<void>;
+  delete(snapshotId: string): Promise<void>;
 }
 
 class FileSnapshotStore implements SnapshotStore {
+  private ready: Promise<void>;
+
   constructor() {
-    if (!fs.existsSync(SNAPSHOTS_DIR)) {
-      fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-    }
+    this.ready = fs.promises.mkdir(SNAPSHOTS_DIR, { recursive: true }).then(() => {}).catch(() => {});
   }
 
-  get(snapshotId: string): Snapshot | null {
-    const filePath = this.filePath(snapshotId);
-    if (!fs.existsSync(filePath)) return null;
+  private async ensureDir(): Promise<void> {
+    await this.ready;
+  }
 
+  async get(snapshotId: string): Promise<Snapshot | null> {
+    await this.ensureDir();
+    const filePath = this.filePath(snapshotId);
     try {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      await fs.promises.access(filePath);
+    } catch {
+      return null;
+    }
+    try {
+      return JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
     } catch {
       return null;
     }
   }
 
-  list(sessionId: string): Snapshot[] {
-    if (!fs.existsSync(SNAPSHOTS_DIR)) return [];
+  async list(sessionId: string): Promise<Snapshot[]> {
+    await this.ensureDir();
 
-    return fs.readdirSync(SNAPSHOTS_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try {
-          const snap = JSON.parse(fs.readFileSync(path.join(SNAPSHOTS_DIR, f), 'utf-8')) as Snapshot;
-          return snap.sessionId === sessionId ? snap : null;
-        } catch {
-          return null;
-        }
-      })
-      .filter((s): s is Snapshot => s !== null)
+    let files: string[];
+    try {
+      files = await fs.promises.readdir(SNAPSHOTS_DIR);
+    } catch {
+      return [];
+    }
+
+    const results = await Promise.all(
+      files
+        .filter(f => f.endsWith('.json'))
+        .map(async f => {
+          try {
+            return JSON.parse(await fs.promises.readFile(path.join(SNAPSHOTS_DIR, f), 'utf-8')) as Snapshot;
+          } catch {
+            return null;
+          }
+        })
+    );
+
+    return results
+      .filter((s): s is Snapshot => s !== null && s.sessionId === sessionId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  save(snapshot: Snapshot): void {
-    if (!fs.existsSync(SNAPSHOTS_DIR)) {
-      fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-    }
-    fs.writeFileSync(this.filePath(snapshot.id), JSON.stringify(snapshot, null, 2), 'utf-8');
+  async save(snapshot: Snapshot): Promise<void> {
+    await this.ensureDir();
+    await fs.promises.writeFile(this.filePath(snapshot.id), JSON.stringify(snapshot), 'utf-8');
   }
 
-  delete(snapshotId: string): void {
-    const filePath = this.filePath(snapshotId);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+  async delete(snapshotId: string): Promise<void> {
+    await this.ensureDir();
+    try {
+      await fs.promises.unlink(this.filePath(snapshotId));
+    } catch { /* not found */ }
   }
 
   private filePath(snapshotId: string): string {
@@ -80,7 +96,7 @@ class FileSnapshotStore implements SnapshotStore {
 
 export class SnapshotManager {
   private config: SnapshotConfig;
-  private store: SnapshotStore;
+  private store: FileSnapshotStore;
   private messageCounters: Map<string, number> = new Map();
 
   constructor(config: SnapshotConfig) {
@@ -100,8 +116,8 @@ export class SnapshotManager {
       tags: tags || [],
     };
 
-    this.store.save(snapshot);
-    this.enforceLimit(session.id);
+    await this.store.save(snapshot);
+    await this.enforceLimit(session.id);
 
     getLogger().info(
       { snapshotId: snapshot.id, sessionId: session.id, messageCount: snapshot.messageCount },
@@ -123,27 +139,46 @@ export class SnapshotManager {
     return false;
   }
 
-  listBySession(sessionId: string): Snapshot[] {
+  cleanupCounters(activeSessionIds: Set<string>): void {
+    for (const sessionId of this.messageCounters.keys()) {
+      if (!activeSessionIds.has(sessionId)) {
+        this.messageCounters.delete(sessionId);
+      }
+    }
+  }
+
+  async listBySession(sessionId: string): Promise<Snapshot[]> {
     return this.store.list(sessionId);
   }
 
-  get(snapshotId: string): Snapshot | null {
+  async get(snapshotId: string): Promise<Snapshot | null> {
     return this.store.get(snapshotId);
   }
 
-  delete(snapshotId: string): void {
-    this.store.delete(snapshotId);
+  async delete(snapshotId: string): Promise<void> {
+    await this.store.delete(snapshotId);
   }
 
-  private enforceLimit(sessionId: string): void {
+  async restore(session: StoredSession, snapshotId: string): Promise<StoredSession> {
+    const snapshot = await this.store.get(snapshotId);
+    if (!snapshot) throw new Error(`Snapshot ${snapshotId} not found`);
+
+    const snapshots = await this.store.list(session.id);
+    const targetSnapshot = snapshots.find(s => s.id === snapshotId);
+    if (!targetSnapshot) throw new Error(`Snapshot ${snapshotId} not found for session ${session.id}`);
+
+    session.summary = targetSnapshot.summary;
+    getLogger().info({ snapshotId, sessionId: session.id }, 'Session restored from snapshot');
+    return session;
+  }
+
+  private async enforceLimit(sessionId: string): Promise<void> {
     const max = this.config.max_snapshots_per_session || 20;
-    const existing = this.store.list(sessionId);
+    const existing = await this.store.list(sessionId);
 
     if (existing.length > max) {
       const toDelete = existing.slice(max);
-      for (const snap of toDelete) {
-        this.store.delete(snap.id);
-      }
+      await Promise.all(toDelete.map(snap => this.store.delete(snap.id)));
       getLogger().info({ sessionId, deleted: toDelete.length }, 'Old snapshots pruned');
     }
   }

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
+import { URL } from 'url';
 
 export class WebTool implements ToolHandler {
   private timeout: number;
@@ -78,13 +79,19 @@ export class WebTool implements ToolHandler {
       return { success: false, output: '', error: 'url is required for fetch action' };
     }
 
+    if (this.isPrivateUrl(url)) {
+      return { success: false, output: '', error: 'Access to private/internal URLs is not allowed' };
+    }
+
     try {
       const response = await axios.get(url, {
         timeout: this.timeout,
         maxContentLength: this.maxSize,
+        maxRedirects: 5,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Alfred/2.0)',
         },
+        validateStatus: () => true,
       });
 
       const cheerio = await import('cheerio');
@@ -108,6 +115,34 @@ export class WebTool implements ToolHandler {
     } catch (error: any) {
       getLogger().error({ error: error.message, url }, 'Web fetch failed');
       return { success: false, output: '', error: `Fetch failed: ${error.message}` };
+    }
+  }
+
+  private isPrivateUrl(urlString: string): boolean {
+    try {
+      const parsed = new URL(urlString);
+      const hostname = parsed.hostname.toLowerCase();
+
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '[::1]') return true;
+
+      if (hostname === '169.254.169.254') return true;
+
+      const parts = hostname.split('.');
+      if (parts.length >= 2) {
+        const tld = parts[parts.length - 1];
+        if (tld === 'local' || tld === 'internal' || hostname.endsWith('.local') || hostname.endsWith('.internal')) return true;
+      }
+
+      if (hostname.startsWith('10.') || hostname.startsWith('192.168.')) return true;
+
+      const match = hostname.match(/^172\.(1[6-9]|2\d|3[01])\./);
+      if (match) return true;
+
+      return false;
+    } catch {
+      return true;
     }
   }
 

@@ -4,7 +4,11 @@ describe('RateLimiter', () => {
   let limiter: RateLimiter;
 
   beforeEach(() => {
-    limiter = new RateLimiter();
+    limiter = new RateLimiter(false);
+  });
+
+  afterEach(() => {
+    limiter.stop();
   });
 
   test('should allow first request', () => {

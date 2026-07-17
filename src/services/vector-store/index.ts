@@ -120,6 +120,8 @@ export class VectorStoreManager {
       const queryVector = await this.embedder.embed(query);
       const results = await this.table.search(queryVector).limit(k * 2).toArray();
 
+      if (!Array.isArray(results)) return [];
+
       return results
         .filter((r: any) => {
           const score = this.cosineSimilarity(queryVector, r.vector as number[]);

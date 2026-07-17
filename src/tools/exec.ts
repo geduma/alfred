@@ -1,9 +1,16 @@
-import { execSync } from 'child_process';
+import spawn from 'cross-spawn';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
 
-const DEFAULT_DENIED_PATTERNS = ['rm -rf', 'dd', 'mkfs', ':(){:|:&', 'fork()', '> /dev/sda'];
+const DEFAULT_DENIED_PATTERNS = [
+  'rm -rf', 'dd', 'mkfs', ':(){:|:&', 'fork()', '> /dev/sda',
+  'wget', 'curl', 'bash -c', 'python -c', 'perl -e', 'eval',
+  '$(', '`', 'chmod', 'chown', 'sudo', 'passwd',
+  'ssh ', 'scp ', 'base64', 'nc ', 'ncat',
+  '/dev/tcp', '/dev/udp', '>:', '>>',
+  '| sh', '| bash',
+];
 
 export class ExecTool implements ToolHandler {
   private allowedPatterns: string[];
@@ -38,43 +45,76 @@ export class ExecTool implements ToolHandler {
   async execute(params: Record<string, unknown>): Promise<ToolExecutionResult> {
     const command = params.command as string;
     const cwd = (params.cwd as string) || process.cwd();
-    const timeout = (params.timeout as number || this.timeout / 1000) * 1000;
+    const requestedTimeout = (params.timeout as number || this.timeout / 1000) * 1000;
+    const timeout = Math.min(requestedTimeout, this.timeout);
     const env = params.env as Record<string, string> | undefined;
 
     if (!command) {
       return { success: false, output: '', error: 'Command is required' };
     }
 
-    const sanitizedCommand = this.sanitizeCommand(command, env);
-    if (!this.isCommandAllowed(sanitizedCommand)) {
+    const { program, args } = this.parseCommand(command);
+    const fullCommandForPolicy = `${program} ${args.join(' ')}`;
+    const sanitizedForPolicy = this.sanitizeCommand(fullCommandForPolicy, env);
+    if (!this.isCommandAllowed(sanitizedForPolicy)) {
       return { success: false, output: '', error: 'Command denied by policy' };
     }
 
     const startTime = Date.now();
 
     try {
-      const output = execSync(command, {
+      const result = spawn.sync(program, args, {
         cwd,
         timeout,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         env: env ? { ...process.env, ...env } : undefined,
+        shell: false,
       });
 
       return {
-        success: true,
-        output: output.trim(),
+        success: result.status === 0,
+        output: (result.stdout || '').trim(),
+        error: result.status !== 0 ? (result.stderr || '').trim() || `Exit code: ${result.status}` : undefined,
+        exitCode: result.status ?? undefined,
         duration_ms: Date.now() - startTime,
       };
     } catch (error: any) {
       return {
         success: false,
-        output: error.stdout?.trim() || '',
-        error: error.stderr?.trim() || error.message,
-        exitCode: error.status,
+        output: '',
+        error: error.message,
         duration_ms: Date.now() - startTime,
       };
     }
+  }
+
+  private parseCommand(command: string): { program: string; args: string[] } {
+    const parts: string[] = [];
+    let current = '';
+    let inQuote: string | null = null;
+
+    for (const ch of command.trim()) {
+      if (inQuote) {
+        if (ch === inQuote) {
+          inQuote = null;
+        } else {
+          current += ch;
+        }
+      } else if (ch === '"' || ch === "'") {
+        inQuote = ch;
+      } else if (ch === ' ') {
+        if (current) {
+          parts.push(current);
+          current = '';
+        }
+      } else {
+        current += ch;
+      }
+    }
+    if (current) parts.push(current);
+
+    return { program: parts[0] || '', args: parts.slice(1) };
   }
 
   private sanitizeCommand(command: string, env?: Record<string, string>): string {
