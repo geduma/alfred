@@ -1,4 +1,3 @@
-import * as lancedb from '@lancedb/lancedb';
 import { getLogger } from '../../utils/logger';
 import { Embedder, createEmbedder } from './embedder';
 import { VectorStoreConfig } from '../../types/config';
@@ -7,22 +6,33 @@ import { ChunkMetadata, SearchResult, IndexedMessage } from '../../types/vector'
 
 const DEFAULT_TABLE_NAME = 'messages';
 
+type LanceDB = typeof import('@lancedb/lancedb');
+
 export class VectorStoreManager {
-  private db: lancedb.Connection | null = null;
+  private db: any = null;
   private table: any = null;
   private embedder: Embedder;
   private config: VectorStoreConfig;
   private initialized = false;
+  private static lancedbModule: LanceDB | null = null;
 
   constructor(config: VectorStoreConfig, allProviders?: Record<string, ProviderConfig>) {
     this.config = config;
     this.embedder = createEmbedder(config.embedding, allProviders);
   }
 
+  private static async getLanceDB(): Promise<LanceDB> {
+    if (!VectorStoreManager.lancedbModule) {
+      VectorStoreManager.lancedbModule = await import('@lancedb/lancedb');
+    }
+    return VectorStoreManager.lancedbModule;
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
     try {
+      const lancedb = await VectorStoreManager.getLanceDB();
       this.db = await lancedb.connect(this.config.path);
       const tableNames = await this.db.tableNames();
 

@@ -166,6 +166,10 @@ export class ConfigLoader {
     if (this.config.logging.config.file_path) {
       this.config.logging.config.file_path = resolvePath(this.config.logging.config.file_path);
     }
+    const vs = this.config.memory?.vector_store;
+    if (vs?.path) {
+      vs.path = resolvePath(vs.path);
+    }
 
     this.validateProviderChain();
     return this.config;
