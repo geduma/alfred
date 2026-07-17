@@ -18,6 +18,12 @@ export class PromptBuilder {
     this.soulMd = await this.soulLoader.load(personalityFile);
   }
 
+  async reload(personalityFile?: string): Promise<void> {
+    if (personalityFile) {
+      this.soulMd = await this.soulLoader.load(personalityFile);
+    }
+  }
+
   async buildSystemPrompt(skillsContext?: string): Promise<string> {
     const basePrompt = this.loadBasePrompt();
     const rules = this.loadRules();

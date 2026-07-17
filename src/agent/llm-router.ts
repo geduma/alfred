@@ -76,6 +76,16 @@ export class LLMRouter {
     return this.providerChain[this.currentIndex] || 'none';
   }
 
+  async reinitialize(config?: ConfigLoader): Promise<void> {
+    if (config) {
+      this.config = config;
+    }
+    this.providers.clear();
+    this.providerChain = [];
+    this.currentIndex = 0;
+    await this.initialize();
+  }
+
   getProviderInfo(): { current: string; chain: string[] } {
     return {
       current: this.getCurrentProvider(),

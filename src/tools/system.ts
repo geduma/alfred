@@ -11,11 +11,11 @@ export class SystemTool implements ToolHandler {
 
   tool: Tool = {
     name: 'system',
-    description: 'Get Alfred\'s internal status, configuration, logs, or container health diagnostics',
+    description: 'Get Alfred\'s internal status, configuration, logs, container health diagnostics, or trigger config hot-reload',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['info', 'config', 'logs', 'health'] },
+        action: { type: 'string', enum: ['info', 'config', 'logs', 'health', 'reload'] },
         filter: { type: 'string', description: 'Filter logs by keyword or severity (info, warn, error)' },
         lines: { type: 'number', description: 'Number of log lines to return (default: 20, max: 100)' },
       },
@@ -39,6 +39,8 @@ export class SystemTool implements ToolHandler {
         return this.getLogs(params);
       case 'health':
         return this.health();
+      case 'reload':
+        return this.reload();
       default:
         return { success: false, output: '', error: `Unknown action: ${action}` };
     }
@@ -139,6 +141,15 @@ export class SystemTool implements ToolHandler {
       return { success: true, output };
     } catch (error: any) {
       return { success: false, output: '', error: `Failed to read logs: ${error.message}` };
+    }
+  }
+
+  private reload(): ToolExecutionResult {
+    try {
+      this.configLoader.reload();
+      return { success: true, output: '✅ Configuración recargada desde disco. Los cambios se aplicarán en la siguiente solicitud al LLM.' };
+    } catch (error: any) {
+      return { success: false, output: '', error: `Failed to reload config: ${error.message}` };
     }
   }
 

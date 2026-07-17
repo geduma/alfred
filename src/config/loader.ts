@@ -98,12 +98,19 @@ const AlfredConfigSchema = z.object({
 });
 
 export class ConfigLoader {
-  private config: AlfredConfig;
+  private config!: AlfredConfig;
+  private configPath: string;
 
   constructor(configPath: string) {
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    this.configPath = configPath;
+    this.reload();
+  }
+
+  reload(): AlfredConfig {
+    const raw = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
     this.config = AlfredConfigSchema.parse(raw) as AlfredConfig;
     this.validateProviderChain();
+    return this.config;
   }
 
   private validateProviderChain(): void {

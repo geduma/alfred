@@ -5,6 +5,7 @@ import { PromptBuilder } from './agent/prompt-builder';
 import { ChannelManager } from './channels/channel-manager';
 import { getLogger } from './utils/logger';
 import { ToolHandler } from './types/tool';
+import { createTools } from './tools/index';
 import { SessionStore, StoredSession } from './db/session-store';
 import { JobSchedulerTool } from './tools/job-scheduler';
 
@@ -123,6 +124,9 @@ export class Gateway {
           break;
         case 'tool_list':
           this.handleToolList(ws);
+          break;
+        case 'reload':
+          await this.handleReload(ws, req);
           break;
         default:
           this.sendError(ws, req.id, `Unknown method: ${req.method}`);
@@ -280,6 +284,43 @@ export class Gateway {
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');
       return `I'm sorry, Señor Felipe. An error occurred: ${error.message}`;
+    }
+  }
+
+  private async handleReload(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    try {
+      const log = getLogger();
+
+      log.info('Hot-reload triggered via WebSocket');
+
+      this.config.reload();
+      log.info('Config reloaded from disk');
+
+      this.llmRouter.reinitialize(this.config);
+      log.info('LLM router reinitialized');
+
+      const personalityFile = this.config.personalityFile;
+      try {
+        await this.promptBuilder.reload(personalityFile);
+        log.info('SOUL.md reloaded');
+      } catch (error: any) {
+        log.warn({ error: error.message }, 'SOUL.md reload failed, using cached');
+      }
+
+      const newTools = createTools(this.config);
+      this.setTools(newTools);
+      log.info({ tools: newTools.map(t => t.tool.name) }, 'Tools reloaded');
+
+      this.sendResponse(ws, req.id, {
+        status: 'reloaded',
+        config: true,
+        llmRouter: true,
+        promptBuilder: true,
+        tools: true,
+      });
+    } catch (error: any) {
+      getLogger().error({ error: error.message }, 'Hot-reload failed');
+      this.sendError(ws, req.id, `Reload failed: ${error.message}`);
     }
   }
 

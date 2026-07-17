@@ -155,6 +155,72 @@ npm start        # Run compiled version
 npm test         # Run tests
 ```
 
+## Updates & Deployment
+
+There are two levels of changes, each with its own update path:
+
+### Level 1: Configuration & Data (no restart needed)
+
+Files on the `~/.alfred-personal` volume are read from disk on every request — **no restart required**:
+
+| File | How to update |
+|---|---|
+| `~/.alfred-personal/config/alfred.json` | Edit the file, then trigger a hot-reload (see below) |
+| `~/.alfred-personal/config/SOUL.md` | Edit the file, then trigger a hot-reload |
+| `~/.alfred-personal/memory/personality/preferences.md` | Alfred manages it via `file_ops` — just tell Alfred what you want |
+| `~/.alfred-personal/files/*` | Read/written by Alfred via `file_ops` tool |
+
+**Hot-reload** applies config and personality changes without restarting the container:
+
+```bash
+# Via WebSocket (from any machine with the auth token)
+echo '{"type":"req","id":"r1","method":"reload","params":{}}' | websocat ws://YOUR_HOST:18789
+
+# Via Alfred's system tool (in any channel)
+# Just say: "Alfred, recarga la configuración"
+
+# From inside the container
+docker exec alfred-cli --reload
+```
+
+When hot-reload is triggered, Alfred:
+1. Re-reads `alfred.json` from disk (validates schema)
+2. Re-initializes LLM providers
+3. Re-loads SOUL.md
+4. Rebuilds the tool registry
+
+### Level 2: Code changes (requires rebuild)
+
+When you modify TypeScript source, `system/`, or `docker/Dockerfile`:
+
+```bash
+# Quick deploy (git pull + build + restart)
+./deploy.sh
+
+# Or manually:
+git pull
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d --force-recreate
+```
+
+The volume `~/.alfred-personal` persists across rebuilds — your config, database, files, and logs are never lost.
+
+### deploy.sh
+
+A convenience script that automates the full code deployment cycle:
+
+```bash
+./deploy.sh
+```
+
+Steps performed:
+1. `git pull` — fetches latest code from the repository
+2. `docker compose build` — rebuilds the image with new code
+3. `docker compose up -d --force-recreate` — replaces the running container
+4. `docker image prune -f` — cleans up old images
+
+> **Tip:** Stash `deploy.sh` in a `~/alfred/` directory alongside the repo, or run it from the project root on your Raspberry Pi after SSH'ing in.
+
 ## Docs
 
 - `docs/AGENTS.md` — Instructions for AI agents working on the project
