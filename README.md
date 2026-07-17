@@ -183,9 +183,21 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
 
 - **SOUL.md** — Core identity. Only the user may edit it.
 - **preferences.md** — Dynamic preferences (language, tone, style). Managed by Alfred via `file_ops` when you request changes.
-- **alfred-rules.md** — Rulebook describing file access permissions, personality protocol, and job protocol. Injected into every system prompt.
+- **alfred-rules.md** — Rulebook describing file access permissions, personality protocol, skill implementation protocol, and secrets management protocol. Injected into every system prompt.
 
 Example: _"Respóndeme en español y sé más breve"_ → Alfred adds `language: spanish` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences.
+
+## Skills & Secrets
+
+Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task.
+
+**Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
+
+- Alfred **reads** secrets when executing skills, but **never modifies** them
+- To add a credential: edit `secrets.env` manually, then ask Alfred to use the skill
+- Provider API keys remain in `alfred.json` (not in secrets.env)
+
+See `system/alfred-rules.md` → "Skill Implementation Protocol" and "Secrets Management Protocol" for the full rules.
 
 ## LLM Agnostic
 

@@ -204,6 +204,11 @@ alfred-personal/
 
 **Quiero crear una skill personalizada:**
 → Sección: "SKILLS - SKILL.MD"
+→ Además: leer "Secrets Management Protocol" en `system/alfred-rules.md`
+
+**Quiero entender cómo gestionar credenciales para skills:**
+→ Protocolo de secretos en `system/alfred-rules.md` → "Secrets Management Protocol"
+→ Template: `workspace/config/secrets.env` (auto-creado desde `system/secrets.env.example`)
 
 **Quiero entender web search:**
 → Sección: "ACCESO A INTERNET"

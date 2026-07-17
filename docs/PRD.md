@@ -110,11 +110,22 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - **Descripción:** Habilidades definidas en SKILL.md con frontmatter YAML
 - **Carga:** Sin recompilación, desde /workspace/skills/
 - **Discovery:** Automático vía skill_loader tool
+- **Secretos:** Las credenciales se almacenan en `workspace/config/secrets.env` (auto-creado desde template), nunca en el SKILL.md
+- **Protocolo:** Documentado en `system/alfred-rules.md` → "Secrets Management Protocol"
 
-### F5.9 Seguridad
+### F5.9 Secrets Management (v2.0)
+- **ID:** F-SECRETS-001
+- **Descripción:** Gestión de credenciales para skills (API keys, tokens, passwords)
+- **Almacenamiento:** `workspace/config/secrets.env` en formato KEY=VALUE
+- **Permisos:** Solo lectura para Alfred (vía file_ops → `/workspace/config` = `r`)
+- **Template:** `system/secrets.env.example` se auto-crea en primer startup
+- **Acceso:** Alfred lee el archivo cuando ejecuta una skill y pasa secretos al tool `exec` vía parámetro `env` (sanitizado de logs)
+- **Uso:** El usuario gestiona el archivo manualmente; Alfred notifica qué variables necesita
+
+### F5.10 Seguridad
 - **ID:** F-SEC-001
 - **Descripción:** Seguridad en capas
-- **Capas:** Gateway auth, tool policy, channel ACL, file confinement, audit logging, rate limiting
+- **Capas:** Gateway auth, tool policy, channel ACL, file confinement, audit logging, rate limiting, secrets isolation
 
 ## 6. Requisitos No Funcionales
 
