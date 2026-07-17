@@ -2033,7 +2033,7 @@ workspace/memory/
     "whatsapp",
     "personal-assistant"
   ],
-  "author": "Alfred User",
+  "author": "geduma",
   "license": "MIT",
   "repository": {
     "type": "git",

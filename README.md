@@ -317,6 +317,10 @@ Steps performed:
 - `docs/PROGRESS.md` — Implementation progress
 - `system/alfred-rules.md` — Full rulebook injected into system prompts
 
+## Author
+
+**geduma** — [geduma.com](https://geduma.com)
+
 ## License
 
 MIT

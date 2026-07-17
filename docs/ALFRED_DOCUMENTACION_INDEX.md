@@ -3,6 +3,7 @@
 **Proyecto:** Alfred Pennyworth - Agente IA Personal Multicanal  
 **Versión:** 2.0.0  
 **Fecha:** Julio 2026  
+**Autor:** geduma  
 **Preparado para:** El usuario
 
 ---
