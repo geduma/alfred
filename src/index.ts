@@ -127,15 +127,24 @@ async function main(): Promise<void> {
   }
 }
 
-process.on('SIGINT', async () => {
-  getLogger().info('Shutting down Alfred...');
+function shutdown(): void {
+  try {
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+  } catch {
+    // stdin may not be a TTY, ignore
+  }
+  try {
+    process.stdout.write('\n');
+  } catch {
+    // stdout may be closed
+  }
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', async () => {
-  getLogger().info('Shutting down Alfred...');
-  process.exit(0);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 process.on('uncaughtException', (error) => {
   getLogger().fatal({ error: error.message, stack: error.stack }, 'Uncaught exception');

@@ -1,6 +1,7 @@
 import * as readline from 'readline';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
+import { getLogger } from '../utils/logger';
 
 export class CLIChannel implements Channel {
   private channelManager: ChannelManager;
@@ -29,8 +30,7 @@ export class CLIChannel implements Channel {
 
       if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
         console.log('\n👋 Goodbye.\n');
-        this.running = false;
-        this.rl?.close();
+        this.exit(0);
         return;
       }
 
@@ -57,8 +57,8 @@ export class CLIChannel implements Channel {
 
     this.rl.on('close', () => {
       if (this.running) {
-        this.running = false;
-        process.exit(0);
+        getLogger().info('CLI channel closed by user (Ctrl+C)');
+        this.exit(0);
       }
     });
   }
@@ -78,8 +78,30 @@ export class CLIChannel implements Channel {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.restoreStdin();
     if (this.rl) {
       this.rl.close();
+      this.rl = null;
     }
+  }
+
+  private restoreStdin(): void {
+    try {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+    } catch {
+      // stdin may not be a TTY, ignore
+    }
+  }
+
+  private exit(code: number): void {
+    this.running = false;
+    this.restoreStdin();
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
+    }
+    process.exit(code);
   }
 }
