@@ -29,8 +29,15 @@ export class PromptBuilder {
     const basePrompt = this.loadBasePrompt();
     const rules = this.loadRules();
     const preferences = this.loadPreferences();
+    const userName = this.getUserName(preferences);
 
     let systemPrompt = `${this.soulMd}\n\n---\n\n${basePrompt}`;
+
+    if (userName && userName !== 'unknown') {
+      systemPrompt = `## User Identity\nYour user's name is "${userName}". Always address them as "Señor ${userName}".\n\n---\n\n${systemPrompt}`;
+    } else {
+      systemPrompt = `## User Identity\nYou do not know the user's name yet. Ask for it on the very first message of every new session. When they tell you, save it immediately to preferences.md using the file_ops tool by updating the user_name field.\n\n---\n\n${systemPrompt}`;
+    }
 
     if (preferences) {
       systemPrompt += `\n\n---\n\n${preferences}`;
@@ -45,6 +52,15 @@ export class PromptBuilder {
     }
 
     return systemPrompt;
+  }
+
+  private getUserName(preferencesRaw: string): string | null {
+    if (!preferencesRaw) return null;
+    for (const line of preferencesRaw.split('\n')) {
+      const match = line.match(/^user_name:\s*(.+)$/i);
+      if (match) return match[1].trim();
+    }
+    return null;
   }
 
   private loadBasePrompt(): string {

@@ -89,7 +89,7 @@ async function main() {
         return;
       }
       if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
-        console.log('\n👋 Goodbye, Señor Felipe.\n');
+        console.log('\n👋 Goodbye.\n');
         ws.close();
         rl.close();
         return;

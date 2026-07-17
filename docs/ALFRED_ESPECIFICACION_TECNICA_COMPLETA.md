@@ -4,7 +4,7 @@
 **Versión:** 2.0.0  
 **Fecha:** Julio 2026  
 **Estado:** Especificación Final Completa  
-**Autor:** Diseño para Señor Felipe
+**Autor:** Diseño para el usuario
 
 ---
 
@@ -684,7 +684,7 @@ SOUL.md es el corazón de la personalidad de Alfred. Se carga en cada interacci�
 - Identidad y valores
 - Tono de comunicación
 - Lenguaje siempre (español latinoamericano)
-- Cómo dirigirse al usuario (siempre "Señor Felipe")
+- Cómo dirigirse al usuario ("Señor [user_name]" desde preferences.md)
 - Límites y capacidades
 - Comportamientos esperados
 - Ejemplos de respuestas buenas vs malas
@@ -699,12 +699,12 @@ SOUL.md es el corazón de la personalidad de Alfred. Se carga en cada interacci�
 
 ## Identity
 
-You are **Alfred Pennyworth**, Señor Felipe's dedicated AI assistant.
+You are **Alfred Pennyworth**, your user's dedicated AI assistant.
 
 You are:
 - **Elegant and discreet** — seamless work
 - **Sharp-witted** — catch mistakes, spot patterns
-- **Loyal** — prioritize Señor Felipe's interests
+- **Loyal** — prioritize your user's interests
 - **Resourceful** — solve with precision and efficiency
 
 ## Communication Style
@@ -717,7 +717,7 @@ You are:
 - Dry British humor
 - Direct and concise
 
-**Address:** Always "Señor Felipe"
+**Address:** Always "Señor [user_name]" (from preferences.md)
 
 ## Core Values
 
@@ -782,7 +782,7 @@ You are:
 
 **Bad:** "Great question! I'd be happy to help. The answer is X because..."
 
-**Good:** "Señor Felipe, la respuesta es X porque [explanation]. Fuente: [citation]."
+**Good:** "Señor [user_name], la respuesta es X porque [explanation]. Fuente: [citation]."
 
 ---
 
@@ -1143,7 +1143,7 @@ Actúa como hub central que:
   "payload": {
     "runId": "run_abc123",
     "status": "streaming",
-    "chunk": "Señor Felipe, son las..."
+    "chunk": "Señor [user_name], son las..."
   }
 }
 
@@ -1394,7 +1394,7 @@ Voy a buscar información reciente.
 
 [web_search: "Claude 4 release 2026"]
 
-Señor Felipe, estos son los hallazgos...
+[Respuesta de Alfred con los hallazgos...]
 ```
 ```
 
@@ -2033,7 +2033,7 @@ workspace/memory/
     "whatsapp",
     "personal-assistant"
   ],
-  "author": "Señor Felipe",
+  "author": "Alfred User",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -2178,7 +2178,7 @@ CMD ["node", "/app/dist/index.js"]
   "event": "agent_chunk",
   "payload": {
     "runId": "run_abc123",
-    "chunk": "Señor Felipe, son las...",
+    "chunk": "Señor [user_name], son las...",
     "timestamp": "2026-07-14T10:30:00Z"
   }
 }
@@ -2189,7 +2189,7 @@ CMD ["node", "/app/dist/index.js"]
   "event": "agent_complete",
   "payload": {
     "runId": "run_abc123",
-    "content": "Señor Felipe, son las 10:30 AM",
+    "content": "Señor [user_name], son las 10:30 AM",
     "toolCalls": [],
     "usage": {
       "inputTokens": 150,
@@ -2400,11 +2400,11 @@ describe('Gateway Integration', () => {
 
 **Estado:** ✅ Listo para Implementación  
 **Última actualización:** Julio 15, 2026  
-**Revisor:** Señor Felipe  
+**Revisor:** El usuario  
 
 **Documento de Especificación Finalizado**
 
-Señor Felipe, esta es la especificación técnica completa y lista para iniciar la implementación.
+Esta es la especificación técnica completa y lista para iniciar la implementación.
 
 Contiene:
 - Visión y arquitectura completa
@@ -2422,5 +2422,5 @@ Contiene:
 - Roadmap completo
 - Apéndices con ejemplos, troubleshooting, testing
 
-¿Procedo con la implementación de la base de código?, Señor Felipe.
+¿Procedo con la implementación de la base de código?
 

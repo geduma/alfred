@@ -1,7 +1,7 @@
 # ALFRED — Quick Start Guide
 
 **Versión:** 2.0.0  
-**Para:** Señor Felipe  
+**Para:** El usuario  
 
 ---
 
@@ -132,7 +132,7 @@ Reinicia Alfred. **Eso es.**
 Tu asistente siempre responde como Alfred Pennyworth:
 - Español latinoamericano
 - Elegante y preciso
-- Te trata como "Señor Felipe"
+- Te trata como "Señor [user_name]"
 - Refinado pero directo
 
 Edit `/workspace/config/SOUL.md` para cambiar.
@@ -209,7 +209,7 @@ Ver `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` para:
 
 ---
 
-**¿Listo para comenzar, Señor Felipe?**
+**¿Listo para comenzar?**
 
 El archivo `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` contiene todo lo que necesitas saber.
 

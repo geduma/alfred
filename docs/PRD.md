@@ -10,7 +10,7 @@
 
 ## 1. Resumen Ejecutivo
 
-Alfred es un asistente IA personal que funciona como gateway multicanal descentralizado. Permite al usuario (Señor Felipe) interactuar con modelos de lenguaje (LLM) a través de Telegram, WhatsApp y CLI, con personalidad persistente, acceso a internet y ejecución de herramientas, todo en un solo contenedor Docker.
+Alfred es un asistente IA personal que funciona como gateway multicanal descentralizado. Permite al usuario interactuar con modelos de lenguaje (LLM) a través de Telegram, WhatsApp y CLI, con personalidad persistente, acceso a internet y ejecución de herramientas, todo en un solo contenedor Docker.
 
 ## 2. Problema
 
@@ -61,7 +61,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - **Descripción:** Archivo Markdown define tono, valores, límites y comportamiento
 - **Inyección:** Se carga en cada interacción como parte del system prompt
 - **Idioma:** Siempre español latinoamericano
-- **Tratamiento:** "Señor Felipe"
+- **Tratamiento:** "Señor [user_name]" (dinámico desde preferences.md)
 
 ### F5.4 Gateway WebSocket
 - **ID:** F-GW-001
@@ -122,7 +122,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 ## 7. User Stories
 
 ### US-001: Conversación vía Telegram
-> Como Señor Felipe, quiero chatear con Alfred via Telegram para obtener respuestas rápidas.
+> Como usuario, quiero chatear con Alfred via Telegram para obtener respuestas rápidas.
 
 **Criterios de aceptación:**
 - Mensaje en Telegram → Alfred responde en <30s
@@ -130,7 +130,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - Alfred puede buscar en internet si es necesario
 
 ### US-002: Cambio de LLM
-> Como Señor Felipe, quiero cambiar el modelo LLM editando un archivo, no código.
+> Como usuario, quiero cambiar el modelo LLM editando un archivo, no código.
 
 **Criterios de aceptación:**
 - Editar `alfred.json` → cambiar `primary_provider`
@@ -138,7 +138,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - Fallback automático si el provider falla
 
 ### US-003: Ejecución de comandos
-> Como Señor Felipe, quiero que Alfred ejecute comandos shell por mí.
+> Como usuario, quiero que Alfred ejecute comandos shell por mí.
 
 **Criterios de aceptación:**
 - Alfred puede ejecutar comandos permitidos
@@ -146,7 +146,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - Output se muestra en la respuesta
 
 ### US-004: Búsqueda web
-> Como Señor Felipe, quiero preguntar sobre temas actuales y obtener respuestas con fuentes.
+> Como usuario, quiero preguntar sobre temas actuales y obtener respuestas con fuentes.
 
 **Criterios de aceptación:**
 - "¿Qué pasó hoy?" → Alfred busca y resume

@@ -283,7 +283,7 @@ export class Gateway {
       return response.content;
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');
-      return `I'm sorry, Señor Felipe. An error occurred: ${error.message}`;
+      return `I'm sorry. An error occurred: ${error.message}`;
     }
   }
 

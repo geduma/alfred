@@ -99,3 +99,5 @@
 | **Sessions** | Serialized to workspace/memory/sessions/ — survive restarts |
 | **Jobs** | JSON files in workspace/memory/jobs/ — 30s interval runner |
 | **Language** | All response strings are in English; LLM controls language via preferences.md |
+| **User Name** | Dynamic from preferences.md (`user_name` field). Asked on first interaction if unknown. No hardcoded names in prompts. |
+| **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
