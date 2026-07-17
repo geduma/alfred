@@ -53,6 +53,14 @@ export interface SecurityConfig {
   };
 }
 
+export interface MemoryConfig {
+  max_context_tokens: number;
+  max_verbatim_messages: number;
+  compaction_threshold: number;
+  compaction_model: string;
+  summary_sections: string[];
+}
+
 export interface AlfredConfig {
   agent: {
     name: string;
@@ -64,6 +72,7 @@ export interface AlfredConfig {
   channels: Record<string, ChannelConfig>;
   tools: Record<string, ToolSpecificConfig>;
   database: DatabaseConfig;
+  memory?: MemoryConfig;
   logging: LoggingConfig;
   security: SecurityConfig;
 }

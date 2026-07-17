@@ -97,6 +97,30 @@ The config file paths (`database.path`, `logging.file_path`, `agent.personality_
 
 On first startup, if the config doesn't exist, it's auto-created from `system/alfred.json.example`. The `gateway_auth_token` is also auto-generated if set to `CHANGE_ME`.
 
+## Context Compression
+
+Alfred uses a **Sliding Window + Summary** strategy to prevent unbounded context growth. When the conversation history exceeds the token budget, older messages are automatically compressed into a structured summary while the most recent messages are kept verbatim.
+
+- **Token budget**: Configurable via `memory.max_context_tokens` (default: 32,000)
+- **Trigger**: Compaction activates at `max_context_tokens × compaction_threshold` (80% by default)
+- **Verbatim window**: Last `max_verbatim_messages` (default: 20) preserved exactly
+- **Summary format**: Structured sections (DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS)
+- **Fallback**: If LLM summarization fails, a heuristic extracts key points from recent messages
+- **Persistence**: Full history saved to disk; compacted version sent to LLM
+
+Configure in `alfred.json`:
+```json
+{
+  "memory": {
+    "max_context_tokens": 32000,
+    "max_verbatim_messages": 20,
+    "compaction_threshold": 0.8,
+    "compaction_model": "auto",
+    "summary_sections": ["decisions", "preferences", "pending", "context"]
+  }
+}
+```
+
 ## 4 Universal Tools
 
 | Tool | Domain |
@@ -134,11 +158,13 @@ Supported: OpenAI-compatible (Ollama, RunPod, LocalAI), Anthropic Claude, OpenAI
 ```
 src/
 ├── index.ts                  ← Entry point
-├── gateway.ts                ← WebSocket (port 18789) + session store + job runner
+├── gateway.ts                ← WebSocket (port 18789) + session store + job runner + context compressor
 ├── agent/                    ← LLM router, prompt builder, providers
+├── services/
+│   └── context-compressor.ts ← Sliding window + summarization for context management
 ├── tools/                    ← 4 universal tools
 ├── channels/                 ← Telegram, WhatsApp, CLI
-├── db/                       ← SQLite + session persistence
+├── db/                       ← SQLite + session persistence (with summary field)
 ├── security/                 ← Rate limiter, auth
 └── types/                    ← TypeScript interfaces
 ```

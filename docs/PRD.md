@@ -95,6 +95,16 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - **Tablas:** sessions, messages, command_log, user_context, skills_cache
 - **Features:** WAL mode, foreign keys, auto-migration
 
+### F5.8 Context Compression
+- **ID:** F-MEM-001
+- **Descripción:** Gestión inteligente del contexto para evitar crecimiento ilimitado
+- **Estrategia:** Sliding window + LLM summarization
+- **Compresión:** Mensajes antiguos se comprimen en resumen estructurado con secciones: DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS
+- **Threshold:** Configurable via `memory.max_context_tokens` (default: 32000) y `memory.compaction_threshold` (default: 0.8)
+- **Verbatim:** Últimos N mensajes se mantienen intactos (`max_verbatim_messages`, default: 20)
+- **Persistencia:** Full history en disco, versión compactada se envía al LLM
+- **Fallback:** Si el LLM no genera resumen, se usa heurística basada en mensajes recientes
+
 ### F5.8 Skills Modulares (v1.5)
 - **ID:** F-SKILL-001
 - **Descripción:** Habilidades definidas en SKILL.md con frontmatter YAML
@@ -175,12 +185,21 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - [ ] OpenAI y Gemini como providers activos
 
 ### v2.0 — Q4 2026
+- [x] Context Compression (Sliding Window + Summary)
 - [ ] Discord plugin
 - [ ] Slack plugin
 - [ ] Redis para sesiones distribuidas
 - [ ] LanceDB para embeddings
 - [ ] Voice support
-- [ ] Memoria avanzada + contexto
+
+### v3.0+ — 2027
+- [ ] Advanced RAG memory with vector store
+- [ ] Cross-session long-term memory
+- [ ] Cloud deployment
+- [ ] Multi-user support
+- [ ] Advanced workflows
+- [ ] Custom LLM providers
+- [ ] Mobile apps
 
 ### v3.0+ — 2027
 - [ ] Cloud deployment

@@ -9,6 +9,13 @@ const SESSIONS_DIR = WORKSPACE_PATHS.sessions();
 export interface StoredSession {
   id: string;
   messages: Message[];
+  summary?: string;
+  summarySections?: {
+    decisions: string[];
+    preferences: string[];
+    pending: string[];
+    context: string;
+  };
   createdAt: string;
   updatedAt: string;
 }

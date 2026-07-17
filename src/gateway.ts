@@ -8,6 +8,9 @@ import { ToolHandler } from './types/tool';
 import { createTools } from './tools/index';
 import { SessionStore, StoredSession } from './db/session-store';
 import { JobSchedulerTool } from './tools/job-scheduler';
+import { Message } from './types/llm';
+import { ContextCompressor } from './services/context-compressor';
+import { approximateSystemPromptTokens } from './utils/token-counter';
 
 interface GatewayRequest {
   type: 'req';
@@ -28,6 +31,7 @@ export class Gateway {
   private jobScheduler: JobSchedulerTool;
   private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
   private port: number;
+  private contextCompressor: ContextCompressor;
 
   constructor(
     config: ConfigLoader,
@@ -42,6 +46,8 @@ export class Gateway {
     this.port = 18789;
     this.sessionStore = new SessionStore();
     this.jobScheduler = new JobSchedulerTool();
+    this.contextCompressor = new ContextCompressor(config.memoryConfig);
+    this.contextCompressor.setLlmRouter(llmRouter);
   }
 
   setTools(tools: ToolHandler[]): void {
@@ -93,6 +99,25 @@ export class Gateway {
       clearInterval(this.jobRunnerTimer);
       this.jobRunnerTimer = null;
     }
+  }
+
+  private async prepareContext(session: StoredSession, systemPrompt: string): Promise<Message[]> {
+    const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
+
+    if (this.contextCompressor.shouldCompact(session.messages, systemPromptTokens)) {
+      const result = await this.contextCompressor.compactSession(
+        session.summary,
+        session.messages,
+        systemPromptTokens
+      );
+
+      if (result.wasCompacted) {
+        session.summary = result.summary;
+        return result.messages;
+      }
+    }
+
+    return session.messages;
   }
 
   private onClientConnect(ws: WebSocket): void {
@@ -175,8 +200,10 @@ export class Gateway {
 
       session.messages.push({ role: 'user', content: message });
 
+      const contextMessages = await this.prepareContext(session, systemPrompt);
+
       const response = await this.llmRouter.call({
-        messages: session.messages,
+        messages: contextMessages,
         system: systemPrompt,
         tools: this.tools.map(t => t.tool),
       });
@@ -195,8 +222,10 @@ export class Gateway {
           }
         }
 
+        const finalContextMessages = await this.prepareContext(session, systemPrompt);
+
         const finalResponse = await this.llmRouter.call({
-          messages: session.messages,
+          messages: finalContextMessages,
           system: systemPrompt,
         });
 
@@ -248,8 +277,10 @@ export class Gateway {
 
       const systemPrompt = await this.promptBuilder.buildSystemPrompt();
 
+      const contextMessages = await this.prepareContext(session, systemPrompt);
+
       const response = await this.llmRouter.call({
-        messages: session.messages,
+        messages: contextMessages,
         system: systemPrompt,
         tools: this.tools.map(t => t.tool),
       });
@@ -268,8 +299,10 @@ export class Gateway {
           }
         }
 
+        const finalContextMessages = await this.prepareContext(session, systemPrompt);
+
         const finalResponse = await this.llmRouter.call({
-          messages: session.messages,
+          messages: finalContextMessages,
           system: systemPrompt,
         });
 

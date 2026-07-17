@@ -83,6 +83,14 @@ const SecurityConfigSchema = z.object({
   }).optional(),
 });
 
+const MemoryConfigSchema = z.object({
+  max_context_tokens: z.number().positive().default(32000),
+  max_verbatim_messages: z.number().positive().default(20),
+  compaction_threshold: z.number().min(0).max(1).default(0.8),
+  compaction_model: z.string().default('auto'),
+  summary_sections: z.array(z.string()).default(['decisions', 'preferences', 'pending', 'context']),
+});
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
@@ -94,6 +102,7 @@ const AlfredConfigSchema = z.object({
   channels: z.record(z.string(), ChannelConfigSchema),
   tools: z.record(z.string(), ToolConfigSchema),
   database: DatabaseConfigSchema,
+  memory: MemoryConfigSchema.optional(),
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
 });
@@ -172,6 +181,10 @@ export class ConfigLoader {
 
   get security(): SecurityConfig {
     return this.config.security;
+  }
+
+  get memoryConfig() {
+    return this.config.memory;
   }
 
   get agentName(): string {
