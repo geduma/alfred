@@ -22,7 +22,7 @@ export function initializeLogger(config: {
   if (config.targets.includes('console')) {
     transportTargets.push({
       target: 'pino/file',
-      options: {},
+      options: { destination: 2 },
       level: config.level,
     });
   }

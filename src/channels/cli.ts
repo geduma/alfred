@@ -14,15 +14,11 @@ export class CLIChannel implements Channel {
   async start(): Promise<void> {
     this.running = true;
 
-    console.log('\n🚀 Alfred CLI — Escribe "exit" para salir\n');
-
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       prompt: '🧐 ',
     });
-
-    this.rl.prompt();
 
     this.rl.on('line', async (input: string) => {
       const trimmed = input.trim();
@@ -65,6 +61,15 @@ export class CLIChannel implements Channel {
         process.exit(0);
       }
     });
+  }
+
+  signalReady(): void {
+    console.log('\n╔═══════════════════════════════════════════╗');
+    console.log('║   ✅ Alfred is running!                   ║');
+    console.log('║   WebSocket: ws://127.0.0.1:18789          ║');
+    console.log('╚═══════════════════════════════════════════╝');
+    console.log(' Escribe "exit" para salir\n');
+    this.rl?.prompt();
   }
 
   async sendMessage(_userId: string, message: string): Promise<void> {

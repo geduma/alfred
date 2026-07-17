@@ -120,9 +120,7 @@ async function main(): Promise<void> {
   try {
     await gateway.start();
     getLogger().info('Alfred is ready');
-    console.log('\n✅ Alfred is running!');
-    console.log('   WebSocket: ws://127.0.0.1:18789');
-    console.log('   Press Ctrl+C to stop.\n');
+    channelManager.signalReady();
   } catch (error: any) {
     getLogger().fatal({ error: error.message }, 'Failed to start gateway');
     process.exit(1);
