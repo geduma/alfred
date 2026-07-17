@@ -147,7 +147,7 @@
     }
   },
   "security": {
-    "gateway_auth_token": "CHANGE_ME_TO_A_SECURE_RANDOM_TOKEN_32_CHARS",
+    "gateway_auth_token": "CHANGE_ME",
     "rate_limiting": {
       "enabled": true,
       "requests_per_user_per_hour": 100,

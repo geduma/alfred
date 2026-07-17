@@ -7,7 +7,7 @@ RUN npm ci
 
 COPY src ./src
 COPY tsconfig.json ./
-COPY config/ ./config/
+COPY system/ ./system/
 
 RUN npm run build
 
@@ -21,7 +21,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /build/dist ./dist
-COPY config/ ./config/
+COPY system/ ./system/
 
 RUN mkdir -p /workspace/{db,files,skills,config,logs,memory}
 

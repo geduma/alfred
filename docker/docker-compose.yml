@@ -12,6 +12,9 @@ services:
     ports:
       - "127.0.0.1:18789:18789"
 
+    stdin_open: true
+    tty: true
+
     volumes:
       - ~/.alfred-personal:/workspace
 

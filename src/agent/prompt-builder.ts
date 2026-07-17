@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { SoulLoader } from './soul-loader';
 
-const DEFAULT_BASE_PROMPT_PATH = path.resolve(__dirname, '../../config/system-prompt-base.txt');
-const RULES_PATH = path.resolve(__dirname, '../../config/alfred-rules.md');
+const DEFAULT_BASE_PROMPT_PATH = path.resolve(__dirname, '../../system/system-prompt-base.txt');
+const RULES_PATH = path.resolve(__dirname, '../../system/alfred-rules.md');
 const PREFERENCES_PATH = path.resolve(__dirname, '../../workspace/memory/personality/preferences.md');
 
 export class PromptBuilder {

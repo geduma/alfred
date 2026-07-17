@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
@@ -16,8 +17,8 @@ const CONFIG_PATH = process.env.CONFIG_PATH || path.resolve(__dirname, '../works
 
 function ensureConfigFiles(): void {
   const pairs = [
-    { example: path.resolve(__dirname, '../config/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
-    { example: path.resolve(__dirname, '../config/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
+    { example: path.resolve(__dirname, '../system/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
+    { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
   ];
 
   for (const { example, target } of pairs) {
@@ -44,6 +45,16 @@ async function main(): Promise<void> {
 
   const configLoader = new ConfigLoader(CONFIG_PATH);
   const config = configLoader.allConfig;
+
+  if (config.security.gateway_auth_token.startsWith('CHANGE_ME')) {
+    const newToken = `rpi-alfred-${randomBytes(16).toString('hex')}`;
+    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    raw.security.gateway_auth_token = newToken;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf-8');
+    config.security.gateway_auth_token = newToken;
+    console.log(`\n🔑 Gateway auth token auto-generated: ${newToken}`);
+    console.log(`   Save this if you need external WebSocket clients.\n`);
+  }
 
   initializeLogger(config.logging);
 
