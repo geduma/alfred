@@ -21,6 +21,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
+      WORKSPACE: /workspace
       CONFIG_PATH: /workspace/config/alfred.json
 
     networks:

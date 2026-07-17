@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { Message } from '../types/llm';
 import { getLogger } from '../utils/logger';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
-const SESSIONS_DIR = path.resolve(__dirname, '../../workspace/memory/sessions');
+const SESSIONS_DIR = WORKSPACE_PATHS.sessions();
 
 export interface StoredSession {
   id: string;

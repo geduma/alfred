@@ -3,8 +3,9 @@ import { execSync } from 'child_process';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
-const LOG_PATH = '/workspace/logs/alfred.log';
+const LOG_PATH = WORKSPACE_PATHS.alfredLog();
 
 export class SystemTool implements ToolHandler {
   private configLoader: ConfigLoader;

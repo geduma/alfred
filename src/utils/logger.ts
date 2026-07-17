@@ -17,10 +17,10 @@ export function initializeLogger(config: {
 }): pino.Logger {
   if (loggerInstance) return loggerInstance;
 
-  const targets: pino.TransportTargetOptions[] = [];
+  const transportTargets: pino.TransportTargetOptions[] = [];
 
   if (config.targets.includes('console')) {
-    targets.push({
+    transportTargets.push({
       target: 'pino/file',
       options: {},
       level: config.level,
@@ -29,25 +29,31 @@ export function initializeLogger(config: {
 
   if (config.targets.includes('file') && config.config.file_path) {
     const logDir = config.config.file_path;
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+    try {
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+      transportTargets.push({
+        target: 'pino/file',
+        options: {
+          destination: path.join(logDir, 'alfred.log'),
+          mkdir: true,
+        },
+        level: config.level,
+      });
+    } catch {
+      // fall back to stdout if file target fails
+      transportTargets.push({
+        target: 'pino/file',
+        options: { destination: 1 },
+        level: config.level,
+      });
     }
-
-    targets.push({
-      target: 'pino/file',
-      options: {
-        destination: path.join(logDir, 'alfred.log'),
-        mkdir: true,
-      },
-      level: config.level,
-    });
   }
 
   loggerInstance = pino({
     level: config.level,
-    transport: {
-      targets,
-    },
+    ...(transportTargets.length > 0 ? { transport: { targets: transportTargets } } : {}),
   });
 
   return loggerInstance;

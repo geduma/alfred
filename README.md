@@ -44,6 +44,8 @@ npm install
 npm run dev
 ```
 
+> **Note:** The config file (`workspace/config/alfred.json`) can use `/workspace/...` paths — Alfred resolves them to `./workspace/...` locally. Set `WORKSPACE=./custom-path` to use a different data directory.
+
 ## Channels
 
 | Channel | Access |
@@ -54,7 +56,16 @@ npm run dev
 
 ## Configuration
 
-Single file: `~/.alfred-personal/config/alfred.json` (or `workspace/config/alfred.json`)
+Single file: `~/.alfred-personal/config/alfred.json` (Docker) or `workspace/config/alfred.json` (local dev).
+
+### `WORKSPACE` environment variable
+
+Alfred auto-detects the workspace root:
+- **Docker**: set to `/workspace` in docker-compose — all paths in `alfred.json` resolve under this.
+- **Local**: defaults to `./workspace` (inside the project directory).
+- **Override**: set `WORKSPACE=/path/to/data` to point anywhere.
+
+The config file paths (`database.path`, `logging.file_path`, `agent.personality_file`) all resolve relative to `WORKSPACE`. You can keep using `/workspace/...` paths in the config file — Alfred automatically rewrites them to the actual workspace root.
 
 ```json
 {

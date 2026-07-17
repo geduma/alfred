@@ -2,6 +2,7 @@ import fs from 'fs';
 import { z } from 'zod';
 import { AlfredConfig, ChannelConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ToolSpecificConfig } from '../types/config';
 import { LLMConfig, ProviderConfig } from '../types/llm';
+import { resolvePath } from '../utils/workspace';
 
 const ProviderConfigSchema = z.object({
   type: z.enum(['openai-compatible', 'anthropic', 'openai', 'gemini']),
@@ -109,8 +110,19 @@ export class ConfigLoader {
   reload(): AlfredConfig {
     const raw = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
     this.config = AlfredConfigSchema.parse(raw) as AlfredConfig;
+
+    this.config.agent.personality_file = resolvePath(this.config.agent.personality_file);
+    this.config.database.config.path = resolvePath(this.config.database.config.path);
+    if (this.config.logging.config.file_path) {
+      this.config.logging.config.file_path = resolvePath(this.config.logging.config.file_path);
+    }
+
     this.validateProviderChain();
     return this.config;
+  }
+
+  resolvePath(p: string): string {
+    return resolvePath(p);
   }
 
   private validateProviderChain(): void {
