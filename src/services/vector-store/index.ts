@@ -118,7 +118,7 @@ export class VectorStoreManager {
 
     try {
       const queryVector = await this.embedder.embed(query);
-      const results = await this.table.search(queryVector).limit(k * 2).execute();
+      const results = await this.table.search(queryVector).limit(k * 2).toArray();
 
       return results
         .filter((r: any) => {
