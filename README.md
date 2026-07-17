@@ -124,8 +124,8 @@ Reduces the system prompt size by 20-45% before every LLM call using pure-TypeSc
 
 Provides cross-session semantic memory via vector search. Every message is embedded and stored; before each response, Alfred retrieves the most relevant chunks from past conversations.
 
-- **Embedding provider**: Agnostic — Ollama, OpenAI, or any OpenAI-compatible API
-- **Provider reference**: Can reuse existing LLM provider's `api_url`/`api_key`
+- **Embedding provider**: Agnostic — `openai-compatible` (Ollama, RunPod, LocalAI), `openai`, `ollama` (native API)
+- **Provider reference**: Can reuse existing LLM provider's `api_url`/`api_key` via `provider_ref`. Only `openai-compatible` and `openai` providers support embeddings — Anthropic and Gemini are ignored with a warning
 - **Latency added**: ~100-300ms (search + embedding), offset by 2-4s LLM savings from smaller prompts
 - **Token reduction**: ~46% vs non-RAG sliding window approach
 

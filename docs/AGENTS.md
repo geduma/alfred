@@ -175,17 +175,24 @@ Key implementation files:
 - `src/services/vector-store/index.ts` — LanceDB init, ingest, search, delete
 - `src/services/vector-store/embedder.ts` — Agnostic embedder factory
 
-### Embedding Examples
+### Embedding
+
+**Supported providers:** `openai-compatible` (Ollama, RunPod, LocalAI, etc.), `openai`, `ollama` (native API).
+
+`provider_ref` references an existing LLM provider to reuse its `api_url`/`api_key`. Only providers of type `openai-compatible` or `openai` can be referenced — **Anthropic and Gemini do not offer embedding APIs** and will be ignored with a warning, falling back to explicit config.
 
 ```json
 // Using local Ollama via provider_ref
 "embedding": { "type": "openai-compatible", "model": "nomic-embed-text", "dimension": 768, "provider_ref": "ollama-local" }
 
-// Using OpenAI API directly
+// Using OpenAI API directly (no provider_ref needed)
 "embedding": { "type": "openai", "model": "text-embedding-3-small", "dimension": 1536, "config": { "api_key": "sk-..." } }
 
 // Using custom OpenAI-compatible endpoint
 "embedding": { "type": "openai-compatible", "model": "bge-m3", "dimension": 1024, "config": { "api_url": "http://192.168.1.100:11434/v1" } }
+
+// Inline Ollama native API (no provider_ref, no config override from LLM provider)
+"embedding": { "type": "ollama", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "http://localhost:11434" } }
 ```
 
 ## Snapshots
