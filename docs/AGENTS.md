@@ -45,7 +45,12 @@ src/
 │       ├── anthropic.ts      ← Claude
 │       └── gemini.ts         ← Gemini
 ├── services/
-│   └── context-compressor.ts ← Sliding window + LLM summarization for context management
+│   ├── context-compressor.ts ← Sliding window + LLM summarization for context management
+│   ├── prompt-compressor.ts  ← Telegraph English — rule-based prompt compression
+│   ├── vector-store/
+│   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
+│   │   └── embedder.ts      ← Agnostic embedder factory (Ollama, OpenAI, OpenAI-compatible)
+│   └── snapshot.ts           ← Session snapshots for long-term memory checkpoints
 ├── tools/                    ← 4 universal tools
 │   ├── exec.ts               ← Shell with allowlist/denylist
 │   ├── file-ops.ts           ← File CRUD with multi-path permission rules
@@ -90,7 +95,10 @@ Single file: `workspace/config/alfred.json`
 - `tools` → Per-tool configuration
 - `channels` → Channel + permissions (ACL via `allow_from`)
 - `database` → SQLite path + settings
-- `memory` → Context compression settings (max_context_tokens, max_verbatim_messages, compaction_threshold, etc.)
+- `memory` → Context compression, prompt compression, vector store, and snapshot settings
+- `memory.prompt_compression` → Telegraph English compression (enabled, mode: telegraph|off)
+- `memory.vector_store` → LanceDB RAG config (embedding provider, search params, ingest settings)
+- `memory.snapshots` → Session snapshot config (auto interval, max per session)
 - `security.gateway_auth_token` → Minimum 16 characters
 
 ## 4 Universal Tools
@@ -140,6 +148,58 @@ Key implementation files:
 - `src/services/context-compressor.ts` — Core compression logic (token estimation, LLM summarization, fallback)
 - `src/utils/token-counter.ts` — Token estimation utility (≈4 chars/token heuristic)
 - `src/db/session-store.ts` — StoredSession now includes `summary` and optional `summarySections` fields
+
+## Prompt Compression (Telegraph English)
+
+Alfred applies **Telegraph English** compression to the system prompt before every LLM call:
+
+- **Rule-based**: Removes articles, auxiliary verbs, filler words, and shortens verbose phrases
+- **Zero dependencies**: Pure TypeScript, no Python, no models
+- **Latency:** <10ms per request
+- **Compression ratio:** ~20-35% (standard mode), ~30-45% (aggressive mode)
+- **Config**: `memory.prompt_compression` in alfred.json (`enabled`, `mode: "telegraph"|"off"`, `aggressive`)
+- **Fallback**: Set `mode: "off"` to disable (no performance impact)
+
+## Vector Store / RAG (LanceDB)
+
+Alfred uses **LanceDB** (embedded vector database) for long-term semantic memory:
+
+- **Embedding**: Agnostic — supports Ollama (local), OpenAI, and any OpenAI-compatible API
+- **Provider reference**: Can reuse an existing LLM provider's `api_url`/`api_key` via `provider_ref`
+- **Ingest**: Every user message, tool response, and assistant reply is embedded and stored
+- **Search**: On each query, Alfred retrieves top-K semantically similar chunks from past sessions
+- **Injection**: Results are injected as `[RAG CONTEXT — Retrieved from long-term memory]` messages
+- **Config**: `memory.vector_store` in alfred.json (embedding provider, paths, search params)
+
+Key implementation files:
+- `src/services/vector-store/index.ts` — LanceDB init, ingest, search, delete
+- `src/services/vector-store/embedder.ts` — Agnostic embedder factory
+
+### Embedding Examples
+
+```json
+// Using local Ollama via provider_ref
+"embedding": { "type": "openai-compatible", "model": "nomic-embed-text", "dimension": 768, "provider_ref": "ollama-local" }
+
+// Using OpenAI API directly
+"embedding": { "type": "openai", "model": "text-embedding-3-small", "dimension": 1536, "config": { "api_key": "sk-..." } }
+
+// Using custom OpenAI-compatible endpoint
+"embedding": { "type": "openai-compatible", "model": "bge-m3", "dimension": 1024, "config": { "api_url": "http://192.168.1.100:11434/v1" } }
+```
+
+## Snapshots
+
+Snapshots are point-in-time session checkpoints for long-term memory recall:
+
+- **Auto-snapshot**: Creates a snapshot every N messages (`auto_snapshot_interval`, default: 50)
+- **Manual**: Programmatic via SnapshotManager API (future tool integration)
+- **Pruning**: Oldest snapshots are auto-deleted when exceeding `max_snapshots_per_session`
+- **Storage**: JSON files in `workspace/memory/snapshots/`
+- **Integration**: Snapshots tag vectors in LanceDB for cross-session search filtering
+- **Config**: `memory.snapshots` in alfred.json (enabled, interval, max)
+
+The snapshot pipeline in `prepareContext()` runs after each successful interaction, checking the message counter against the configured interval.
 
 ## Auto-Created Configs
 

@@ -38,4 +38,6 @@ export const WORKSPACE_PATHS = {
   personality: () => resolveInWorkspace('memory', 'personality'),
   preferences: () => resolveInWorkspace('memory', 'personality', 'preferences.md'),
   alfredLog: () => resolveInWorkspace('logs', 'alfred.log'),
+  vectors: () => resolveInWorkspace('memory', 'vectors'),
+  snapshots: () => resolveInWorkspace('memory', 'snapshots'),
 } as const;

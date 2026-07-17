@@ -11,7 +11,7 @@ cd alfred-personal
 
 # 2. Create the workspace directory on your host
 #    This will be mounted into the container at /workspace
-mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/personality,memory/sessions,memory/jobs}
+mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,jobs,vectors,snapshots}}
 
 # 3. Copy configuration templates to the workspace
 #    (On first run without these files, Alfred creates them automatically,
@@ -97,9 +97,13 @@ The config file paths (`database.path`, `logging.file_path`, `agent.personality_
 
 On first startup, if the config doesn't exist, it's auto-created from `system/alfred.json.example`. The `gateway_auth_token` is also auto-generated if set to `CHANGE_ME`.
 
-## Context Compression
+## Memory System
 
-Alfred uses a **Sliding Window + Summary** strategy to prevent unbounded context growth. When the conversation history exceeds the token budget, older messages are automatically compressed into a structured summary while the most recent messages are kept verbatim.
+Alfred uses a three-layer memory system to manage context efficiently across sessions.
+
+### Layer 1: Context Compression (Sliding Window)
+
+Prevents unbounded context growth within a single session. When the conversation history exceeds the token budget, older messages are automatically compressed into a structured summary while the most recent messages are kept verbatim.
 
 - **Token budget**: Configurable via `memory.max_context_tokens` (default: 32,000)
 - **Trigger**: Compaction activates at `max_context_tokens × compaction_threshold` (80% by default)
@@ -108,7 +112,29 @@ Alfred uses a **Sliding Window + Summary** strategy to prevent unbounded context
 - **Fallback**: If LLM summarization fails, a heuristic extracts key points from recent messages
 - **Persistence**: Full history saved to disk; compacted version sent to LLM
 
-Configure in `alfred.json`:
+### Layer 2: Prompt Compression (Telegraph English)
+
+Reduces the system prompt size by 20-45% before every LLM call using pure-TypeScript rule-based compression (removes articles, fillers, auxiliary verbs, shortens phrases).
+
+- **Zero external dependencies**: No Python, no models, no API calls
+- **Latency**: <10ms per request
+- **Config**: `memory.prompt_compression` in alfred.json
+
+### Layer 3: Vector Store (RAG) with LanceDB
+
+Provides cross-session semantic memory via vector search. Every message is embedded and stored; before each response, Alfred retrieves the most relevant chunks from past conversations.
+
+- **Embedding provider**: Agnostic — Ollama, OpenAI, or any OpenAI-compatible API
+- **Provider reference**: Can reuse existing LLM provider's `api_url`/`api_key`
+- **Latency added**: ~100-300ms (search + embedding), offset by 2-4s LLM savings from smaller prompts
+- **Token reduction**: ~46% vs non-RAG sliding window approach
+
+### Snapshots
+
+Automatic session checkpoints every N messages for long-term memory recall. Snapshots tag vectors in LanceDB, enabling filtering by point-in-time.
+
+### Full Memory Config
+
 ```json
 {
   "memory": {
@@ -116,7 +142,30 @@ Configure in `alfred.json`:
     "max_verbatim_messages": 20,
     "compaction_threshold": 0.8,
     "compaction_model": "auto",
-    "summary_sections": ["decisions", "preferences", "pending", "context"]
+    "summary_sections": ["decisions", "preferences", "pending", "context"],
+    "prompt_compression": {
+      "enabled": true,
+      "mode": "telegraph",
+      "aggressive": false
+    },
+    "vector_store": {
+      "enabled": true,
+      "type": "lancedb",
+      "path": "/workspace/memory/vectors",
+      "embedding": {
+        "type": "openai-compatible",
+        "model": "nomic-embed-text",
+        "dimension": 768,
+        "config": { "api_url": "http://localhost:11434/v1" }
+      },
+      "ingest": { "on_message": true, "max_chunk_size": 512 },
+      "search": { "top_k": 5, "min_score": 0.5 }
+    },
+    "snapshots": {
+      "enabled": true,
+      "auto_snapshot_interval": 50,
+      "max_snapshots_per_session": 20
+    }
   }
 }
 ```
@@ -158,10 +207,13 @@ Supported: OpenAI-compatible (Ollama, RunPod, LocalAI), Anthropic Claude, OpenAI
 ```
 src/
 ├── index.ts                  ← Entry point
-├── gateway.ts                ← WebSocket (port 18789) + session store + job runner + context compressor
+├── gateway.ts                ← WebSocket + session store + job runner + context compressor + RAG + prompt compression
 ├── agent/                    ← LLM router, prompt builder, providers
 ├── services/
-│   └── context-compressor.ts ← Sliding window + summarization for context management
+│   ├── context-compressor.ts ← Sliding window + summarization for context management
+│   ├── prompt-compressor.ts  ← Telegraph English rule-based compression
+│   ├── vector-store/         ← LanceDB vector store + agnostic embedder
+│   └── snapshot.ts           ← Session checkpoints
 ├── tools/                    ← 4 universal tools
 ├── channels/                 ← Telegram, WhatsApp, CLI
 ├── db/                       ← SQLite + session persistence (with summary field)
@@ -224,7 +276,7 @@ When hot-reload is triggered, Alfred:
 1. Re-reads `alfred.json` from disk (validates schema)
 2. Re-initializes LLM providers
 3. Re-loads SOUL.md
-4. Rebuilds the tool registry
+4. Updates context compressor, prompt compressor, and tool registry
 
 ### Level 2: Code changes (requires rebuild)
 

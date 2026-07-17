@@ -26,7 +26,7 @@ COPY system/ ./system/
 RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
     chmod +x /usr/local/bin/alfred-cli
 
-RUN mkdir -p /workspace/{db,files,skills,config,logs,memory}
+RUN mkdir -p /workspace/{db,files,skills,config,logs,memory/{sessions,jobs,personality,vectors,snapshots}}
 
 RUN chown -R node:node /app /workspace
 

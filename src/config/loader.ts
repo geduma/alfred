@@ -83,12 +83,53 @@ const SecurityConfigSchema = z.object({
   }).optional(),
 });
 
+const PromptCompressionConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  mode: z.enum(['telegraph', 'off']).default('telegraph'),
+  aggressive: z.boolean().optional(),
+});
+
+const EmbeddingConfigSchema = z.object({
+  type: z.enum(['ollama', 'openai', 'openai-compatible']).default('ollama'),
+  model: z.string().default('nomic-embed-text'),
+  dimension: z.number().positive().default(768),
+  config: z.object({
+    api_url: z.string().optional(),
+    api_key: z.string().optional(),
+  }).optional(),
+  provider_ref: z.string().optional(),
+});
+
+const VectorStoreConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  type: z.literal('lancedb').default('lancedb'),
+  path: z.string().default('/workspace/memory/vectors'),
+  embedding: EmbeddingConfigSchema,
+  ingest: z.object({
+    on_message: z.boolean().default(true),
+    max_chunk_size: z.number().positive().default(512),
+  }),
+  search: z.object({
+    top_k: z.number().positive().default(5),
+    min_score: z.number().min(0).max(1).default(0.5),
+  }),
+});
+
+const SnapshotConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  auto_snapshot_interval: z.number().positive().default(50),
+  max_snapshots_per_session: z.number().positive().default(20),
+});
+
 const MemoryConfigSchema = z.object({
   max_context_tokens: z.number().positive().default(32000),
   max_verbatim_messages: z.number().positive().default(20),
   compaction_threshold: z.number().min(0).max(1).default(0.8),
   compaction_model: z.string().default('auto'),
   summary_sections: z.array(z.string()).default(['decisions', 'preferences', 'pending', 'context']),
+  prompt_compression: PromptCompressionConfigSchema.optional(),
+  vector_store: VectorStoreConfigSchema.optional(),
+  snapshots: SnapshotConfigSchema.optional(),
 });
 
 const AlfredConfigSchema = z.object({

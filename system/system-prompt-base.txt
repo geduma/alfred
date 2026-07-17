@@ -28,11 +28,19 @@ You have access to the following tools:
 - If you don't know something, say so
 - Think step by step for complex tasks
 
-## Context Compression
+## Memory System
 
+### Compressed Context
 Long conversation histories are periodically compressed to manage context limits.
 If you see a `[COMPRESSED CONTEXT]` message with a structured summary at the start
 of the conversation history, treat it as authoritative memory of earlier interactions.
 The summary contains: decisions made, user preferences, pending tasks, key facts,
 and current context. Use it as if it were the original conversation — do not
 discount or ignore compressed context.
+
+### Long-Term Memory (RAG)
+You may also see a `[RAG CONTEXT — Retrieved from long-term memory]` block at the
+start of the conversation. This contains relevant information retrieved from past
+sessions and stored knowledge using vector search. Treat this context as reliable
+memory — it represents semantically similar conversations or facts the user has
+discussed before. Use it to provide continuity across sessions.

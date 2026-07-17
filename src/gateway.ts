@@ -10,6 +10,9 @@ import { SessionStore, StoredSession } from './db/session-store';
 import { JobSchedulerTool } from './tools/job-scheduler';
 import { Message } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
+import { PromptCompressor } from './services/prompt-compressor';
+import { VectorStoreManager } from './services/vector-store/index';
+import { SnapshotManager } from './services/snapshot';
 import { approximateSystemPromptTokens } from './utils/token-counter';
 
 interface GatewayRequest {
@@ -32,6 +35,9 @@ export class Gateway {
   private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
   private port: number;
   private contextCompressor: ContextCompressor;
+  private promptCompressor: PromptCompressor;
+  private vectorStore: VectorStoreManager | null = null;
+  private snapshotManager: SnapshotManager | null = null;
 
   constructor(
     config: ConfigLoader,
@@ -48,6 +54,17 @@ export class Gateway {
     this.jobScheduler = new JobSchedulerTool();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
+    this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
+
+    const vectorStoreConfig = config.memoryConfig?.vector_store;
+    if (vectorStoreConfig?.enabled) {
+      this.vectorStore = new VectorStoreManager(vectorStoreConfig, config.providers);
+    }
+
+    const snapshotConfig = config.memoryConfig?.snapshots;
+    if (snapshotConfig?.enabled) {
+      this.snapshotManager = new SnapshotManager(snapshotConfig);
+    }
   }
 
   setTools(tools: ToolHandler[]): void {
@@ -65,6 +82,16 @@ export class Gateway {
     this.loadSessions();
     this.startJobRunner();
 
+    if (this.vectorStore) {
+      try {
+        await this.vectorStore.initialize();
+        getLogger().info('Vector store initialized');
+      } catch (error: any) {
+        getLogger().warn({ error: error.message }, 'Vector store init failed, RAG disabled');
+        this.vectorStore = null;
+      }
+    }
+
     getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
 
     await this.channelManager.startAll();
@@ -72,6 +99,9 @@ export class Gateway {
 
   async stop(): Promise<void> {
     this.stopJobRunner();
+    if (this.vectorStore) {
+      await this.vectorStore.close();
+    }
     if (this.wss) {
       this.wss.close();
     }
@@ -101,8 +131,13 @@ export class Gateway {
     }
   }
 
-  private async prepareContext(session: StoredSession, systemPrompt: string): Promise<Message[]> {
+  private async prepareContext(
+    session: StoredSession,
+    systemPrompt: string,
+    currentMessage?: string
+  ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
+    let messages = session.messages;
 
     if (this.contextCompressor.shouldCompact(session.messages, systemPromptTokens)) {
       const result = await this.contextCompressor.compactSession(
@@ -113,11 +148,68 @@ export class Gateway {
 
       if (result.wasCompacted) {
         session.summary = result.summary;
-        return result.messages;
+        messages = result.messages;
       }
     }
 
-    return session.messages;
+    let contextMessages: Message[] = messages;
+
+    if (this.vectorStore && currentMessage) {
+      try {
+        const results = await this.vectorStore.search(currentMessage);
+        if (results.length > 0) {
+          const ragContext = results
+            .map(r => {
+              const label = r.metadata.role === 'user' ? 'User' : r.metadata.role === 'assistant' ? 'Assistant' : 'Tool';
+              return `[${label} — ${new Date(r.metadata.timestamp).toLocaleDateString()}]\n${r.text}`;
+            })
+            .join('\n\n');
+
+          contextMessages = [
+            { role: 'user', content: `[RAG CONTEXT — Retrieved from long-term memory]\n${ragContext}` },
+            ...messages,
+          ];
+
+          getLogger().debug({ chunkCount: results.length }, 'RAG context injected');
+        }
+      } catch (error: any) {
+        getLogger().warn({ error: error.message }, 'RAG search failed, continuing without');
+      }
+    }
+
+    const compressedSystemPrompt = this.promptCompressor.compress(systemPrompt);
+
+    return { messages: contextMessages, systemPrompt: compressedSystemPrompt };
+  }
+
+  private async ingestMessage(session: StoredSession, msg: Message, params: { channel: string; userId: string }): Promise<void> {
+    if (!this.vectorStore) return;
+    if (!msg.content || msg.content.trim().length < 10) return;
+
+    try {
+      await this.vectorStore.ingest(msg.content, {
+        sessionId: session.id,
+        channel: params.channel,
+        userId: params.userId,
+        timestamp: new Date().toISOString(),
+        role: msg.role,
+        messageId: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      });
+    } catch {
+      // silent — ingestion failure should not break the conversation flow
+    }
+  }
+
+  private async checkAutoSnapshot(session: StoredSession): Promise<void> {
+    if (!this.snapshotManager) return;
+
+    if (this.snapshotManager.shouldAutoSnapshot(session.id, session.messages.length)) {
+      try {
+        await this.snapshotManager.create(session);
+      } catch (error: any) {
+        getLogger().warn({ error: error.message }, 'Auto-snapshot failed');
+      }
+    }
   }
 
   private onClientConnect(ws: WebSocket): void {
@@ -194,17 +286,19 @@ export class Gateway {
     }
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ingestParams = { channel: 'ws', userId: sessionKey };
 
     try {
       const systemPrompt = await this.promptBuilder.buildSystemPrompt();
 
       session.messages.push({ role: 'user', content: message });
+      await this.ingestMessage(session, session.messages[session.messages.length - 1], ingestParams);
 
-      const contextMessages = await this.prepareContext(session, systemPrompt);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, systemPrompt, message);
 
       const response = await this.llmRouter.call({
         messages: contextMessages,
-        system: systemPrompt,
+        system: finalSystem,
         tools: this.tools.map(t => t.tool),
       });
 
@@ -214,22 +308,23 @@ export class Gateway {
           if (tool) {
             const args = JSON.parse(toolCall.function.arguments);
             const result = await tool.execute(args);
-            session.messages.push({
-              role: 'tool',
-              content: result.output,
-              tool_call_id: toolCall.id,
-            });
+            const toolMsg: Message = { role: 'tool', content: result.output, tool_call_id: toolCall.id };
+            session.messages.push(toolMsg);
+            await this.ingestMessage(session, toolMsg, ingestParams);
           }
         }
 
-        const finalContextMessages = await this.prepareContext(session, systemPrompt);
+        const { messages: finalContextMessages, systemPrompt: finalSystemAgain } = await this.prepareContext(session, finalSystem);
 
         const finalResponse = await this.llmRouter.call({
           messages: finalContextMessages,
-          system: systemPrompt,
+          system: finalSystemAgain,
         });
 
-        session.messages.push({ role: 'assistant', content: finalResponse.content });
+        const assistantMsg: Message = { role: 'assistant', content: finalResponse.content };
+        session.messages.push(assistantMsg);
+        await this.ingestMessage(session, assistantMsg, ingestParams);
+        await this.checkAutoSnapshot(session);
         this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
@@ -239,7 +334,10 @@ export class Gateway {
           usage: finalResponse.usage,
         });
       } else {
-        session.messages.push({ role: 'assistant', content: response.content });
+        const assistantMsg: Message = { role: 'assistant', content: response.content };
+        session.messages.push(assistantMsg);
+        await this.ingestMessage(session, assistantMsg, ingestParams);
+        await this.checkAutoSnapshot(session);
         this.sessionStore.save(session);
 
         this.sendEvent(ws, 'agent_complete', {
@@ -271,17 +369,19 @@ export class Gateway {
     }
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ingestParams = { channel: params.channel, userId: params.userId };
 
     try {
       session.messages.push({ role: 'user', content: params.content });
+      await this.ingestMessage(session, session.messages[session.messages.length - 1], ingestParams);
 
       const systemPrompt = await this.promptBuilder.buildSystemPrompt();
 
-      const contextMessages = await this.prepareContext(session, systemPrompt);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, systemPrompt, params.content);
 
       const response = await this.llmRouter.call({
         messages: contextMessages,
-        system: systemPrompt,
+        system: finalSystem,
         tools: this.tools.map(t => t.tool),
       });
 
@@ -291,27 +391,31 @@ export class Gateway {
           if (tool) {
             const args = JSON.parse(toolCall.function.arguments);
             const result = await tool.execute(args);
-            session.messages.push({
-              role: 'tool',
-              content: result.output,
-              tool_call_id: toolCall.id,
-            });
+            const toolMsg: Message = { role: 'tool', content: result.output, tool_call_id: toolCall.id };
+            session.messages.push(toolMsg);
+            await this.ingestMessage(session, toolMsg, ingestParams);
           }
         }
 
-        const finalContextMessages = await this.prepareContext(session, systemPrompt);
+        const { messages: finalContextMessages, systemPrompt: finalSystemAgain } = await this.prepareContext(session, finalSystem);
 
         const finalResponse = await this.llmRouter.call({
           messages: finalContextMessages,
-          system: systemPrompt,
+          system: finalSystemAgain,
         });
 
-        session.messages.push({ role: 'assistant', content: finalResponse.content });
+        const assistantMsg: Message = { role: 'assistant', content: finalResponse.content };
+        session.messages.push(assistantMsg);
+        await this.ingestMessage(session, assistantMsg, ingestParams);
+        await this.checkAutoSnapshot(session);
         this.sessionStore.save(session);
         return finalResponse.content;
       }
 
-      session.messages.push({ role: 'assistant', content: response.content });
+      const assistantMsg: Message = { role: 'assistant', content: response.content };
+      session.messages.push(assistantMsg);
+      await this.ingestMessage(session, assistantMsg, ingestParams);
+      await this.checkAutoSnapshot(session);
       this.sessionStore.save(session);
       return response.content;
     } catch (error: any) {
@@ -338,6 +442,12 @@ export class Gateway {
         log.info('SOUL.md reloaded');
       } catch (error: any) {
         log.warn({ error: error.message }, 'SOUL.md reload failed, using cached');
+      }
+
+      const memoryConfig = this.config.memoryConfig;
+      if (memoryConfig) {
+        this.contextCompressor.updateConfig(memoryConfig);
+        this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
       }
 
       const newTools = createTools(this.config);

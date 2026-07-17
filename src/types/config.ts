@@ -59,6 +59,47 @@ export interface MemoryConfig {
   compaction_threshold: number;
   compaction_model: string;
   summary_sections: string[];
+  prompt_compression?: PromptCompressionConfig;
+  vector_store?: VectorStoreConfig;
+  snapshots?: SnapshotConfig;
+}
+
+export interface PromptCompressionConfig {
+  enabled: boolean;
+  mode: 'telegraph' | 'off';
+  aggressive?: boolean;
+}
+
+export interface EmbeddingConfig {
+  type: 'ollama' | 'openai' | 'openai-compatible';
+  model: string;
+  dimension: number;
+  config?: {
+    api_url?: string;
+    api_key?: string;
+  };
+  provider_ref?: string;
+}
+
+export interface VectorStoreConfig {
+  enabled: boolean;
+  type: 'lancedb';
+  path: string;
+  embedding: EmbeddingConfig;
+  ingest: {
+    on_message: boolean;
+    max_chunk_size: number;
+  };
+  search: {
+    top_k: number;
+    min_score: number;
+  };
+}
+
+export interface SnapshotConfig {
+  enabled: boolean;
+  auto_snapshot_interval: number;
+  max_snapshots_per_session: number;
 }
 
 export interface AlfredConfig {
