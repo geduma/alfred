@@ -47,6 +47,8 @@ src/
 ├── services/
 │   ├── context-compressor.ts ← Sliding window + LLM summarization for context management
 │   ├── prompt-compressor.ts  ← Telegraph English — rule-based prompt compression
+│   ├── token-budget.ts       ← Token budget tracking and stats
+│   ├── circuit-breaker.ts    ← Circuit breaker with jitter for provider resilience
 │   ├── vector-store/
 │   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
 │   │   └── embedder.ts      ← Agnostic embedder factory (hashing, Ollama, OpenAI, OpenAI-compatible)
@@ -321,6 +323,26 @@ docker compose -f docker/docker-compose.yml logs -f alfred
 ```
 
 Volume: `~/.alfred-personal:/workspace`
+
+## Performance Changes (v2.1)
+
+| Change | File | What |
+|--------|------|------|
+| Concurrency control | `src/gateway.ts` | Max 3 concurrent tools, 60s per-tool timeout |
+| Circuit breaker jitter | `src/services/circuit-breaker.ts` | ±30% jitter on reset timeout |
+| WAL autocheckpoint | `src/db/index.ts` | Set to 1000 for write perf |
+| SAFETY_MULTIPLIER | `src/utils/token-counter.ts` | 1.3 → 1.15 |
+| Shutdown timeout | `src/gateway.ts` | 10s graceful shutdown |
+| Token budget tracker | `src/services/token-budget.ts`, `src/agent/llm-router.ts` | Integrated in LLMRouter |
+| Secrets filter universal | `src/tools/file-ops.ts` | Applies to all files, not just config |
+| exec flag normalization | `src/tools/exec.ts` | `-r -f` → `-rf` before denylist |
+| Anthropic system prompt | `src/agent/providers/anthropic.ts` | Uses `params.system` properly |
+| Config loader async | `src/config/loader.ts`, `src/index.ts` | `reload()` and `ensureConfigFiles()` async |
+| MemoryTool conditional | `src/tools/index.ts` | Only registers when enabled |
+
+## Unused Dependencies Removed
+
+`js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64` — not imported anywhere in source code.
 
 ## Agent Notes
 

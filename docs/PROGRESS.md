@@ -1,6 +1,6 @@
 # ALFRED — Implementation Progress
 
-> Version: 2.0.0 | Started: July 2026
+> Version: 2.1.0 | Started: July 2026 | Last eval: July 2026
 
 ---
 
@@ -9,8 +9,9 @@
 **Progress:** 100% — **All phases complete**
 
 ✅ TypeScript compiles cleanly (`tsc`)
-✅ 11 tests pass (`jest`)
+✅ 26 tests pass (`jest`)
 ✅ Build successful (`npm run build`)
+✅ Lint: 0 errors (114 warnings — all `no-explicit-any`)
 
 ---
 
@@ -138,6 +139,39 @@
 
 ---
 
+### ✅ Phase 16: Performance & Security Evaluation (v2.1)
+- [x] Ejecución completa de evaluación de rendimiento, performance, seguridad y consumo
+- [x] **C1** 🔴 — Anthropic system prompt corregido (`params.system` en vez de primer mensaje user)
+- [x] **C2** 🔴 — Anti-evasión en exec: `normalizeCommandFlags()` para fusión de flags adyacentes
+- [x] **C3** 🔴 — Revisado: web.ts:126 ya bloquea protocolos no-HTTP (falso positivo)
+- [x] **A8** 🟡 — `filterSecrets()` universal (aplica a TODOS los archivos, no solo alfred.json/.env)
+- [x] **A2** 🟡 — TokenBudgetTracker simplificado e integrado en LLMRouter + sistema de stats
+- [x] **A7** 🟡 — SAFETY_MULTIPLIER 1.3 → 1.15 en token-counter
+- [x] **A1** 🟡 — Timeout de 60s por tool + batches de max 3 concurrentes en gateway
+- [x] **A5** 🟡 — `reload()` y `ensureConfigFiles()` asíncronos con `fs.promises`
+- [x] **M1** 🟠 — Jitter ±30% en reset timeout del circuit breaker
+- [x] **M4** 🟠 — SQLite: `PRAGMA wal_autocheckpoint=1000`
+- [x] **M5** 🟠 — Shutdown timeout 10s en gateway
+- [x] **M8** 🟠 — MAX_CONCURRENT_TOOLS=3 en gateway
+- [x] **Cleanup** — Duplicado `generate` eliminado de SHORTEN_MAP; MemoryTool condicional
+- [x] **Cleanup** — Dependencias no usadas eliminadas: `js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64`
+- [x] **Build/tests** — 26/26 tests pasan, 0 errores lint, build limpio
+
+### Findings Accepted (not corrected)
+- **M2**: Timing attack en auth token — aceptado (localhost/Docker aislado)
+- **A9**: API keys en texto plano — aceptado por decisión del usuario
+- **M3**: SSRF DNS rebinding — riesgo bajo, mejora futura
+- **M6**: WhatsApp session sin cifrar — riesgo documentado
+- Sin autenticación en canales — diseño, ACL es suficiente
+- exec parseCommand rudimentario — mejora futura
+- Sin límite de gasto mensual — mejora futura
+- Hashing embedder sin semántica — intencional (zero-dependency)
+- Docker sin optimización de capas — mejora futura
+- Chromium siempre instalado — mejora futura
+- Health check sin readiness — mejora futura
+
+---
+
 ## Key Architecture Decisions
 
 | Decision | Choice |
@@ -148,7 +182,7 @@
 | **Sessions** | Lazy-loaded on first access (not all read at startup). LRU eviction at 100 sessions. Truncated after compaction. Async write (non-blocking). Compact JSON (no pretty-print). |
 | **Jobs** | JSON files in workspace/memory/jobs/ — 30s interval runner |
 | **Context Compression** | Sliding window + LLM summarization. Keeps last N messages verbatim, compresses older ones into structured summary. Session.messages truncated after compaction. Configurable via alfred.json. |
-| **Token Budget** | Soft limit of 32K tokens (configurable). Compression triggers at 65% threshold with 1.3x safety multiplier to prevent context overflow. |
+| **Token Budget** | Soft limit of 32K tokens (configurable). Compression triggers at 65% threshold with 1.15x safety multiplier to prevent context overflow. TokenBudgetTracker integrated in LLMRouter for live stats. |
 | **Storage vs Context** | Full message history preserved on disk; compacted version sent to LLM. Summary stored in session file. |
 | **Language** | All response strings are in English; LLM controls language via preferences.md |
 | **User Name** | Dynamic from preferences.md (`user_name` field). Asked on first interaction if unknown. No hardcoded names in prompts. |

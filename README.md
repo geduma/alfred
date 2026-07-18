@@ -347,6 +347,37 @@ Steps performed:
 
 > **Tip:** Stash `deploy.sh` in a `~/alfred/` directory alongside the repo, or run it from the project root on your Raspberry Pi after SSH'ing in.
 
+## Recent Improvements (v2.1)
+
+### Performance & Security
+- **Concurrency control**: Tool execution batches (max 3 concurrent) with 60s per-tool timeout (`src/gateway.ts`)
+- **Circuit breaker jitter**: ±30% jitter on reset timeout to prevent thundering herd (`src/services/circuit-breaker.ts`)
+- **SQLite WAL tuning**: `wal_autocheckpoint=1000` for better write performance (`src/db/index.ts`)
+- **SAFETY_MULTIPLIER reduced**: 1.3 → 1.15 for tighter token budget (`src/utils/token-counter.ts`)
+- **Shutdown timeout**: 10s graceful shutdown (`src/gateway.ts`)
+- **Token budget tracking**: Integrated `TokenBudgetTracker` into `LLMRouter`, accessible via `getTokenUsage()` (`src/services/token-budget.ts`)
+- **Secrets filtering universal**: `filterSecrets()` applies to ALL file reads, not just `alfred.json`/`.env` (`src/tools/file-ops.ts`)
+- **exec anti-evasion**: `normalizeCommandFlags()` fuses adjacent flags (`-r -f` → `-rf`) before denylist check (`src/tools/exec.ts`)
+
+### Code Quality
+- **Unused dependencies removed**: `js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64` (3 packages, 0 impact on functionality)
+- **Anthropic provider fix**: System prompt uses `params.system` instead of first user message (`src/agent/providers/anthropic.ts`)
+- **Config loader async**: `reload()` and `ensureConfigFiles()` now async (`src/config/loader.ts`, `src/index.ts`)
+- **MemoryTool conditional**: Only registered when memory system is enabled (`src/tools/index.ts`)
+
+### Accepted Findings (not corrected)
+| Finding | Reason |
+|---------|--------|
+| Timing attack on auth token | Localhost/Docker only — impractical to exploit |
+| API keys in plaintext on disk | Conscious trade-off for simplicity in isolated Docker |
+| SSRF DNS rebinding | Low risk in Docker, complex to mitigate |
+| WhatsApp session uncrypted | Documented risk, requires external infrastructure |
+| No channel auth (beyond ACL) | By design — ACL whitelist is sufficient |
+| exec parseCommand rudimentary | Acceptable for current use cases |
+| No monthly spending limit | Future improvement (needs provider cost APIs) |
+| Hashing embedder (no semantics) | Intentional — zero-dependency, low-power design |
+| Docker image not optimized | Future improvement (multi-stage lite, Chromium optional) |
+
 ## Docs
 
 - `docs/AGENTS.md` — Instructions for AI agents working on the project
