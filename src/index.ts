@@ -15,7 +15,7 @@ import { initializeLogger, getLogger } from './utils/logger';
 
 const CONFIG_PATH = process.env.CONFIG_PATH || path.resolve(__dirname, '../workspace/config/alfred.json');
 
-function ensureConfigFiles(): void {
+async function ensureConfigFiles(): Promise<void> {
   const pairs = [
     { example: path.resolve(__dirname, '../system/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
     { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
@@ -24,14 +24,19 @@ function ensureConfigFiles(): void {
   ];
 
   for (const { example, target } of pairs) {
-    if (!fs.existsSync(target) && fs.existsSync(example)) {
-      const dir = path.dirname(target);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    try {
+      await fs.promises.access(target);
+    } catch {
+      try {
+        await fs.promises.access(example);
+        const dir = path.dirname(target);
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.copyFile(example, target);
+        console.log(`\n⚠️  Created ${target} from template.`);
+        console.log(`   Edit this file with your API keys and settings before using Alfred.\n`);
+      } catch {
+        // example doesn't exist, skip
       }
-      fs.copyFileSync(example, target);
-      console.log(`\n⚠️  Created ${target} from template.`);
-      console.log(`   Edit this file with your API keys and settings before using Alfred.\n`);
     }
   }
 }
@@ -43,7 +48,7 @@ async function main(): Promise<void> {
   console.log('╚═══════════════════════════════════════════╝');
 
   console.log('\n🔧 Checking configuration files...');
-  ensureConfigFiles();
+  await ensureConfigFiles();
 
   const configLoader = new ConfigLoader(CONFIG_PATH);
   const config = configLoader.allConfig;

@@ -64,7 +64,6 @@ const SHORTEN_MAP: [RegExp, string][] = [
   [/\benables\b/gi, 'lets'],
   [/\bfacilitates\b/gi, 'helps'],
   [/\bgenerate\b/gi, 'make'],
-  [/\bgenerate\b/gi, 'make'],
   [/\baccomplish\b/gi, 'do'],
   [/\bacquisition\b/gi, 'get'],
   [/\bterminate\b/gi, 'end'],

@@ -5,6 +5,7 @@ interface CircuitState {
   lastFailure: number;
   halfOpen: boolean;
   halfOpenTime: number;
+  effectiveResetMs: number;
 }
 
 const DEFAULT_CONFIG = {
@@ -22,6 +23,11 @@ export class CircuitBreaker {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
+  private static withJitter(baseMs: number): number {
+    const jitter = 0.7 + Math.random() * 0.6;
+    return Math.round(baseMs * jitter);
+  }
+
   isAllowed(provider: string): boolean {
     const state = this.states.get(provider);
     if (!state) return true;
@@ -37,7 +43,7 @@ export class CircuitBreaker {
         return false;
       }
 
-      if (elapsed >= this.config.resetTimeoutMs) {
+      if (elapsed >= state.effectiveResetMs) {
         state.halfOpen = true;
         state.halfOpenTime = Date.now();
         return true;
@@ -55,7 +61,9 @@ export class CircuitBreaker {
   }
 
   recordFailure(provider: string): void {
-    const state = this.states.get(provider) || { failures: 0, lastFailure: 0, halfOpen: false, halfOpenTime: 0 };
+    const state = this.states.get(provider) || {
+      failures: 0, lastFailure: 0, halfOpen: false, halfOpenTime: 0, effectiveResetMs: 0,
+    };
     state.failures++;
     state.lastFailure = Date.now();
 
@@ -64,10 +72,11 @@ export class CircuitBreaker {
       this.states.set(provider, state);
       getLogger().warn({ provider, failures: state.failures }, 'Circuit breaker half-open request failed');
     } else {
-      this.states.set(provider, state);
       if (state.failures >= this.config.failureThreshold) {
+        state.effectiveResetMs = CircuitBreaker.withJitter(this.config.resetTimeoutMs);
         getLogger().warn({ provider, failures: state.failures }, 'Circuit breaker opened');
       }
+      this.states.set(provider, state);
     }
   }
 
@@ -76,7 +85,7 @@ export class CircuitBreaker {
     if (!state) return { open: false, failures: 0, remainingMs: 0 };
 
     if (state.failures >= this.config.failureThreshold) {
-      const remainingMs = Math.max(0, this.config.resetTimeoutMs - (Date.now() - state.lastFailure));
+      const remainingMs = Math.max(0, state.effectiveResetMs - (Date.now() - state.lastFailure));
       return { open: true, failures: state.failures, remainingMs };
     }
 

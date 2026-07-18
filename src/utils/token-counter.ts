@@ -1,7 +1,7 @@
 const TOKEN_PER_CHAR_ESTIMATE = 4;
 const TOKEN_PER_WORD_ESTIMATE = 1.3;
 const TOOL_CALL_OVERHEAD = 20;
-const SAFETY_MULTIPLIER = 1.3;
+const SAFETY_MULTIPLIER = 1.15;
 
 export function estimateTokenCount(text: string): number {
   const charEstimate = Math.ceil(text.length / TOKEN_PER_CHAR_ESTIMATE);

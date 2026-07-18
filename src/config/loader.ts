@@ -164,10 +164,10 @@ export class ConfigLoader {
 
   constructor(configPath: string) {
     this.configPath = configPath;
-    this.reload();
+    this.loadConfigSync();
   }
 
-  reload(): AlfredConfig {
+  private loadConfigSync(): AlfredConfig {
     const raw = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
     this.config = AlfredConfigSchema.parse(raw) as AlfredConfig;
 
@@ -187,6 +187,24 @@ export class ConfigLoader {
 
   resolvePath(p: string): string {
     return resolvePath(p);
+  }
+
+  async reload(): Promise<AlfredConfig> {
+    const raw = JSON.parse(await fs.promises.readFile(this.configPath, 'utf-8'));
+    this.config = AlfredConfigSchema.parse(raw) as AlfredConfig;
+
+    this.config.agent.personality_file = resolvePath(this.config.agent.personality_file);
+    this.config.database.config.path = resolvePath(this.config.database.config.path);
+    if (this.config.logging.config.file_path) {
+      this.config.logging.config.file_path = resolvePath(this.config.logging.config.file_path);
+    }
+    const vs = this.config.memory?.vector_store;
+    if (vs?.path) {
+      vs.path = resolvePath(vs.path);
+    }
+
+    this.validateProviderChain();
+    return this.config;
   }
 
   private validateProviderChain(): void {

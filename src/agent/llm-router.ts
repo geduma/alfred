@@ -3,6 +3,7 @@ import { ConfigLoader } from '../config/loader';
 import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
 import { CircuitBreaker } from '../services/circuit-breaker';
+import { TokenBudgetTracker, TokenUsage } from '../services/token-budget';
 
 export class LLMRouter {
   private providers: Map<string, LLMProvider> = new Map();
@@ -10,10 +11,12 @@ export class LLMRouter {
   private currentIndex: number = 0;
   private config: ConfigLoader;
   private circuitBreaker: CircuitBreaker;
+  private budgetTracker: TokenBudgetTracker;
 
   constructor(config: ConfigLoader) {
     this.config = config;
     this.circuitBreaker = new CircuitBreaker();
+    this.budgetTracker = new TokenBudgetTracker();
   }
 
   async initialize(): Promise<void> {
@@ -70,6 +73,11 @@ export class LLMRouter {
 
         this.circuitBreaker.recordSuccess(providerName);
         this.currentIndex = 0;
+
+        if (response.usage) {
+          this.budgetTracker.trackUsage(response.usage);
+        }
+
         return response;
       } catch (error: any) {
         this.circuitBreaker.recordFailure(providerName);
@@ -110,5 +118,13 @@ export class LLMRouter {
 
   getCircuitBreakerState(provider: string): { open: boolean; failures: number; remainingMs: number } {
     return this.circuitBreaker.getState(provider);
+  }
+
+  getTokenUsage(): TokenUsage {
+    return this.budgetTracker.getTotalUsage();
+  }
+
+  getTotalRequests(): number {
+    return this.budgetTracker.getRequestCount();
   }
 }

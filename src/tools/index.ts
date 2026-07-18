@@ -44,7 +44,9 @@ export function createTools(
     tools.push(new HealthTool(healthMonitor));
   }
 
-  tools.push(new MemoryTool(vectorStore || null, snapshotManager || null));
+  if (vectorStore || snapshotManager) {
+    tools.push(new MemoryTool(vectorStore || null, snapshotManager || null));
+  }
 
   return tools;
 }

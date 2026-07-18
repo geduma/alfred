@@ -21,18 +21,16 @@ export class AnthropicProvider extends BaseProvider {
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
     const client = await this.getClient();
-    const systemMessage = params.messages.find(m => m.role === 'user')?.content || '';
-    const messages = params.messages
-      .filter(m => m.role !== 'user' || m !== params.messages[0])
-      .map(m => ({
-        role: m.role === 'tool' ? 'user' as const : m.role as 'user' | 'assistant',
-        content: m.content,
-      }));
+
+    const messages = params.messages.map(m => ({
+      role: m.role === 'tool' ? 'user' as const : m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
 
     const response = await client.messages.create({
       model: this.getModel(),
       max_tokens: this.getMaxTokens(),
-      system: params.system || systemMessage,
+      system: params.system || '',
       messages: messages.length > 0 ? messages : [{ role: 'user', content: 'Hello' }],
       temperature: params.temperature ?? this.getTemperature(),
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools as any[] } : {}),

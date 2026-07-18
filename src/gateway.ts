@@ -32,6 +32,8 @@ interface GatewayRequest {
 const MAX_SESSIONS = 100;
 const MAX_TOOL_ITERATIONS = 3;
 const SAVE_DEBOUNCE_MS = 5000;
+const TOOL_TIMEOUT_MS = 60_000;
+const MAX_CONCURRENT_TOOLS = 3;
 
 export class Gateway {
   private wss: WebSocketServer | null = null;
@@ -156,17 +158,30 @@ export class Gateway {
   }
 
   async stop(): Promise<void> {
-    this.stopJobRunner();
-    await this.flushPendingSaves();
-    this.rateLimiter.stop();
-    if (this.vectorStore) {
-      await this.vectorStore.close();
+    const timeout = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Shutdown timed out after 10s')), 10_000);
+    });
+
+    try {
+      await Promise.race([
+        (async () => {
+          this.stopJobRunner();
+          await this.flushPendingSaves();
+          this.rateLimiter.stop();
+          if (this.vectorStore) {
+            await this.vectorStore.close();
+          }
+          if (this.wss) {
+            this.wss.close();
+          }
+          await this.channelManager.stopAll();
+        })(),
+        timeout,
+      ]);
+      getLogger().info('Gateway stopped');
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Gateway stop timed out, forcing shutdown');
     }
-    if (this.wss) {
-      this.wss.close();
-    }
-    await this.channelManager.stopAll();
-    getLogger().info('Gateway stopped');
   }
 
   private async flushPendingSaves(): Promise<void> {
@@ -419,9 +434,9 @@ export class Gateway {
 
       allToolCalls = allToolCalls.concat(response.tool_calls);
 
-      const toolExecutionPromises = response.tool_calls.map(async (toolCall) => {
+      const executeTool = async (toolCall: any): Promise<void> => {
         const tool = this.tools.find(t => t.tool.name === toolCall.function.name);
-        if (!tool) return null;
+        if (!tool) return;
 
         let args: Record<string, unknown>;
         try {
@@ -429,7 +444,7 @@ export class Gateway {
         } catch {
           const errorMsg: Message = { role: 'tool', content: `Invalid JSON in tool arguments: ${toolCall.function.arguments}`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
-          return null;
+          return;
         }
 
         if (tool.validate) {
@@ -437,7 +452,7 @@ export class Gateway {
           if (!validation.success) {
             const errorMsg: Message = { role: 'tool', content: `Tool validation error: ${(validation.errors || []).join(', ')}`, tool_call_id: toolCall.id };
             session.messages.push(errorMsg);
-            return null;
+            return;
           }
         }
 
@@ -460,10 +475,25 @@ export class Gateway {
 
         const errorMsg: Message = { role: 'tool', content: `Tool execution error: ${lastError}`, tool_call_id: toolCall.id };
         session.messages.push(errorMsg);
-        return undefined;
-      });
+      };
 
-      await Promise.all(toolExecutionPromises);
+      const executeToolWithTimeout = async (toolCall: any): Promise<void> => {
+        const timeout = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Tool ${toolCall.function.name} timed out after ${TOOL_TIMEOUT_MS}ms`)), TOOL_TIMEOUT_MS);
+        });
+
+        try {
+          await Promise.race([executeTool(toolCall), timeout]);
+        } catch (error: any) {
+          const errorMsg: Message = { role: 'tool', content: `Tool error: ${error.message}`, tool_call_id: toolCall.id };
+          session.messages.push(errorMsg);
+        }
+      };
+
+      for (let i = 0; i < response.tool_calls.length; i += MAX_CONCURRENT_TOOLS) {
+        const batch = response.tool_calls.slice(i, i + MAX_CONCURRENT_TOOLS);
+        await Promise.all(batch.map(tc => executeToolWithTimeout(tc)));
+      }
 
       iteration++;
       const contextResult = await this.prepareContext(session, finalSystem);
@@ -624,7 +654,7 @@ export class Gateway {
 
       log.info('Hot-reload triggered via WebSocket');
 
-      this.config.reload();
+      await this.config.reload();
       log.info('Config reloaded from disk');
 
       this.llmRouter.reinitialize(this.config);

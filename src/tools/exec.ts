@@ -128,8 +128,13 @@ export class ExecTool implements ToolHandler {
     return sanitized;
   }
 
+  private normalizeCommandFlags(cmd: string): string {
+    return cmd.replace(/-[a-zA-Z](?:\s+-[a-zA-Z])+/g, m => m.replace(/\s+/g, ''));
+  }
+
   private isCommandAllowed(command: string): boolean {
-    const lower = command.toLowerCase();
+    const normalized = this.normalizeCommandFlags(command);
+    const lower = normalized.toLowerCase();
 
     for (const pattern of this.deniedPatterns) {
       if (lower.includes(pattern.toLowerCase())) {

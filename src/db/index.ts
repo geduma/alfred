@@ -18,6 +18,7 @@ export function initializeDatabase(dbPath: string): Promise<Database.Database> {
 
       db.run('PRAGMA foreign_keys = ON');
       db.run('PRAGMA journal_mode = WAL');
+      db.run('PRAGMA wal_autocheckpoint = 1000');
 
       runSchema(db)
         .then(() => {

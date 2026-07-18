@@ -155,11 +155,13 @@ export class FileOpsTool implements ToolHandler {
     return { success: true, output: `File deleted: ${filePath}` };
   }
 
-  private filterSecrets(filePath: string, content: string): string {
-    const fileName = path.basename(filePath);
-    if (fileName !== 'alfred.json' && !fileName.endsWith('.env')) return content;
+  private filterSecrets(_filePath: string, content: string): string {
+    const fileName = path.basename(_filePath);
+    const isConfigFile = fileName === 'alfred.json' || fileName.endsWith('.env');
 
-    getLogger().debug({ file: fileName }, 'Filtering secrets from file output');
+    if (isConfigFile) {
+      getLogger().debug({ file: fileName }, 'Filtering secrets from config file output');
+    }
     return content
       .replace(/"api_key"\s*:\s*"[^"]+"/g, '"api_key": "***"')
       .replace(/"bot_token"\s*:\s*"[^"]+"/g, '"bot_token": "***"')
