@@ -30,7 +30,7 @@ interface GatewayRequest {
 }
 
 const MAX_SESSIONS = 100;
-const MAX_TOOL_ITERATIONS = 3;
+const MAX_TOOL_ITERATIONS = 25;
 const SAVE_DEBOUNCE_MS = 5000;
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_TOOLS = 3;
@@ -419,7 +419,8 @@ export class Gateway {
     let totalUsage: any = undefined;
     let iteration = 0;
 
-    while (iteration < MAX_TOOL_ITERATIONS) {
+    const maxIterations = this.config.allConfig.agent.max_tool_iterations || MAX_TOOL_ITERATIONS;
+    while (iteration < maxIterations) {
       const response = await this.llmRouter.call({
         messages,
         system: finalSystem,
@@ -501,7 +502,7 @@ export class Gateway {
       finalSystem = contextResult.systemPrompt;
     }
 
-    if (iteration >= MAX_TOOL_ITERATIONS && !finalContent) {
+    if (iteration >= maxIterations && !finalContent) {
       finalContent = 'Reached maximum tool call iterations. Please refine your request.';
     }
 

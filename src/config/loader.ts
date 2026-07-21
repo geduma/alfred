@@ -146,6 +146,7 @@ const AlfredConfigSchema = z.object({
     name: z.string().min(1),
     version: z.string().min(1),
     personality_file: z.string().min(1),
+    max_tool_iterations: z.number().int().positive().optional(),
   }),
   llm: LLMConfigSchema,
   providers: z.record(z.string(), ProviderConfigSchema),

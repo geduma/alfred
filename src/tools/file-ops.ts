@@ -3,6 +3,7 @@ import path from 'path';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
+import { resolvePath, resolveInWorkspace } from '../utils/workspace';
 
 interface PathRule {
   path: string;
@@ -10,10 +11,10 @@ interface PathRule {
 }
 
 const DEFAULT_RULES: PathRule[] = [
-  { path: '/workspace/files', permissions: 'rw' },
-  { path: '/workspace/memory', permissions: 'rw' },
-  { path: '/workspace/skills', permissions: 'rw' },
-  { path: '/workspace/config', permissions: 'r' },
+  { path: resolveInWorkspace('files'), permissions: 'rw' },
+  { path: resolveInWorkspace('memory'), permissions: 'rw' },
+  { path: resolveInWorkspace('skills'), permissions: 'rw' },
+  { path: resolveInWorkspace('config'), permissions: 'r' },
 ];
 
 export class FileOpsTool implements ToolHandler {
@@ -34,8 +35,14 @@ export class FileOpsTool implements ToolHandler {
     },
   };
 
-  constructor(config?: { allowed_paths?: PathRule[]; max_file_size_mb?: number }) {
-    this.rules = config?.allowed_paths || DEFAULT_RULES;
+  constructor(config?: { allowed_paths?: PathRule[]; max_file_size_mb?: number; base_directory?: string }) {
+    this.rules = [...DEFAULT_RULES];
+    if (config?.allowed_paths) {
+      this.rules.push(...config.allowed_paths);
+    }
+    if (config?.base_directory) {
+      this.rules.push({ path: resolvePath(config.base_directory), permissions: 'rw' });
+    }
     this.maxFileSize = (config?.max_file_size_mb || 100) * 1024 * 1024;
   }
 
@@ -82,11 +89,12 @@ export class FileOpsTool implements ToolHandler {
 
   private resolveSafePath(filePath: string, needsWrite: boolean): string | null {
     const resolved = path.resolve(filePath);
+    const normalizedPath = resolvePath(resolved);
     let realPath: string;
     try {
-      realPath = fs.realpathSync(resolved);
+      realPath = fs.realpathSync(normalizedPath);
     } catch {
-      realPath = resolved;
+      realPath = normalizedPath;
     }
     const matchingRule = this.rules.find(rule => realPath.startsWith(rule.path));
 
@@ -98,7 +106,7 @@ export class FileOpsTool implements ToolHandler {
       return null;
     }
 
-    return resolved;
+    return normalizedPath;
   }
 
   private readFile(filePath: string): ToolExecutionResult {
