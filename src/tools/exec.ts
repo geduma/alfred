@@ -1,4 +1,5 @@
-import spawn from 'cross-spawn';
+import { spawn } from 'cross-spawn';
+import { ChildProcess } from 'child_process';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
@@ -11,6 +12,16 @@ const DEFAULT_DENIED_PATTERNS = [
   '/dev/tcp', '/dev/udp', '>:', '>>',
   '| sh', '| bash',
 ];
+
+const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+  timedOut: boolean;
+  killedBySignal?: string | null;
+}
 
 export class ExecTool implements ToolHandler {
   private allowedPatterns: string[];
@@ -63,21 +74,30 @@ export class ExecTool implements ToolHandler {
     const startTime = Date.now();
 
     try {
-      const result = spawn.sync(program, args, {
+      const result = await this.runCommand(program, args, {
         cwd,
         timeout,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
         env: env ? { ...process.env, ...env } : undefined,
-        shell: false,
       });
+      const durationMs = Date.now() - startTime;
+
+      if (result.timedOut) {
+        return {
+          success: false,
+          output: result.stdout.trim(),
+          error: `Command timed out after ${timeout / 1000}s`,
+          duration_ms: durationMs,
+        };
+      }
 
       return {
         success: result.status === 0,
-        output: (result.stdout || '').trim(),
-        error: result.status !== 0 ? (result.stderr || '').trim() || `Exit code: ${result.status}` : undefined,
+        output: result.stdout.trim(),
+        error: result.status !== 0
+          ? result.stderr.trim() || (result.killedBySignal ? `Killed by signal ${result.killedBySignal}` : `Exit code: ${result.status}`)
+          : undefined,
         exitCode: result.status ?? undefined,
-        duration_ms: Date.now() - startTime,
+        duration_ms: durationMs,
       };
     } catch (error: any) {
       return {
@@ -87,6 +107,80 @@ export class ExecTool implements ToolHandler {
         duration_ms: Date.now() - startTime,
       };
     }
+  }
+
+  private runCommand(
+    program: string,
+    args: string[],
+    opts: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }
+  ): Promise<CommandResult> {
+    return new Promise((resolve) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(program, args, {
+          cwd: opts.cwd,
+          env: opts.env,
+          shell: false,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error: any) {
+        resolve({ stdout: '', stderr: '', status: null, timedOut: false, killedBySignal: error.message });
+        return;
+      }
+
+      let stdout = '';
+      let stderr = '';
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let timedOut = false;
+      let completed = false;
+
+      const terminate = () => {
+        if (completed) return;
+        timedOut = true;
+        child.kill('SIGKILL');
+      };
+
+      const timer = setTimeout(terminate, opts.timeout);
+      const onData = (stream: NodeJS.ReadableStream, kind: 'stdout' | 'stderr') => {
+        (stream as NodeJS.ReadableStream & { on: (e: string, cb: (c: Buffer) => void) => void }).on('data', (chunk: Buffer) => {
+          if (kind === 'stdout') {
+            stdoutBytes += chunk.length;
+            if (stdoutBytes > MAX_BUFFER_BYTES) {
+              stdout += chunk.toString();
+              terminate();
+              return;
+            }
+            stdout += chunk.toString();
+          } else {
+            stderrBytes += chunk.length;
+            if (stderrBytes > MAX_BUFFER_BYTES) {
+              stderr += chunk.toString();
+              terminate();
+              return;
+            }
+            stderr += chunk.toString();
+          }
+        });
+      };
+
+      if (child.stdout) onData(child.stdout, 'stdout');
+      if (child.stderr) onData(child.stderr, 'stderr');
+
+      child.on('error', (err: Error) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, status: null, timedOut: false, killedBySignal: err.message });
+      });
+
+      child.on('close', (code: number | null, signal: string | null) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, status: code, timedOut, killedBySignal: signal });
+      });
+    });
   }
 
   private parseCommand(command: string): { program: string; args: string[] } {

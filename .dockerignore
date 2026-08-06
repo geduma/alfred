@@ -1,0 +1,27 @@
+# VCS
+.git
+.gitignore
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Local workspaces — contain real secrets, DBs and chat data; never ship to Docker.
+# The .example templates under system/ ARE shipped (they hold no real secrets) so the
+# container can bootstrap fresh configs on an empty volume.
+workspace
+
+# Logs and temp
+*.log
+*.pid
+.DS_Store
+*.db
+*.db-shm
+*.db-wal
+
+# Editor / OS
+.vscode
+.idea
+*.swp

@@ -139,14 +139,6 @@ export class SnapshotManager {
     return false;
   }
 
-  cleanupCounters(activeSessionIds: Set<string>): void {
-    for (const sessionId of this.messageCounters.keys()) {
-      if (!activeSessionIds.has(sessionId)) {
-        this.messageCounters.delete(sessionId);
-      }
-    }
-  }
-
   async listBySession(sessionId: string): Promise<Snapshot[]> {
     return this.store.list(sessionId);
   }

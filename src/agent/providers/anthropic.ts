@@ -1,31 +1,81 @@
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse, ToolCall } from '../../types/llm';
+import Anthropic from '@anthropic-ai/sdk';
+
+interface ToolResultBlock {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+}
 
 export class AnthropicProvider extends BaseProvider {
   private client: any = null;
 
   constructor(config: any) {
     super(config);
+    this.client = new Anthropic({
+      apiKey: this.config.config.api_key,
+      baseURL: this.getApiUrl(),
+    });
   }
 
-  private async getClient(): Promise<any> {
-    if (!this.client) {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      this.client = new Anthropic({
-        apiKey: this.config.config.api_key,
-        baseURL: this.getApiUrl(),
-      });
+  private convertMessages(messages: LLMCallParams['messages']): any[] {
+    const converted: any[] = [];
+
+    for (const m of messages) {
+      if (m.role === 'tool') {
+        const block: ToolResultBlock = {
+          type: 'tool_result',
+          tool_use_id: m.tool_call_id || '',
+          content: m.content,
+        };
+        const last = converted[converted.length - 1];
+        if (last && last.role === 'user' && Array.isArray(last.content) && last.content.every((c: any) => c.type === 'tool_result')) {
+          last.content.push(block);
+        } else {
+          converted.push({ role: 'user', content: [block] });
+        }
+      } else if (m.role === 'assistant') {
+        if (m.tool_calls && m.tool_calls.length > 0) {
+          const blocks: any[] = [];
+          if (m.content) blocks.push({ type: 'text', text: m.content });
+          for (const tc of m.tool_calls) {
+            blocks.push({
+              type: 'tool_use',
+              id: tc.id,
+              name: tc.function.name,
+              input: this.parseArguments(tc.function.arguments),
+            });
+          }
+          converted.push({ role: 'assistant', content: blocks });
+        } else {
+          converted.push({ role: 'assistant', content: m.content });
+        }
+      } else {
+        const last = converted[converted.length - 1];
+        if (last && last.role === 'user' && typeof last.content === 'string') {
+          last.content = `${last.content}\n\n${m.content}`;
+        } else {
+          converted.push({ role: 'user', content: m.content });
+        }
+      }
     }
-    return this.client;
+
+    return converted;
+  }
+
+  private parseArguments(raw: string): Record<string, unknown> {
+    try {
+      return JSON.parse(raw || '{}');
+    } catch {
+      return { raw };
+    }
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
-    const client = await this.getClient();
+    const client = this.client;
 
-    const messages = params.messages.map(m => ({
-      role: m.role === 'tool' ? 'user' as const : m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const messages = this.convertMessages(params.messages);
 
     const response = await client.messages.create({
       model: this.getModel(),

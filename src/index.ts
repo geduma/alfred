@@ -9,18 +9,40 @@ import { ChannelManager } from './channels/channel-manager';
 import { TelegramChannel } from './channels/telegram';
 import { WhatsAppChannel } from './channels/whatsapp';
 import { CLIChannel } from './channels/cli';
-import { createTools } from './tools/index';
-import { initializeDatabase } from './db/index';
+import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
+import { WORKSPACE_ROOT, WORKSPACE_PATHS } from './utils/workspace';
 
-const CONFIG_PATH = process.env.CONFIG_PATH || path.resolve(__dirname, '../workspace/config/alfred.json');
+const CONFIG_PATH = process.env.CONFIG_PATH || path.join(WORKSPACE_ROOT, 'config', 'alfred.json');
 
-async function ensureConfigFiles(): Promise<void> {
+const REQUIRED_DIRS = [
+  'config',
+  'db',
+  'files',
+  'logs',
+  'memory',
+  'memory/sessions',
+  'memory/jobs',
+  'memory/personality',
+  'memory/vectors',
+  'memory/snapshots',
+  'skills',
+  'skills/custom',
+  'skills/files',
+  'skills/system',
+  'skills/web',
+];
+
+async function ensureWorkspace(): Promise<void> {
+  for (const dir of REQUIRED_DIRS) {
+    await fs.promises.mkdir(path.join(WORKSPACE_ROOT, dir), { recursive: true }).catch(() => {});
+  }
+
   const pairs = [
-    { example: path.resolve(__dirname, '../system/alfred.json.example'), target: path.resolve(__dirname, '../workspace/config/alfred.json') },
-    { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.resolve(__dirname, '../workspace/config/SOUL.md') },
-    { example: path.resolve(__dirname, '../system/secrets.env.example'), target: path.resolve(__dirname, '../workspace/config/secrets.env') },
-    { example: path.resolve(__dirname, '../system/preferences.md.example'), target: path.resolve(__dirname, '../workspace/memory/personality/preferences.md') },
+    { example: path.resolve(__dirname, '../system/alfred.json.example'), target: path.join(WORKSPACE_ROOT, 'config', 'alfred.json') },
+    { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.join(WORKSPACE_ROOT, 'config', 'SOUL.md') },
+    { example: path.resolve(__dirname, '../system/secrets.env.example'), target: path.join(WORKSPACE_ROOT, 'config', 'secrets.env') },
+    { example: path.resolve(__dirname, '../system/preferences.md.example'), target: WORKSPACE_PATHS.preferences() },
   ];
 
   for (const { example, target } of pairs) {
@@ -29,8 +51,7 @@ async function ensureConfigFiles(): Promise<void> {
     } catch {
       try {
         await fs.promises.access(example);
-        const dir = path.dirname(target);
-        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.mkdir(path.dirname(target), { recursive: true });
         await fs.promises.copyFile(example, target);
         console.log(`\n⚠️  Created ${target} from template.`);
         console.log(`   Edit this file with your API keys and settings before using Alfred.\n`);
@@ -41,27 +62,29 @@ async function ensureConfigFiles(): Promise<void> {
   }
 }
 
+let gateway: Gateway | null = null;
+
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════╗');
   console.log('║     Alfred Pennyworth — AI Assistant      ║');
-  console.log('║          Version 2.0.0                    ║');
+  console.log('║          Version 2.1.0                    ║');
   console.log('╚═══════════════════════════════════════════╝');
 
   console.log('\n🔧 Checking configuration files...');
-  await ensureConfigFiles();
+  await ensureWorkspace();
 
-  const configLoader = new ConfigLoader(CONFIG_PATH);
-  const config = configLoader.allConfig;
+  const rawConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
-  if (config.security.gateway_auth_token.startsWith('CHANGE_ME')) {
+  if (rawConfig?.security?.gateway_auth_token?.startsWith('CHANGE_ME')) {
     const newToken = `rpi-alfred-${randomBytes(16).toString('hex')}`;
-    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    raw.security.gateway_auth_token = newToken;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf-8');
-    config.security.gateway_auth_token = newToken;
+    rawConfig.security.gateway_auth_token = newToken;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(rawConfig, null, 2), 'utf-8');
     console.log(`\n🔑 Gateway auth token auto-generated: ${newToken}`);
     console.log(`   Save this if you need external WebSocket clients.\n`);
   }
+
+  const configLoader = new ConfigLoader(CONFIG_PATH);
+  const config = configLoader.allConfig;
 
   initializeLogger(config.logging);
 
@@ -80,19 +103,16 @@ async function main(): Promise<void> {
     await llmRouter.initialize();
   } catch (error: any) {
     getLogger().fatal({ error: error.message }, 'Failed to initialize LLM Router');
-    process.exit(1);
+    await shutdown('llm_init_failure');
+    return;
   }
 
   const channelManager = new ChannelManager();
 
-  const gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager);
-
-  const tools = createTools(configLoader);
-  gateway.setTools(tools);
-  getLogger().info({ tools: tools.map(t => t.tool.name) }, 'Tools registered');
+  gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager);
 
   channelManager.setMessageHandler(async (msg) => {
-    return gateway.processMessage(msg);
+    return gateway ? gateway.processMessage(msg) : null;
   });
 
   for (const { name, config: chConfig } of configLoader.enabledChannels) {
@@ -120,6 +140,7 @@ async function main(): Promise<void> {
   const dbPath = configLoader.database.config.path;
   try {
     await initializeDatabase(dbPath);
+    getLogger().info({ dbPath }, 'Database initialized');
   } catch (error: any) {
     getLogger().warn({ error: error.message }, 'Database initialization failed, continuing without persistence');
   }
@@ -130,11 +151,20 @@ async function main(): Promise<void> {
     channelManager.signalReady();
   } catch (error: any) {
     getLogger().fatal({ error: error.message }, 'Failed to start gateway');
-    process.exit(1);
+    await shutdown('gateway_failure');
   }
 }
 
-function shutdown(): void {
+async function shutdown(reason = 'signal'): Promise<void> {
+  getLogger().info({ reason }, 'Shutting down...');
+  try {
+    if (gateway) {
+      await gateway.stop();
+    }
+    await closeDatabase();
+  } catch (error: any) {
+    getLogger().warn({ error: error.message }, 'Error during shutdown');
+  }
   try {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
@@ -150,17 +180,20 @@ function shutdown(): void {
   process.exit(0);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 
 process.on('uncaughtException', (error) => {
   getLogger().fatal({ error: error.message, stack: error.stack }, 'Uncaught exception');
-  process.exit(1);
+  void shutdown('uncaught_exception');
 });
 
 process.on('unhandledRejection', (reason: any) => {
   getLogger().fatal({ error: reason?.message }, 'Unhandled rejection');
-  process.exit(1);
+  void shutdown('unhandled_rejection');
 });
 
-main();
+main().catch(async (error: any) => {
+  getLogger().fatal({ error: error.message }, 'Fatal startup error');
+  await shutdown('fatal_error');
+});

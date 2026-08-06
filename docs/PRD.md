@@ -2,7 +2,7 @@
 
 ## Alfred Pennyworth — Agente IA Personal Multicanal
 
-**Versión:** 2.0.0  
+**Versión:** 2.1.0  
 **Fecha:** Julio 2026  
 **Estado:** Implementado
 

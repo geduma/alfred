@@ -3,8 +3,9 @@ import path from 'path';
 import { getLogger } from '../utils/logger';
 import { NotificationService } from './notification';
 import { HealthMonitorConfig, HealthFinding } from '../types/notification';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
-const STATE_FILE = path.resolve(__dirname, '../../workspace/memory/health-monitor-state.json');
+const STATE_FILE = WORKSPACE_PATHS.healthState();
 
 interface ScanState {
   last_scan_bytes: number;

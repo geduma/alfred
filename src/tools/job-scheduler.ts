@@ -3,9 +3,15 @@ import path from 'path';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
-const JOBS_DIR = path.resolve(__dirname, '../../workspace/memory/jobs');
 const JOB_FILE_CACHE: Map<string, Job> = new Map();
+
+interface JobContext {
+  channel?: string;
+  userId?: string;
+  chat_id?: string | number;
+}
 
 export interface Job {
   id: string;
@@ -14,6 +20,7 @@ export interface Job {
   created_by: {
     channel: string;
     user_id: string;
+    chat_id?: string | number;
   };
   notification_channels: string[] | null;
   schedule: JobSchedule;
@@ -33,6 +40,12 @@ export interface JobSchedule {
 }
 
 export class JobSchedulerTool implements ToolHandler {
+  private jobsDir: string;
+
+  constructor(jobsDir?: string) {
+    this.jobsDir = jobsDir || WORKSPACE_PATHS.jobs();
+  }
+
   tool: Tool = {
     name: 'job',
     description: 'Schedule, list, update, or cancel reminders and delayed tasks',
@@ -56,7 +69,7 @@ export class JobSchedulerTool implements ToolHandler {
   };
 
   private async ensureDir(): Promise<void> {
-    await fs.promises.mkdir(JOBS_DIR, { recursive: true }).catch(() => {});
+    await fs.promises.mkdir(this.jobsDir, { recursive: true }).catch(() => {});
   }
 
   async execute(params: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -94,8 +107,9 @@ export class JobSchedulerTool implements ToolHandler {
       message,
       created_at: new Date().toISOString(),
       created_by: {
-        channel: 'cli',
-        user_id: 'cli_user',
+        channel: (params.__context as JobContext | undefined)?.channel || 'cli',
+        user_id: (params.__context as JobContext | undefined)?.userId || 'cli_user',
+        chat_id: (params.__context as JobContext | undefined)?.chat_id,
       },
       notification_channels: params.channel ? [params.channel as string] : null,
       schedule,
@@ -276,7 +290,7 @@ export class JobSchedulerTool implements ToolHandler {
 
     let files: string[];
     try {
-      files = await fs.promises.readdir(JOBS_DIR);
+      files = await fs.promises.readdir(this.jobsDir);
     } catch {
       return [];
     }
@@ -286,7 +300,7 @@ export class JobSchedulerTool implements ToolHandler {
         .filter(f => f.endsWith('.json'))
         .map(async f => {
           try {
-            return JSON.parse(await fs.promises.readFile(path.join(JOBS_DIR, f), 'utf-8')) as Job;
+            return JSON.parse(await fs.promises.readFile(path.join(this.jobsDir, f), 'utf-8')) as Job;
           } catch {
             return null;
           }
@@ -325,6 +339,10 @@ export class JobSchedulerTool implements ToolHandler {
     }
   }
 
+  clearCache(): void {
+    JOB_FILE_CACHE.clear();
+  }
+
   async fireDueJobs(channelManager: any): Promise<void> {
     const now = Date.now();
     const jobs = await this.loadAllJobs();
@@ -355,14 +373,17 @@ export class JobSchedulerTool implements ToolHandler {
   }
 
   private async deliver(job: Job, channelManager: any): Promise<void> {
+    const metadata = job.created_by.chat_id !== undefined ? { chat_id: job.created_by.chat_id } : undefined;
+    const reminder = `⏰ Reminder: ${job.message}`;
+
     if (job.notification_channels) {
       await Promise.all(
         job.notification_channels.map(ch =>
-          channelManager.sendMessage(ch, job.created_by.user_id, `⏰ Reminder: ${job.message}`)
+          channelManager.sendMessage(ch, job.created_by.user_id, reminder, metadata)
         )
       );
     } else {
-      await channelManager.sendMessage(job.created_by.channel, job.created_by.user_id, `⏰ Reminder: ${job.message}`);
+      await channelManager.sendMessage(job.created_by.channel, job.created_by.user_id, reminder, metadata);
     }
   }
 
@@ -381,6 +402,6 @@ export class JobSchedulerTool implements ToolHandler {
   }
 
   private jobFilePath(id: string): string {
-    return path.join(JOBS_DIR, `${id}.json`);
+    return path.join(this.jobsDir, `${id}.json`);
   }
 }

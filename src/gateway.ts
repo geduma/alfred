@@ -1,4 +1,3 @@
-import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
@@ -18,9 +17,13 @@ import { approximateSystemPromptTokens } from './utils/token-counter';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RateLimiter } from './security/rate-limiter';
-import { TaskDecomposer } from './services/task-decomposer';
-import { ToolOrchestrator } from './services/tool-orchestrator';
 import { SkillLoader } from './services/skill-loader';
+import { SessionRepository } from './db/repositories/sessions';
+import { MessageRepository } from './db/repositories/messages';
+import { CommandRepository } from './db/repositories/commands';
+import { isDatabaseInitialized } from './db/index';
+import { SystemTool } from './tools/system';
+import { WORKSPACE_PATHS } from './utils/workspace';
 
 interface GatewayRequest {
   type: 'req';
@@ -54,9 +57,11 @@ export class Gateway {
   private snapshotManager: SnapshotManager | null = null;
   private healthMonitor: HealthMonitor | null = null;
   private rateLimiter: RateLimiter;
-  private taskDecomposer: TaskDecomposer;
-  private toolOrchestrator: ToolOrchestrator;
   private skillLoader: SkillLoader;
+  private sessionRepo: SessionRepository;
+  private messageRepo: MessageRepository;
+  private commandRepo: CommandRepository;
+  private dbSessionIds: Map<string, string> = new Map();
   private wsSessions: Map<WebSocket, string> = new Map();
   private connectionLimits: Map<string, { count: number; resetAt: number }> = new Map();
   private pendingSaves: Map<string, NodeJS.Timeout> = new Map();
@@ -75,36 +80,57 @@ export class Gateway {
     this.sessionStore = new SessionStore();
     this.jobScheduler = new JobSchedulerTool();
     this.rateLimiter = new RateLimiter();
+    this.sessionRepo = new SessionRepository();
+    this.messageRepo = new MessageRepository();
+    this.commandRepo = new CommandRepository();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
-    this.taskDecomposer = new TaskDecomposer();
-    this.taskDecomposer.setLlmRouter(llmRouter);
-    this.toolOrchestrator = new ToolOrchestrator();
-    this.skillLoader = new SkillLoader(path.resolve(__dirname, '../../.opencode/skills'));
+    this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
 
-    const vectorStoreConfig = config.memoryConfig?.vector_store;
-    if (vectorStoreConfig?.enabled) {
-      this.vectorStore = new VectorStoreManager(vectorStoreConfig, config.providers);
-    }
-
-    const snapshotConfig = config.memoryConfig?.snapshots;
-    if (snapshotConfig?.enabled) {
-      this.snapshotManager = new SnapshotManager(snapshotConfig);
-    }
-
-    const healthConfig = config.healthMonitor;
-    if (healthConfig?.enabled) {
-      const notifier = new NotificationService(healthConfig, this.channelManager);
-      const logDir = config.logging.config.file_path || '/workspace/logs';
-      this.healthMonitor = new HealthMonitor(healthConfig, notifier, path.join(logDir, 'alfred.log'));
-    }
+    this.buildServices();
   }
 
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
     this.cachedToolSchemas = null;
-    this.toolOrchestrator.setTools(tools);
+    this.wireSystemReload();
+  }
+
+  private buildTools(): ToolHandler[] {
+    return createTools(this.config, this.healthMonitor, this.vectorStore, this.snapshotManager);
+  }
+
+  private buildServices(): void {
+    const vectorStoreConfig = this.config.memoryConfig?.vector_store;
+    if (vectorStoreConfig?.enabled) {
+      this.vectorStore = new VectorStoreManager(vectorStoreConfig, this.config.providers);
+    } else {
+      this.vectorStore = null;
+    }
+
+    const snapshotConfig = this.config.memoryConfig?.snapshots;
+    if (snapshotConfig?.enabled) {
+      this.snapshotManager = new SnapshotManager(snapshotConfig);
+    } else {
+      this.snapshotManager = null;
+    }
+
+    const healthConfig = this.config.healthMonitor;
+    if (healthConfig?.enabled) {
+      const notifier = new NotificationService(healthConfig, this.channelManager);
+      const logPath = this.config.logging.config.file_path || WORKSPACE_PATHS.alfredLog();
+      this.healthMonitor = new HealthMonitor(healthConfig, notifier, logPath);
+    } else {
+      this.healthMonitor = null;
+    }
+  }
+
+  private wireSystemReload(): void {
+    const systemTool = this.tools.find((t): t is SystemTool => t instanceof SystemTool);
+    if (systemTool) {
+      systemTool.setReloadHandler(() => this.reload());
+    }
   }
 
   private getToolSchemas(): any[] {
@@ -127,7 +153,18 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
 
     this.startJobRunner();
+    await this.initServices();
 
+    getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
+
+    this.skillLoader.startWatching();
+    const initialSkills = await this.skillLoader.loadSkills();
+    getLogger().info({ skillsLoaded: initialSkills.length }, 'Skills initialized');
+
+    await this.channelManager.startAll();
+  }
+
+  private async initServices(): Promise<void> {
     if (this.vectorStore) {
       try {
         await this.vectorStore.initialize();
@@ -141,20 +178,53 @@ export class Gateway {
       }
     }
 
-    getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
-
     if (this.healthMonitor) {
       this.healthMonitor.start();
-      const newTools = createTools(this.config, this.healthMonitor, this.vectorStore, this.snapshotManager);
-      this.setTools(newTools);
-      getLogger().info({ tools: newTools.map(t => t.tool.name) }, 'Tools updated with health monitor');
     }
 
-    this.skillLoader.startWatching();
-    const initialSkills = await this.skillLoader.loadSkills();
-    getLogger().info({ skillsLoaded: initialSkills.length }, 'Skills initialized');
+    this.setTools(this.buildTools());
+    getLogger().info({ tools: this.tools.map(t => t.tool.name) }, 'Tools registered');
+  }
 
-    await this.channelManager.startAll();
+  async reload(): Promise<void> {
+    await this.config.reload();
+    getLogger().info('Config reloaded from disk');
+
+    this.llmRouter.reinitialize(this.config);
+    getLogger().info('LLM router reinitialized');
+
+    const personalityFile = this.config.personalityFile;
+    try {
+      await this.promptBuilder.reload(personalityFile);
+      getLogger().info('SOUL.md reloaded');
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'SOUL.md reload failed, using cached');
+    }
+
+    const memoryConfig = this.config.memoryConfig;
+    if (memoryConfig) {
+      this.contextCompressor.updateConfig(memoryConfig);
+      this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
+    }
+
+    await this.rebuildServicesAndTools();
+  }
+
+  private async rebuildServicesAndTools(): Promise<void> {
+    if (this.healthMonitor) {
+      this.healthMonitor.stop();
+      this.healthMonitor = null;
+    }
+    if (this.vectorStore) {
+      try {
+        await this.vectorStore.close();
+      } catch { /* ignore */ }
+      this.vectorStore = null;
+    }
+    this.snapshotManager = null;
+
+    this.buildServices();
+    await this.initServices();
   }
 
   async stop(): Promise<void> {
@@ -166,6 +236,10 @@ export class Gateway {
       await Promise.race([
         (async () => {
           this.stopJobRunner();
+          this.skillLoader.stopWatching();
+          if (this.healthMonitor) {
+            this.healthMonitor.stop();
+          }
           await this.flushPendingSaves();
           this.rateLimiter.stop();
           if (this.vectorStore) {
@@ -322,6 +396,55 @@ export class Gateway {
     }
   }
 
+  private async trackSqlSession(params: {
+    sessionKey: string;
+    channel: string;
+    userId: string;
+    userName?: string;
+  }): Promise<void> {
+    if (!isDatabaseInitialized()) return;
+    try {
+      const record = await this.sessionRepo.getOrCreate(params.channel, params.userId, params.userName);
+      await this.sessionRepo.updateActivity(record.id);
+      this.dbSessionIds.set(params.sessionKey, record.id);
+    } catch (error: any) {
+      getLogger().debug({ error: error.message }, 'SQLite session tracking skipped');
+    }
+  }
+
+  private async persistMessage(sqlSessionId: string | undefined, role: 'user' | 'assistant', content: string): Promise<void> {
+    if (!sqlSessionId || !isDatabaseInitialized()) return;
+    try {
+      await this.messageRepo.save(sqlSessionId, role, content);
+    } catch (error: any) {
+      getLogger().debug({ error: error.message }, 'SQLite message persistence skipped');
+    }
+  }
+
+  private async logExecCommand(
+    session: StoredSession,
+    userId: string,
+    args: Record<string, unknown>,
+    result: { output: string; exitCode?: number; duration_ms?: number }
+  ): Promise<void> {
+    if (!isDatabaseInitialized()) return;
+    const sqlSessionId = this.dbSessionIds.get(session.id);
+    if (!sqlSessionId) return;
+
+    try {
+      await this.commandRepo.log({
+        sessionId: sqlSessionId,
+        userId,
+        command: (args.command as string) || '',
+        result: result.output || undefined,
+        exitCode: result.exitCode,
+        durationMs: result.duration_ms,
+      });
+    } catch (error: any) {
+      getLogger().debug({ error: error.message }, 'SQLite command log skipped');
+    }
+  }
+
   private onClientConnect(ws: WebSocket): void {
     const ip = (ws as any)._socket?.remoteAddress || 'unknown';
     const now = Date.now();
@@ -401,7 +524,7 @@ export class Gateway {
 
     this.sendResponse(ws, req.id, {
       status: 'connected',
-      gateway: { version: '2.0.0' },
+      gateway: { version: this.config.allConfig.agent.version },
     });
   }
 
@@ -409,7 +532,7 @@ export class Gateway {
     session: StoredSession,
     systemPrompt: string,
     contextMessages: Message[],
-    ingestParams: { channel: string; userId: string },
+    ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> },
     _onEvent: (event: string, payload: any) => void
   ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
     let finalSystem = systemPrompt;
@@ -434,6 +557,14 @@ export class Gateway {
       }
 
       allToolCalls = allToolCalls.concat(response.tool_calls);
+
+      const assistantToolMsg: Message = {
+        role: 'assistant',
+        content: response.content || '',
+        tool_calls: response.tool_calls,
+      };
+      session.messages.push(assistantToolMsg);
+      await this.ingestMessage(session, assistantToolMsg, ingestParams);
 
       const executeTool = async (toolCall: any): Promise<void> => {
         const tool = this.tools.find(t => t.tool.name === toolCall.function.name);
@@ -460,10 +591,16 @@ export class Gateway {
         let lastError: string | undefined;
         for (let attempt = 0; attempt <= 1; attempt++) {
           try {
-            const result = await tool.execute(args);
+            const execArgs = (toolCall.function.name === 'exec' || toolCall.function.name === 'job')
+              ? { ...args, __context: { channel: ingestParams.channel, userId: ingestParams.userId, chat_id: ingestParams.metadata?.chat_id } }
+              : args;
+            const result = await tool.execute(execArgs);
             const toolMsg: Message = { role: 'tool', content: result.output, tool_call_id: toolCall.id };
             session.messages.push(toolMsg);
             await this.ingestMessage(session, toolMsg, ingestParams);
+            if (toolCall.function.name === 'exec') {
+              await this.logExecCommand(session, ingestParams.userId, args, result);
+            }
             return;
           } catch (toolError: any) {
             lastError = toolError.message;
@@ -479,8 +616,9 @@ export class Gateway {
       };
 
       const executeToolWithTimeout = async (toolCall: any): Promise<void> => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
         const timeout = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`Tool ${toolCall.function.name} timed out after ${TOOL_TIMEOUT_MS}ms`)), TOOL_TIMEOUT_MS);
+          timer = setTimeout(() => reject(new Error(`Tool ${toolCall.function.name} timed out after ${TOOL_TIMEOUT_MS}ms`)), TOOL_TIMEOUT_MS);
         });
 
         try {
@@ -488,6 +626,8 @@ export class Gateway {
         } catch (error: any) {
           const errorMsg: Message = { role: 'tool', content: `Tool error: ${error.message}`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
+        } finally {
+          if (timer) clearTimeout(timer);
         }
       };
 
@@ -543,12 +683,19 @@ export class Gateway {
       this.sessions.set(sessionKey, session);
     }
 
+    await this.trackSqlSession({
+      sessionKey: session.id,
+      channel: 'ws',
+      userId: sessionKey,
+    });
+
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const ingestParams = { channel: 'ws', userId: sessionKey };
 
     try {
       const userMsg: Message = { role: 'user', content: message };
       session.messages.push(userMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', message);
       const [systemPrompt, skillsContext] = await Promise.all([
         this.promptBuilder.buildSystemPrompt(),
         this.loadSkillsContext(),
@@ -568,6 +715,7 @@ export class Gateway {
 
       const assistantMsg: Message = { role: 'assistant', content };
       session.messages.push(assistantMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
       this.debounceSave(session);
@@ -614,12 +762,20 @@ export class Gateway {
       this.sessions.set(sessionKey, session);
     }
 
+    await this.trackSqlSession({
+      sessionKey: session.id,
+      channel: params.channel,
+      userId: params.userId,
+      userName: params.userName,
+    });
+
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const ingestParams = { channel: params.channel, userId: params.userId };
+    const ingestParams = { channel: params.channel, userId: params.userId, metadata: params.metadata };
 
     try {
       const userMsg: Message = { role: 'user', content: params.content };
       session.messages.push(userMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
       const [systemPrompt, skillsContext] = await Promise.all([
         this.promptBuilder.buildSystemPrompt(),
         this.loadSkillsContext(),
@@ -639,6 +795,7 @@ export class Gateway {
 
       const assistantMsg: Message = { role: 'assistant', content };
       session.messages.push(assistantMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
       this.debounceSave(session);
@@ -655,29 +812,7 @@ export class Gateway {
 
       log.info('Hot-reload triggered via WebSocket');
 
-      await this.config.reload();
-      log.info('Config reloaded from disk');
-
-      this.llmRouter.reinitialize(this.config);
-      log.info('LLM router reinitialized');
-
-      const personalityFile = this.config.personalityFile;
-      try {
-        await this.promptBuilder.reload(personalityFile);
-        log.info('SOUL.md reloaded');
-      } catch (error: any) {
-        log.warn({ error: error.message }, 'SOUL.md reload failed, using cached');
-      }
-
-      const memoryConfig = this.config.memoryConfig;
-      if (memoryConfig) {
-        this.contextCompressor.updateConfig(memoryConfig);
-        this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
-      }
-
-      const newTools = createTools(this.config);
-      this.setTools(newTools);
-      log.info({ tools: newTools.map(t => t.tool.name) }, 'Tools reloaded');
+      await this.reload();
 
       this.sendResponse(ws, req.id, {
         status: 'reloaded',

@@ -40,4 +40,6 @@ export const WORKSPACE_PATHS = {
   alfredLog: () => resolveInWorkspace('logs', 'alfred.log'),
   vectors: () => resolveInWorkspace('memory', 'vectors'),
   snapshots: () => resolveInWorkspace('memory', 'snapshots'),
+  healthState: () => resolveInWorkspace('memory', 'health-monitor-state.json'),
+  skills: () => resolveInWorkspace('skills'),
 } as const;

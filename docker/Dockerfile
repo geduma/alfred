@@ -1,5 +1,8 @@
 FROM node:22-alpine AS builder
 
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 WORKDIR /build
 
 COPY package*.json ./
@@ -12,6 +15,10 @@ COPY system/ ./system/
 RUN npm run build
 
 FROM node:22-alpine
+
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    NODE_ENV=production
 
 WORKDIR /app
 

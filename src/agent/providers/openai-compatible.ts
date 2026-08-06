@@ -1,35 +1,30 @@
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse } from '../../types/llm';
+import OpenAI from 'openai';
 
 export class OpenAICompatibleProvider extends BaseProvider {
   private client: any = null;
 
   constructor(config: any) {
     super(config);
-  }
-
-  private async getClient(): Promise<any> {
-    if (!this.client) {
-      const { default: OpenAI } = await import('openai');
-      this.client = new OpenAI({
-        baseURL: this.getApiUrl(),
-        apiKey: this.config.config.api_key,
-        timeout: this.getTimeout() * 1000,
-      });
-    }
-    return this.client;
+    this.client = new OpenAI({
+      baseURL: this.getApiUrl(),
+      apiKey: this.config.config.api_key,
+      timeout: this.getTimeout() * 1000,
+    });
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
-    const client = await this.getClient();
+    const client = this.client;
     const response = await client.chat.completions.create({
       model: this.getModel(),
       messages: [
         ...(params.system ? [{ role: 'system' as const, content: params.system }] : []),
         ...params.messages.map(m => ({
-          role: m.role as 'user' | 'assistant',
+          role: m.role,
           content: m.content,
-          ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+          ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
         })),
       ],
       tools: params.tools as any[],

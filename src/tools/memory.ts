@@ -39,7 +39,7 @@ export class MemoryTool implements ToolHandler {
       case 'snapshot_get':
         return this.getSnapshot(params);
       case 'snapshot_restore':
-        return { success: true, output: 'Snapshot restore must be triggered via the API. Use snapshot_get to view first.' };
+        return this.restoreSnapshot(params);
       default:
         return { success: false, output: '', error: `Unknown action: ${action}` };
     }
@@ -119,6 +119,27 @@ export class MemoryTool implements ToolHandler {
       };
     } catch (error: any) {
       return { success: false, output: '', error: `Failed to get snapshot: ${error.message}` };
+    }
+  }
+
+  private async restoreSnapshot(params: Record<string, unknown>): Promise<ToolExecutionResult> {
+    if (!this.snapshotManager) {
+      return { success: false, output: '', error: 'Snapshot manager not available' };
+    }
+
+    const snapshotId = params.snapshotId as string;
+    if (!snapshotId) return { success: false, output: '', error: 'snapshotId is required' };
+
+    try {
+      const snapshot = await this.snapshotManager.get(snapshotId);
+      if (!snapshot) return { success: false, output: '', error: `Snapshot ${snapshotId} not found` };
+
+      return {
+        success: true,
+        output: `Restored context from snapshot ${snapshot.id} (session ${snapshot.sessionId}, ${snapshot.messageCount} messages):\n\n${snapshot.summary}`,
+      };
+    } catch (error: any) {
+      return { success: false, output: '', error: `Failed to restore snapshot: ${error.message}` };
     }
   }
 }

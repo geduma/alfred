@@ -1,6 +1,6 @@
 # ALFRED — Quick Start Guide
 
-**Versión:** 2.0.0  
+**Versión:** 2.1.0  
 **Para:** El usuario  
 
 ---

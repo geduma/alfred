@@ -1,7 +1,7 @@
 # ALFRED — Índice de Documentación Completa
 
 **Proyecto:** Alfred Pennyworth - Agente IA Personal Multicanal  
-**Versión:** 2.0.0  
+**Versión:** 2.1.0  
 **Fecha:** Julio 2026  
 **Autor:** geduma  
 **Preparado para:** El usuario
@@ -363,7 +363,7 @@ alfred-personal/
 
 **Todos los archivos están en `/outputs/` listos para descargar**
 
-Versión: 2.0.0  
+Versión: 2.1.0  
 Fecha: Julio 2026  
 Estado: ✅ Completo y Listo para Implementación
 

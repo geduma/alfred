@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { getLogger } from '../utils/logger';
+import { isDatabaseInitialized, getDatabase } from '../db';
 
 export interface Skill {
   name: string;
@@ -65,6 +67,7 @@ export class SkillLoader {
     }
 
     this.cachedSkills = skills;
+    this.cacheSkillsInDb(skills, this.skillsDir);
     getLogger().info({ count: skills.length, dir: this.skillsDir }, 'Skills loaded');
     return skills;
   }
@@ -87,28 +90,98 @@ export class SkillLoader {
   }
 
   private parseSkill(content: string, fileName: string): Skill | null {
-    const nameMatch = content.match(/^#\s+(.+)$/m);
-    const descMatch = content.match(/^>\s*(.+)$/m);
-    const toolsMatch = content.match(/^Tools:\s*(.+)$/m);
+    const frontmatter = this.parseFrontmatter(content);
+    const name = frontmatter?.name || content.match(/^#\s+(.+)$/m)?.[1];
+    const description = frontmatter?.description || content.match(/^>\s*(.+)$/m)?.[1];
+    const tools = frontmatter?.tools
+      ? String(frontmatter.tools).split(',').map(t => t.trim())
+      : content.match(/^Tools:\s*(.+)$/m)?.[1]?.split(',').map(t => t.trim());
 
-    if (!nameMatch) {
+    if (!name) {
       getLogger().warn({ file: fileName }, 'Skill file missing title (# heading), skipping');
       return null;
     }
 
-    const instructionsStart = content.indexOf('\n---\n');
-    const instructions = instructionsStart >= 0
-      ? content.slice(instructionsStart + 5).trim()
-      : content.replace(/^#\s+.+\n/, '').replace(/^>.+\n/, '').replace(/^Tools:.+\n/, '').trim();
+    const instructions = this.extractInstructions(content, frontmatter !== null);
 
     if (!instructions) return null;
 
     return {
-      name: nameMatch[1].trim(),
-      description: descMatch ? descMatch[1].trim() : '',
-      tools: toolsMatch ? toolsMatch[1].split(',').map(t => t.trim()) : undefined,
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      tools,
       instructions,
       filePath: fileName,
     };
+  }
+
+  private parseFrontmatter(content: string): Record<string, string> | null {
+    if (!content.startsWith('---\n')) return null;
+    const end = content.indexOf('\n---\n', 4);
+    if (end < 0) return null;
+
+    const block = content.slice(4, end);
+    const fields: Record<string, string> = {};
+
+    for (const line of block.split('\n')) {
+      const idx = line.indexOf(':');
+      if (idx > 0) {
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+        if (key) fields[key] = value;
+      }
+    }
+
+    return Object.keys(fields).length > 0 ? fields : null;
+  }
+
+  private extractInstructions(content: string, hasFrontmatter: boolean): string {
+    if (hasFrontmatter) {
+      const end = content.indexOf('\n---\n', 4);
+      return content.slice(end + 5).trim();
+    }
+
+    const instructionsStart = content.indexOf('\n---\n');
+    if (instructionsStart >= 0) {
+      return content.slice(instructionsStart + 5).trim();
+    }
+
+    return content
+      .replace(/^#\s+.+\n/, '')
+      .replace(/^>.+\n/, '')
+      .replace(/^Tools:.+\n/, '')
+      .trim();
+  }
+
+  private async cacheSkillsInDb(skills: Skill[], dir: string): Promise<void> {
+    if (!isDatabaseInitialized()) return;
+
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    for (const skill of skills) {
+      try {
+        const fullPath = path.join(dir, skill.filePath);
+        const content = await fs.promises.readFile(fullPath, 'utf-8');
+        const hash = createHash('sha256').update(content).digest('hex');
+
+        await new Promise<void>((resolve, reject) => {
+          db.run(
+            `INSERT INTO skills_cache (name, description, file_path, enabled, last_loaded, hash)
+             VALUES (?, ?, ?, 1, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+               description = excluded.description,
+               file_path = excluded.file_path,
+               enabled = 1,
+               last_loaded = excluded.last_loaded,
+               hash = excluded.hash`,
+            [skill.name, skill.description || '', fullPath, now, hash],
+            (err) => err ? reject(err) : resolve()
+          );
+        });
+      } catch (error: any) {
+        getLogger().debug({ skill: skill.name, error: error.message }, 'Failed to cache skill in DB');
+      }
+    }
   }
 }

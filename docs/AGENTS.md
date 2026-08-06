@@ -55,25 +55,26 @@ src/
 │   ├── snapshot.ts           ← Session snapshots for long-term memory checkpoints
 │   ├── health-monitor.ts     ← Periodic log scanner, error categorizer, alert generator
 │   └── notification.ts      ← Alert delivery (Telegram, with email-ready architecture)
-├── tools/                    ← 5 universal tools (exec, file_ops, web, job, health)
-│   ├── exec.ts               ← Shell with allowlist/denylist
+├── tools/                    ← Universal tools (exec, file_ops, web, job, system, health + conditional memory)
+│   ├── exec.ts               ← Async shell (cross-spawn) with allowlist/denylist
 │   ├── file-ops.ts           ← File CRUD with multi-path permission rules
 │   ├── web.ts                ← Unified web search + fetch (action: "search" | "fetch")
 │   ├── job-scheduler.ts      ← Create/list/update/cancel reminders
-│   └── health.ts             ← Query health monitor, view findings, trigger checks
+│   ├── system.ts             ← health/reload/status via gateway
+│   ├── health.ts             ← Query health monitor, view findings, trigger checks
+│   └── memory.ts             ← Memory tools (snapshot_save, snapshot_restore, context_stats)
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
-│   ├── whatsapp.ts           ← whatsapp-web.js
+│   ├── whatsapp.ts           ← whatsapp-web.js (15s init timeout)
 │   └── cli.ts                ← Interactive readline
 ├── db/                       ← Persistence
-│   ├── schema.sql            ← 5 tables
-│   ├── index.ts              ← Init + migrations
-│   ├── session-store.ts      ← Session serialization to workspace/memory/sessions/ (now with summary field)
+│   ├── schema.ts             ← Embedded SQL schema (5 tables)
+│   ├── index.ts              ← Init + migrations + closeDatabase()
+│   ├── session-store.ts      ← Session serialization to workspace/memory/sessions/
 │   └── repositories/         ← Sessions, Messages, Commands
 ├── security/
-│   ├── rate-limiter.ts       ← Rate limiting by user/channel
-│   └── auth.ts               ← Gateway token + ACL
+│   └── rate-limiter.ts       ← Rate limiting by user/channel
 ├── types/                    ← TypeScript interfaces (MemoryConfig added)
 └── utils/
     ├── logger.ts             ← Pino structured logger
@@ -106,15 +107,17 @@ Single file: `workspace/config/alfred.json`
 - `memory.snapshots` → Session snapshot config (auto interval, max per session)
 - `security.gateway_auth_token` → Minimum 16 characters
 
-## 5 Universal Tools
+## Universal Tools
 
 | Tool | File | Domain |
 |---|---|---|
-| `exec` | `src/tools/exec.ts` | Shell commands with allowlist/denylist |
+| `exec` | `src/tools/exec.ts` | Async shell commands with allowlist/denylist (cross-spawn, timeout, sanitized env) |
 | `file_ops` | `src/tools/file-ops.ts` | Read/write/edit/delete/list files in permitted paths |
 | `web` | `src/tools/web.ts` | Web search (DuckDuckGo) and URL fetch (cheerio) |
-| `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/ |
+| `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/, delivers to originating channel/chat |
+| `system` | `src/tools/system.ts` | Health/status/reload delegated to gateway |
 | `health` | `src/tools/health.ts` | Query health monitor findings, trigger checks |
+| `memory` | `src/tools/memory.ts` | Conditional — snapshot_save/restore, context_stats |
 
 ## Personality System
 
@@ -298,16 +301,21 @@ The snapshot pipeline in `prepareContext()` runs after each successful interacti
 ## Auto-Created Configs
 
 On first startup, if `workspace/config/alfred.json` or `workspace/config/SOUL.md` don't exist, they are auto-created from:
-- `config/alfred.json.example`
-- `config/SOUL.md.example`
+- `system/alfred.json.example`
+- `system/SOUL.md.example`
 
 The user is prompted to edit these files with real API keys.
+
+If `security.gateway_auth_token` starts with `CHANGE_ME`, Alfred auto-generates a
+random token and writes it back to the config **before** schema validation runs,
+so a fresh volume boots without manual edits.
 
 ## Testing
 
 - Unit tests in `tests/unit/`
-- Jest with `ts-jest`
+- Jest with `ts-jest`, logger silenced via `tests/jest.setup.ts`
 - Run: `npm test`
+- Verify: `npx tsc --noEmit`, `npm run lint`, `npm run build`
 
 ## Docker
 

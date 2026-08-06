@@ -113,10 +113,6 @@ export class PromptCompressor {
     return result;
   }
 
-  estimateTokens(text: string): number {
-    return Math.max(Math.ceil(text.length / 4), Math.ceil(text.split(/\s+/).length * 1.3));
-  }
-
   private compressPhrases(text: string): string {
     for (const [pattern, replacement] of PHRASE_MAP) {
       text = text.replace(pattern, replacement);

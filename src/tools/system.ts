@@ -1,14 +1,17 @@
 import fs from 'fs';
-import { execSync } from 'child_process';
+import { exec as execCallback } from 'child_process';
+import { promisify } from 'util';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { WORKSPACE_PATHS } from '../utils/workspace';
 
+const exec = promisify(execCallback);
 const LOG_PATH = WORKSPACE_PATHS.alfredLog();
 
 export class SystemTool implements ToolHandler {
   private configLoader: ConfigLoader;
+  private reloadHandler: (() => void) | null = null;
 
   tool: Tool = {
     name: 'system',
@@ -26,6 +29,10 @@ export class SystemTool implements ToolHandler {
 
   constructor(configLoader: ConfigLoader) {
     this.configLoader = configLoader;
+  }
+
+  setReloadHandler(handler: () => void): void {
+    this.reloadHandler = handler;
   }
 
   async execute(params: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -147,6 +154,10 @@ export class SystemTool implements ToolHandler {
 
   private reload(): ToolExecutionResult {
     try {
+      if (this.reloadHandler) {
+        this.reloadHandler();
+        return { success: true, output: '✅ Configuración recargada (config, providers y tools).' };
+      }
       this.configLoader.reload();
       return { success: true, output: '✅ Configuración recargada desde disco. Los cambios se aplicarán en la siguiente solicitud al LLM.' };
     } catch (error: any) {
@@ -154,12 +165,23 @@ export class SystemTool implements ToolHandler {
     }
   }
 
-  private health(): ToolExecutionResult {
+  private async runShell(cmd: string): Promise<string> {
     try {
-      const memory = execSync('free -m 2>/dev/null || echo "N/A"', { encoding: 'utf-8', timeout: 5000 });
-      const disk = execSync('df -h /workspace 2>/dev/null || echo "N/A"', { encoding: 'utf-8', timeout: 5000 });
-      const nodeVersion = execSync('node -v', { encoding: 'utf-8', timeout: 5000 });
-      const uptime = execSync('uptime 2>/dev/null || echo "N/A"', { encoding: 'utf-8', timeout: 5000 });
+      const { stdout } = await exec(cmd, { encoding: 'utf-8', timeout: 5000 });
+      return (stdout || '').trim() || 'N/A';
+    } catch {
+      return 'N/A';
+    }
+  }
+
+  private async health(): Promise<ToolExecutionResult> {
+    try {
+      const [memory, disk, nodeVersion, uptime] = await Promise.all([
+        this.runShell('free -m 2>/dev/null || echo "N/A"'),
+        this.runShell('df -h /workspace 2>/dev/null || echo "N/A"'),
+        this.runShell('node -v'),
+        this.runShell('uptime 2>/dev/null || echo "N/A"'),
+      ]);
 
       const dbPath = this.configLoader.allConfig.database.config.path;
       let dbSize = 'N/A';
@@ -169,24 +191,23 @@ export class SystemTool implements ToolHandler {
       }
 
       const wsPort = 18789;
-      const wsCheck = execSync(
-        `node -e "const ws=require('ws');new ws('ws://127.0.0.1:${wsPort}').on('open',()=>{process.stdout.write('OK');process.exit(0)}).on('error',()=>{process.stdout.write('DOWN');process.exit(1)})"`,
-        { encoding: 'utf-8', timeout: 5000 }
-      ).trim();
+      const wsCheck = await this.runShell(
+        `node -e "const ws=require('ws');new ws('ws://127.0.0.1:${wsPort}').on('open',()=>{process.stdout.write('OK');process.exit(0)}).on('error',()=>{process.stdout.write('DOWN');process.exit(1)})"`
+      );
 
       const output = [
-        `Node.js: ${nodeVersion.trim()}`,
+        `Node.js: ${nodeVersion}`,
         `WebSocket (${wsPort}): ${wsCheck}`,
         `Database: ${dbSize}`,
         '',
         '— Memory —',
-        memory.trim(),
+        memory,
         '',
         '— Disk —',
-        disk.trim(),
+        disk,
         '',
         '— Uptime —',
-        uptime.trim(),
+        uptime,
       ].join('\n');
 
       return { success: true, output };

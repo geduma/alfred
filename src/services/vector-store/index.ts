@@ -40,9 +40,10 @@ export class VectorStoreManager {
         this.table = await this.db.openTable(DEFAULT_TABLE_NAME);
         getLogger().info({ path: this.config.path }, 'Vector store opened');
       } else {
+        const SEED_ID = '__lancedb_schema_seed__';
         this.table = await this.db.createTable(DEFAULT_TABLE_NAME, [
           {
-            id: '',
+            id: SEED_ID,
             vector: new Array(this.embedder.dimension).fill(0),
             text: '',
             sessionId: '',
@@ -53,6 +54,11 @@ export class VectorStoreManager {
             messageId: '',
           },
         ]);
+        try {
+          await this.table.delete(`id = '${SEED_ID}'`);
+        } catch {
+          // seed row removal is best-effort; empty rows never match a real search
+        }
         getLogger().info({ path: this.config.path }, 'Vector store created');
       }
 
@@ -146,16 +152,6 @@ export class VectorStoreManager {
         'Vector search failed'
       );
       return [];
-    }
-  }
-
-  async deleteBySession(sessionId: string): Promise<void> {
-    if (!this.initialized || !this.table) return;
-
-    try {
-      await this.table.delete(`sessionId = '${sessionId.replace(/'/g, "''")}'`);
-    } catch (error: any) {
-      getLogger().warn({ error: error.message, sessionId }, 'Failed to delete vectors');
     }
   }
 

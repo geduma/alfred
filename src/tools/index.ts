@@ -13,7 +13,7 @@ import { SnapshotManager } from '../services/snapshot';
 
 export function createTools(
   config: ConfigLoader,
-  healthMonitor?: HealthMonitor,
+  healthMonitor?: HealthMonitor | null,
   vectorStore?: VectorStoreManager | null,
   snapshotManager?: SnapshotManager | null,
 ): ToolHandler[] {

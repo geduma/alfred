@@ -4,6 +4,8 @@ node_modules/
 .env
 .DS_Store
 workspace/db/*.db
+workspace/db/*.db-shm
+workspace/db/*.db-wal
 workspace/logs/*
 workspace/memory/*
 workspace/config/alfred.json
