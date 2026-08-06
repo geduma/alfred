@@ -182,6 +182,8 @@ Alfred must never output secret values in responses or log them. The `exec` tool
 Alfred uses a **Sliding Window + Summary** strategy to prevent unbounded context growth:
 
 - **Token budget**: `memory.max_context_tokens` (default: 32000) controls the soft limit
+- **Adaptive provider budget**: On a 413/request-too-large error, Alfred learns the provider's real context limit and persists it to `workspace/memory/provider-budgets.json`, then auto-compacts and retries (up to 3 cycles, then once without tools). Provider-specific values are never hardcoded; `provider.config.max_context_tokens` is an optional manual override.
+- **Output token cap**: `max_tokens` per call is derived from the effective context budget (`max(512, budget × 0.35)`), capped by the configured `max_tokens`, so output shrinks when the learned budget does.
 - **Compaction trigger**: When context exceeds `max_context_tokens × compaction_threshold` (default: 80%), compression activates
 - **Sliding window**: The last `max_verbatim_messages` (default: 20) are kept verbatim for precise recall
 - **LLM summarization**: Older messages are compressed into a structured summary via the LLM, preserving decisions, preferences, pending tasks, and key facts

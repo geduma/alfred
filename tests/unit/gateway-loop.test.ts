@@ -280,4 +280,96 @@ describe('Gateway runAgentLoop', () => {
       expect.objectContaining({ role: 'tool', tool_call_id: 'orphan_1' })
     );
   });
+
+  test('should shrink the context budget, compact, and retry on a 413 error', async () => {
+    routerCall
+      .mockRejectedValueOnce(new Error('API request failed: 413 Request Entity Too Large. Requested 8000 tokens'))
+      .mockResolvedValueOnce({
+        content: 'adapted',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+      });
+
+    const session: any = {
+      id: 'session-413',
+      messages: [{ role: 'user', content: 'write a very long story about space exploration and robots' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      () => {}
+    );
+
+    expect(result.content).toBe('adapted');
+    expect(routerCall).toHaveBeenCalledTimes(2);
+
+    const learned = (gateway as any).providerContextBudgets.get('relio');
+    expect(learned).toBeDefined();
+    expect(learned).toBeLessThan(32000);
+
+    const secondCall = routerCall.mock.calls[1][0];
+    expect(secondCall.max_tokens).toBeLessThan(4096);
+  });
+
+  test('should retry without tools after repeated request-too-large errors', async () => {
+    routerCall
+      .mockRejectedValueOnce(new Error('413 Request Entity Too Large. Requested 9000 tokens'))
+      .mockRejectedValueOnce(new Error('413 Request Entity Too Large. Requested 6000 tokens'))
+      .mockRejectedValueOnce(new Error('413 Request Entity Too Large. Requested 4000 tokens'))
+      .mockRejectedValueOnce(new Error('413 Request Entity Too Large. Requested 2500 tokens'))
+      .mockResolvedValueOnce({
+        content: 'survived without tools',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+      });
+
+    const session: any = {
+      id: 'session-nolimit',
+      messages: [{ role: 'user', content: 'please summarize this giant conversation for me' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      () => {}
+    );
+
+    expect(result.content).toBe('survived without tools');
+    expect(routerCall).toHaveBeenCalledTimes(5);
+
+    const noToolsCall = routerCall.mock.calls[4][0];
+    expect(noToolsCall.tools).toHaveLength(0);
+  });
+
+  test('should propagate a non-throttle error without retrying', async () => {
+    routerCall.mockRejectedValue(new Error('Connection refused'));
+
+    const session: any = {
+      id: 'session-conn',
+      messages: [{ role: 'user', content: 'hello' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await expect(
+      (gateway as any).runAgentLoop(
+        session,
+        'system prompt',
+        session.messages,
+        { channel: 'cli', userId: 'u', metadata: {} },
+        () => {}
+      )
+    ).rejects.toThrow('Connection refused');
+
+    expect(routerCall).toHaveBeenCalledTimes(1);
+  });
 });

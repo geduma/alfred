@@ -84,13 +84,14 @@ export class ContextCompressor {
     existingSummary: string | undefined,
     messages: Message[],
     systemPromptTokens: number,
-    extraTokens = 0
+    extraTokens = 0,
+    force = false
   ): Promise<CompactedContext> {
     const originalTokenCount = estimateMessagesTokens(messages) + extraTokens;
     const totalTokens = originalTokenCount + systemPromptTokens;
     const threshold = this.getBudget() * this.config.compaction_threshold;
 
-    if (totalTokens <= threshold) {
+    if (!force && totalTokens <= threshold) {
       return {
         summary: existingSummary || '',
         messages,

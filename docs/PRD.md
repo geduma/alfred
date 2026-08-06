@@ -101,6 +101,8 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - **Estrategia:** Sliding window + LLM summarization
 - **Compresión:** Mensajes antiguos se comprimen en resumen estructurado con secciones: DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS
 - **Threshold:** Configurable via `memory.max_context_tokens` (default: 32000) y `memory.compaction_threshold` (default: 0.8)
+- **Adaptativo:** Ante un error 413/request-too-large, Alfred aprende el límite real del provider y lo persiste en `workspace/memory/provider-budgets.json`, compacta y reintenta (hasta 3 ciclos, luego una vez sin tools). Sin valores hardcodeados por modelo; `provider.config.max_context_tokens` es un override manual opcional
+- **Output:** `max_tokens` por llamada se deriva del presupuesto efectivo (`max(512, budget × 0.35)`), acotado por el `max_tokens` configurado
 - **Verbatim:** Últimos N mensajes se mantienen intactos (`max_verbatim_messages`, default: 20)
 - **Persistencia:** Full history en disco, versión compactada se envía al LLM
 - **Fallback:** Si el LLM no genera resumen, se usa heurística basada en mensajes recientes

@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import fs from 'fs';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
@@ -8,12 +9,13 @@ import { ToolHandler } from './types/tool';
 import { createTools } from './tools/index';
 import { SessionStore, StoredSession } from './db/session-store';
 import { JobSchedulerTool } from './tools/job-scheduler';
-import { Message } from './types/llm';
+import { Message, LLMResponse } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
 import { SnapshotManager } from './services/snapshot';
 import { approximateSystemPromptTokens, estimateTokenCount } from './utils/token-counter';
+import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET } from './utils/provider-errors';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RateLimiter } from './security/rate-limiter';
@@ -37,6 +39,8 @@ const MAX_TOOL_ITERATIONS = 25;
 const SAVE_DEBOUNCE_MS = 5000;
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_TOOLS = 3;
+const MAX_ADAPTIVE_ATTEMPTS = 3;
+const MIN_OUTPUT_TOKENS = 512;
 
 export class Gateway {
   private wss: WebSocketServer | null = null;
@@ -47,6 +51,7 @@ export class Gateway {
   private tools: ToolHandler[] = [];
   private cachedToolSchemas: any[] | null = null;
   private toolSchemaTokens: number = 0;
+  private providerContextBudgets: Map<string, number> = new Map();
   private sessions: Map<string, StoredSession> = new Map();
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
@@ -86,7 +91,8 @@ export class Gateway {
     this.commandRepo = new CommandRepository();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
-    this.contextCompressor.setContextBudget(this.getContextBudget());
+    this.loadProviderBudgets();
+    this.refreshProviderBudgets();
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
     this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
 
@@ -152,10 +158,70 @@ export class Gateway {
 
   private getContextBudget(): number {
     const memoryBudget = this.config.memoryConfig?.max_context_tokens || 32000;
+    const providerName = this.config.llmConfig.primary_provider;
+    const learned = this.providerContextBudgets.get(providerName);
+    return Math.max(MIN_CONTEXT_BUDGET, Math.min(memoryBudget, learned ?? memoryBudget));
+  }
+
+  private getOutputTokens(): number {
     const provider = this.config.providers[this.config.llmConfig.primary_provider];
-    const providerMax = provider?.config.max_context_tokens;
-    if (!providerMax) return memoryBudget;
-    return Math.min(memoryBudget, providerMax);
+    const configured = provider?.config.max_tokens ?? 4096;
+    const derived = Math.floor(this.getContextBudget() * 0.35);
+    return Math.max(MIN_OUTPUT_TOKENS, Math.min(configured, derived));
+  }
+
+  private loadProviderBudgets(): void {
+    try {
+      const raw = JSON.parse(fs.readFileSync(WORKSPACE_PATHS.providerBudgets(), 'utf-8'));
+      if (raw && typeof raw === 'object') {
+        for (const [name, value] of Object.entries(raw)) {
+          if (typeof value === 'number' && value >= MIN_CONTEXT_BUDGET) {
+            this.providerContextBudgets.set(name, value);
+          }
+        }
+      }
+    } catch {
+      // no saved budgets yet
+    }
+  }
+
+  private saveProviderBudgets(): void {
+    const data: Record<string, number> = {};
+    for (const [name, value] of this.providerContextBudgets) {
+      data[name] = value;
+    }
+    void fs.promises.writeFile(WORKSPACE_PATHS.providerBudgets(), JSON.stringify(data, null, 2), 'utf-8').catch(() => {
+      // persistence is best-effort
+    });
+  }
+
+  private refreshProviderBudgets(): void {
+    for (const [name, provider] of Object.entries(this.config.providers)) {
+      if (!provider.enabled) continue;
+      const configured = provider.config.max_context_tokens;
+      if (configured) {
+        const current = this.providerContextBudgets.get(name);
+        if (!current || configured < current) {
+          this.providerContextBudgets.set(name, configured);
+        }
+      }
+    }
+    this.contextCompressor.setContextBudget(this.getContextBudget());
+  }
+
+  private shrinkContextBudget(errorMessage: string): number {
+    const providerName = this.config.llmConfig.primary_provider;
+    const current = this.providerContextBudgets.get(providerName) ?? this.getContextBudget();
+    const requested = parseRequestedTokens(errorMessage);
+    const next = nextContextBudget(current, requested);
+    this.providerContextBudgets.set(providerName, next);
+    this.contextCompressor.setContextBudget(this.getContextBudget());
+    this.saveProviderBudgets();
+    getLogger().warn(
+      { provider: providerName, from: current, to: next, requested },
+      'Reduced provider context budget after request-too-large'
+    );
+    return next;
   }
 
   getHealthMonitor(): HealthMonitor | null {
@@ -224,7 +290,7 @@ export class Gateway {
       this.contextCompressor.updateConfig(memoryConfig);
       this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
     }
-    this.contextCompressor.setContextBudget(this.getContextBudget());
+    this.refreshProviderBudgets();
 
     await this.rebuildServicesAndTools();
   }
@@ -600,11 +666,7 @@ export class Gateway {
 
     const maxIterations = this.config.allConfig.agent.max_tool_iterations || MAX_TOOL_ITERATIONS;
     while (iteration < maxIterations) {
-      const response = await this.llmRouter.call({
-        messages,
-        system: finalSystem,
-        tools: this.getToolSchemas(),
-      });
+      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem);
 
       if (!response.tool_calls || response.tool_calls.length === 0) {
         finalContent = response.content || '';
@@ -707,6 +769,67 @@ export class Gateway {
     }
 
     return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage };
+  }
+
+  private async callWithAdaptiveRetry(
+    session: StoredSession,
+    messages: Message[],
+    system: string
+  ): Promise<LLMResponse> {
+    let attempt = 0;
+    let callMessages = messages;
+    let callSystem = system;
+    let tools = this.getToolSchemas();
+
+    for (;;) {
+      try {
+        return await this.llmRouter.call({
+          messages: callMessages,
+          system: callSystem,
+          tools,
+          max_tokens: this.getOutputTokens(),
+        });
+      } catch (error: any) {
+        if (!isThrottleError(error.message)) throw error;
+
+        if (attempt >= MAX_ADAPTIVE_ATTEMPTS) {
+          if (tools.length > 0) {
+            tools = [];
+            getLogger().warn(
+              { provider: this.config.llmConfig.primary_provider },
+              'Context too large even after compaction, retrying without tools'
+            );
+            continue;
+          }
+          throw error;
+        }
+
+        attempt++;
+        this.shrinkContextBudget(error.message);
+
+        const systemPromptTokens = approximateSystemPromptTokens(callSystem);
+        const extraTokens = this.getToolSchemaTokens();
+        const result = await this.contextCompressor.compactSession(
+          session.summary,
+          session.messages,
+          systemPromptTokens,
+          extraTokens,
+          true
+        );
+        if (result.wasCompacted) {
+          session.summary = result.summary;
+          session.messages = result.messages;
+        }
+        this.ensureToolResponses(session.messages);
+        callMessages = session.messages;
+        callSystem = this.promptCompressor.compress(callSystem);
+
+        getLogger().warn(
+          { attempt, budget: this.getContextBudget() },
+          'Compacting context after request-too-large and retrying'
+        );
+      }
+    }
   }
 
   private async handleAgentRequest(ws: WebSocket, req: GatewayRequest): Promise<void> {

@@ -4,6 +4,7 @@ import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
 import { CircuitBreaker } from '../services/circuit-breaker';
 import { TokenBudgetTracker } from '../services/token-budget';
+import { isThrottleError } from '../utils/provider-errors';
 
 export class LLMRouter {
   private providers: Map<string, LLMProvider> = new Map();
@@ -80,7 +81,7 @@ export class LLMRouter {
 
         return response;
       } catch (error: any) {
-        if (this.isThrottleError(error.message)) {
+        if (isThrottleError(error.message)) {
           getLogger().warn(
             { provider: providerName, error: error.message },
             'Provider throttled, circuit breaker not opened'
@@ -100,10 +101,6 @@ export class LLMRouter {
     throw new Error(
       `All providers failed. Attempts: ${attempts.map(a => `${a.provider}: ${a.error}`).join(' | ')}`
     );
-  }
-
-  private isThrottleError(message: string): boolean {
-    return /\b(429|413)\b|rate limit|too many requests|tokens per minute|request too large|reduce your message size/i.test(message);
   }
 
   async reinitialize(config?: ConfigLoader): Promise<void> {

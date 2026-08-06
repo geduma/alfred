@@ -41,5 +41,6 @@ export const WORKSPACE_PATHS = {
   vectors: () => resolveInWorkspace('memory', 'vectors'),
   snapshots: () => resolveInWorkspace('memory', 'snapshots'),
   healthState: () => resolveInWorkspace('memory', 'health-monitor-state.json'),
+  providerBudgets: () => resolveInWorkspace('memory', 'provider-budgets.json'),
   skills: () => resolveInWorkspace('skills'),
 } as const;
