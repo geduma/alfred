@@ -83,7 +83,13 @@ export class AnthropicProvider extends BaseProvider {
       system: params.system || '',
       messages: messages.length > 0 ? messages : [{ role: 'user', content: 'Hello' }],
       temperature: params.temperature ?? this.getTemperature(),
-      ...(params.tools && params.tools.length > 0 ? { tools: params.tools as any[] } : {}),
+      ...(params.tools && params.tools.length > 0
+        ? { tools: params.tools.map(t => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.inputSchema,
+          })) }
+        : {}),
     });
 
     const contentBlock = response.content[0];

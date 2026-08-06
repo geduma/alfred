@@ -27,7 +27,14 @@ export class OpenAICompatibleProvider extends BaseProvider {
           ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
         })),
       ],
-      tools: params.tools as any[],
+      tools: params.tools?.map(t => ({
+        type: 'function' as const,
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema,
+        },
+      })),
       temperature: params.temperature ?? this.getTemperature(),
       max_tokens: params.max_tokens ?? this.getMaxTokens(),
       top_p: params.top_p,

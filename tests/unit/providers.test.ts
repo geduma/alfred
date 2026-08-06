@@ -54,6 +54,12 @@ describe('AnthropicProvider', () => {
     const sent = createMock.mock.calls[0][0];
     expect(sent.messages[0]).toEqual({ role: 'user', content: 'list files' });
 
+    expect(sent.tools[0]).toEqual({
+      name: 'exec',
+      description: 'Run a command',
+      input_schema: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+    });
+
     const assistant = sent.messages[1];
     expect(assistant.role).toBe('assistant');
     expect(assistant.content[0]).toMatchObject({ type: 'tool_use', id: 'call_1', name: 'exec' });
@@ -126,6 +132,15 @@ describe('OpenAICompatibleProvider', () => {
 
     const assistantMsg = sent.messages.find((m: any) => m.role === 'assistant');
     expect(assistantMsg.tool_calls).toBeDefined();
+
+    expect(sent.tools[0]).toEqual({
+      type: 'function',
+      function: {
+        name: 'exec',
+        description: 'Run a command',
+        parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      },
+    });
   });
 
   test('should map tool_calls finish reason to tool_use', async () => {
@@ -151,6 +166,35 @@ describe('OpenAICompatibleProvider', () => {
 
     expect(response.stop_reason).toBe('tool_use');
     expect(response.tool_calls).toHaveLength(1);
+  });
+
+  test('should convert internal tools into OpenAI tool format', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
+
+    await provider.call({ messages: [{ role: 'user', content: 'hi' }], tools: TOOLS });
+
+    const sent = createMock.mock.calls[0][0];
+    expect(sent.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'exec',
+        description: 'Run a command',
+        parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      },
+    }]);
   });
 });
 
