@@ -1,6 +1,6 @@
 import { Message } from '../types/llm';
 import { LLMRouter } from '../agent/llm-router';
-import { estimateMessagesTokens } from '../utils/token-counter';
+import { estimateMessagesTokens, estimateTokenCount } from '../utils/token-counter';
 import { getLogger } from '../utils/logger';
 
 export interface CompactedContext {
@@ -43,6 +43,7 @@ Structured Summary:`;
 export class ContextCompressor {
   private config: MemoryConfig;
   private llmRouter: LLMRouter | null = null;
+  private contextBudget: number | null = null;
 
   constructor(config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
@@ -56,10 +57,18 @@ export class ContextCompressor {
     this.config = { ...this.config, ...config };
   }
 
-  shouldCompact(messages: Message[], systemPromptTokens: number): boolean {
+  setContextBudget(budget: number | null): void {
+    this.contextBudget = budget;
+  }
+
+  private getBudget(): number {
+    return this.contextBudget ?? this.config.max_context_tokens;
+  }
+
+  shouldCompact(messages: Message[], systemPromptTokens: number, extraTokens = 0): boolean {
     const msgTokens = estimateMessagesTokens(messages);
-    const total = msgTokens + systemPromptTokens;
-    const threshold = this.config.max_context_tokens * this.config.compaction_threshold;
+    const total = msgTokens + systemPromptTokens + extraTokens;
+    const threshold = this.getBudget() * this.config.compaction_threshold;
     return total > threshold;
   }
 
@@ -67,19 +76,21 @@ export class ContextCompressor {
     return estimateMessagesTokens(messages);
   }
 
-  estimateTotalTokens(messages: Message[], systemPromptTokens: number): number {
-    return estimateMessagesTokens(messages) + systemPromptTokens;
+  estimateTotalTokens(messages: Message[], systemPromptTokens: number, extraTokens = 0): number {
+    return estimateMessagesTokens(messages) + systemPromptTokens + extraTokens;
   }
 
   async compactSession(
     existingSummary: string | undefined,
     messages: Message[],
-    systemPromptTokens: number
+    systemPromptTokens: number,
+    extraTokens = 0
   ): Promise<CompactedContext> {
-    const originalTokenCount = estimateMessagesTokens(messages);
+    const originalTokenCount = estimateMessagesTokens(messages) + extraTokens;
     const totalTokens = originalTokenCount + systemPromptTokens;
+    const threshold = this.getBudget() * this.config.compaction_threshold;
 
-    if (totalTokens <= this.config.max_context_tokens * this.config.compaction_threshold) {
+    if (totalTokens <= threshold) {
       return {
         summary: existingSummary || '',
         messages,
@@ -89,8 +100,9 @@ export class ContextCompressor {
       };
     }
 
-    const verboseRecentMessages = messages.slice(-this.config.max_verbatim_messages);
-    const olderMessages = messages.slice(0, -this.config.max_verbatim_messages);
+    const tailBudget = Math.max(1, threshold - systemPromptTokens - extraTokens);
+    const verboseRecentMessages = this.keepWithinBudget(messages, tailBudget);
+    const olderMessages = messages.slice(0, messages.length - verboseRecentMessages.length);
 
     if (olderMessages.length === 0) {
       return {
@@ -109,7 +121,7 @@ export class ContextCompressor {
       ...verboseRecentMessages,
     ];
 
-    const compactedTokenCount = estimateMessagesTokens(compactedMessages);
+    const compactedTokenCount = estimateMessagesTokens(compactedMessages) + extraTokens;
 
     getLogger().info(
       {
@@ -129,6 +141,22 @@ export class ContextCompressor {
       originalTokenCount,
       compactedTokenCount,
     };
+  }
+
+  private keepWithinBudget(messages: Message[], tailBudget: number): Message[] {
+    const maxKeep = Math.max(1, this.config.max_verbatim_messages);
+    const kept: Message[] = [];
+    let keptTokens = 0;
+
+    for (let i = messages.length - 1; i >= 0 && kept.length < maxKeep; i--) {
+      const m = messages[i];
+      const msgTokens = estimateTokenCount(m.content) + 4 + (m.tool_call_id ? 20 : 0);
+      if (kept.length > 0 && keptTokens + msgTokens > tailBudget) break;
+      kept.unshift(m);
+      keptTokens += msgTokens;
+    }
+
+    return kept;
   }
 
   private async generateSummary(existingSummary: string | undefined, messages: Message[]): Promise<string> {

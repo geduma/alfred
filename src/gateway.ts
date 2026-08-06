@@ -13,7 +13,7 @@ import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
 import { SnapshotManager } from './services/snapshot';
-import { approximateSystemPromptTokens } from './utils/token-counter';
+import { approximateSystemPromptTokens, estimateTokenCount } from './utils/token-counter';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RateLimiter } from './security/rate-limiter';
@@ -46,6 +46,7 @@ export class Gateway {
   private channelManager: ChannelManager;
   private tools: ToolHandler[] = [];
   private cachedToolSchemas: any[] | null = null;
+  private toolSchemaTokens: number = 0;
   private sessions: Map<string, StoredSession> = new Map();
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
@@ -85,6 +86,7 @@ export class Gateway {
     this.commandRepo = new CommandRepository();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
+    this.contextCompressor.setContextBudget(this.getContextBudget());
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
     this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
 
@@ -94,6 +96,7 @@ export class Gateway {
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
     this.cachedToolSchemas = null;
+    this.toolSchemaTokens = 0;
     this.wireSystemReload();
   }
 
@@ -138,6 +141,21 @@ export class Gateway {
       this.cachedToolSchemas = this.tools.map(t => t.tool);
     }
     return this.cachedToolSchemas;
+  }
+
+  private getToolSchemaTokens(): number {
+    if (this.toolSchemaTokens === 0 && this.getToolSchemas().length > 0) {
+      this.toolSchemaTokens = estimateTokenCount(JSON.stringify(this.getToolSchemas()));
+    }
+    return this.toolSchemaTokens;
+  }
+
+  private getContextBudget(): number {
+    const memoryBudget = this.config.memoryConfig?.max_context_tokens || 32000;
+    const provider = this.config.providers[this.config.llmConfig.primary_provider];
+    const providerMax = provider?.config.max_context_tokens;
+    if (!providerMax) return memoryBudget;
+    return Math.min(memoryBudget, providerMax);
   }
 
   getHealthMonitor(): HealthMonitor | null {
@@ -206,6 +224,7 @@ export class Gateway {
       this.contextCompressor.updateConfig(memoryConfig);
       this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
     }
+    this.contextCompressor.setContextBudget(this.getContextBudget());
 
     await this.rebuildServicesAndTools();
   }
@@ -311,13 +330,15 @@ export class Gateway {
     currentMessage?: string
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
+    const extraTokens = this.getToolSchemaTokens();
     let messages = session.messages;
 
-    if (this.contextCompressor.shouldCompact(session.messages, systemPromptTokens)) {
+    if (this.contextCompressor.shouldCompact(session.messages, systemPromptTokens, extraTokens)) {
       const result = await this.contextCompressor.compactSession(
         session.summary,
         session.messages,
-        systemPromptTokens
+        systemPromptTokens,
+        extraTokens
       );
 
       if (result.wasCompacted) {

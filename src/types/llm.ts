@@ -60,6 +60,7 @@ export interface ProviderConfig {
     organization?: string;
     temperature?: number;
     max_tokens?: number;
+    max_context_tokens?: number;
     top_p?: number;
     timeout_seconds?: number;
   };

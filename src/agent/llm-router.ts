@@ -80,8 +80,15 @@ export class LLMRouter {
 
         return response;
       } catch (error: any) {
-        this.circuitBreaker.recordFailure(providerName);
-        getLogger().warn({ provider: providerName, error: error.message }, 'Provider failed');
+        if (this.isThrottleError(error.message)) {
+          getLogger().warn(
+            { provider: providerName, error: error.message },
+            'Provider throttled, circuit breaker not opened'
+          );
+        } else {
+          this.circuitBreaker.recordFailure(providerName);
+          getLogger().warn({ provider: providerName, error: error.message }, 'Provider failed');
+        }
         attempts.push({ provider: providerName, error: error.message });
 
         if (i < this.providerChain.length - 1) {
@@ -93,6 +100,10 @@ export class LLMRouter {
     throw new Error(
       `All providers failed. Attempts: ${attempts.map(a => `${a.provider}: ${a.error}`).join(' | ')}`
     );
+  }
+
+  private isThrottleError(message: string): boolean {
+    return /\b(429|413)\b|rate limit|too many requests|tokens per minute|request too large|reduce your message size/i.test(message);
   }
 
   async reinitialize(config?: ConfigLoader): Promise<void> {

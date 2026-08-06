@@ -14,6 +14,7 @@ const ProviderConfigSchema = z.object({
     organization: z.string().optional(),
     temperature: z.number().min(0).max(2).optional(),
     max_tokens: z.number().positive().optional(),
+    max_context_tokens: z.number().positive().optional(),
     top_p: z.number().min(0).max(1).optional(),
     timeout_seconds: z.number().positive().optional(),
   }),
