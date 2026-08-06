@@ -345,7 +345,7 @@ Volume: `~/.alfred-personal:/workspace`
 | Secrets filter universal | `src/tools/file-ops.ts` | Applies to all files, not just config |
 | exec flag normalization | `src/tools/exec.ts` | `-r -f` → `-rf` before denylist |
 | Anthropic system prompt | `src/agent/providers/anthropic.ts` | Uses `params.system` properly |
-| Config loader async | `src/config/loader.ts`, `src/index.ts` | `reload()` and `ensureConfigFiles()` async |
+| Config loader async | `src/config/loader.ts`, `src/index.ts` | `reload()` async; `ensureWorkspace()` on `WORKSPACE_ROOT` |
 | MemoryTool conditional | `src/tools/index.ts` | Only registers when enabled |
 
 ## Unused Dependencies Removed

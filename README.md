@@ -251,10 +251,10 @@ src/
 │   ├── snapshot.ts           ← Session checkpoints
 │   ├── health-monitor.ts     ← Log scanner + alert generator
 │   └── notification.ts      ← Alert delivery (Telegram)
-├── tools/                    ← 5 universal tools (exec, file_ops, web, job, health)
+├── tools/                    ← Universal tools (exec, file_ops, web, job, system, health + conditional memory)
 ├── channels/                 ← Telegram, WhatsApp, CLI
-├── db/                       ← SQLite + session persistence (with summary field)
-├── security/                 ← Rate limiter, auth
+├── db/                       ← SQLite (embedded schema) + session persistence (with summary field)
+├── security/                 ← Rate limiter
 └── types/                    ← TypeScript interfaces
 ```
 
@@ -362,7 +362,7 @@ Steps performed:
 ### Code Quality
 - **Unused dependencies removed**: `js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64` (3 packages, 0 impact on functionality)
 - **Anthropic provider fix**: System prompt uses `params.system` instead of first user message (`src/agent/providers/anthropic.ts`)
-- **Config loader async**: `reload()` and `ensureConfigFiles()` now async (`src/config/loader.ts`, `src/index.ts`)
+- **Config loader async**: `reload()` async; `ensureWorkspace()` writes to `WORKSPACE_ROOT` (`src/config/loader.ts`, `src/index.ts`)
 - **MemoryTool conditional**: Only registered when memory system is enabled (`src/tools/index.ts`)
 
 ### Accepted Findings (not corrected)

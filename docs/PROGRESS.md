@@ -6,12 +6,14 @@
 
 ## Status
 
-**Progress:** 100% — **All phases complete**
+**Progress:** 100% — **All phases complete** (2.1.0 production-ready)
 
 ✅ TypeScript compiles cleanly (`tsc`)
-✅ 26 tests pass (`jest`)
+✅ 55 tests pass (`jest` — 10 suites)
 ✅ Build successful (`npm run build`)
-✅ Lint: 0 errors (114 warnings — all `no-explicit-any`)
+✅ Lint: 0 errors (133 warnings — all `no-explicit-any`)
+✅ Smoke test on built `dist/`: fresh workspace bootstrap, auto token, SQLite (5 tables), WS handshake auth, graceful SIGTERM shutdown
+⚠️ Docker build pending on a machine with Docker (not available locally) — risks mitigated (musl prebuilds, `PUPPETEER_SKIP_DOWNLOAD`, system chromium)
 
 ---
 
@@ -58,8 +60,8 @@
 - [x] `src/channels/cli.ts` — Interactive readline
 
 ### ✅ Phase 6: SQLite Persistence
-- [x] `src/db/schema.sql` — 5 tables: sessions, messages, command_log, user_context, skills_cache
-- [x] `src/db/index.ts` — Initialization + migrations
+- [x] `src/db/schema.ts` — Embedded SQL schema, 5 tables: sessions, messages, command_log, user_context, skills_cache
+- [x] `src/db/index.ts` — Initialization + migrations + `closeDatabase()` + `isDatabaseInitialized()`
 - [x] `src/db/session-store.ts` — Session serialization (summary + summarySections fields added)
 - [x] `src/db/repositories/sessions.ts`
 - [x] `src/db/repositories/messages.ts`
@@ -68,7 +70,6 @@
 ### ✅ Phase 7: Security + Logger
 - [x] `src/utils/logger.ts` — Pino structured logger
 - [x] `src/security/rate-limiter.ts` — Rate limiting by user/channel
-- [x] `src/security/auth.ts` — Gateway token + ACL
 
 ### ✅ Phase 8: Entry Point
 - [x] `src/index.ts` — Full module wiring + auto-config creation from .example templates
@@ -148,14 +149,28 @@
 - [x] **A2** 🟡 — TokenBudgetTracker simplificado e integrado en LLMRouter + sistema de stats
 - [x] **A7** 🟡 — SAFETY_MULTIPLIER 1.3 → 1.15 en token-counter
 - [x] **A1** 🟡 — Timeout de 60s por tool + batches de max 3 concurrentes en gateway
-- [x] **A5** 🟡 — `reload()` y `ensureConfigFiles()` asíncronos con `fs.promises`
+- [x] **A5** 🟡 — `reload()` asíncrono y `ensureWorkspace()` sobre `WORKSPACE_ROOT` (no `../workspace`)
 - [x] **M1** 🟠 — Jitter ±30% en reset timeout del circuit breaker
 - [x] **M4** 🟠 — SQLite: `PRAGMA wal_autocheckpoint=1000`
 - [x] **M5** 🟠 — Shutdown timeout 10s en gateway
 - [x] **M8** 🟠 — MAX_CONCURRENT_TOOLS=3 en gateway
 - [x] **Cleanup** — Duplicado `generate` eliminado de SHORTEN_MAP; MemoryTool condicional
 - [x] **Cleanup** — Dependencias no usadas eliminadas: `js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64`
-- [x] **Build/tests** — 26/26 tests pasan, 0 errores lint, build limpio
+- [x] **Build/tests** — 55/55 tests pasan, 0 errores lint, build limpio
+
+### ✅ Phase 17: Production Hardening (2.1.0 release-ready)
+- [x] `.dockerignore` — excluye `workspace/` (secretos reales), `node_modules`, `dist`; mantiene `system/` para bootstrap
+- [x] **exec async** — `spawn` (cross-spawn) + timeout con kill SIGKILL + `maxBuffer` por streams + sanitize de env; no bloquea el event loop
+- [x] **Providers con tools correctos** — Anthropic (`tool_use`/`tool_result`), Gemini (`functionCall`/`functionResponse`), OpenAI-compatible (`tool_call_id`); imports estáticos
+- [x] **SQLite cableado real** — sessions/messages/command_log via repos con guards `isDatabaseInitialized()`
+- [x] **Shutdown graceful** — SIGINT/SIGTERM/uncaughtException/unhandledRejection → `gateway.stop()` + `closeDatabase()`
+- [x] **Dead code eliminado** — `auth.ts`, `task-decomposer.ts`, `tool-orchestrator.ts`, getters no usados, `estimateTokens`, `deleteBySession`, `ts-node`
+- [x] **Schema embebido** — `schema.sql` → `src/db/schema.ts` (el `.sql` no llegaba a `dist/` y el fallback "inline" no creaba tablas)
+- [x] **Token auto-gen antes de validación** — el placeholder `CHANGE_ME` (9 chars) fallaba el schema `min(16)` antes de poder auto-generarse; ahora se genera antes de `new ConfigLoader()`
+- [x] **Leak de timers** — `executeToolWithTimeout` limpia su timer; `RateLimiter.stop()` en teardown de tests
+- [x] **WhatsApp system chromium** — detecta `/usr/bin/chromium`, `--no-sandbox`, `executable_path` configurable
+- [x] **Docker** — `PUPPETEER_SKIP_DOWNLOAD=true` en builder y runtime (evita descarga de Chrome en Alpine); prebuilds musl verificados para sqlite3 y lancedb
+- [x] **Tests** — 55 (10 suites): config-loader con fixture, exec, job-scheduler (chat_id/created_by), providers (3 mocks), gateway tool-loop, repos SQLite; logging silenciado vía `tests/jest.setup.ts`
 
 ### Findings Accepted (not corrected)
 - **M2**: Timing attack en auth token — aceptado (localhost/Docker aislado)
@@ -176,7 +191,7 @@
 
 | Decision | Choice |
 |---|---|
-| **Tools** | 5 universal tools: exec, file_ops, web, job, health (replaces 7 specific tools) |
+| **Tools** | 7 tools: exec, file_ops, web, job, system, health + memory (condicional) |
 | **Personality** | SOUL.md (base) + preferences.md (LLM-managed) + alfred-rules.md (protocol) |
 | **Config** | Auto-created from .example on startup if missing |
 | **Sessions** | Lazy-loaded on first access (not all read at startup). LRU eviction at 100 sessions. Truncated after compaction. Async write (non-blocking). Compact JSON (no pretty-print). |
@@ -189,4 +204,4 @@
 | **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
 | **Vector Store Embedding** | Built-in hashing vectorizer — zero dependencies, ~5KB RAM, ~5μs per embedding. No external APIs, no model downloads. Graceful disable if unavailable. Detailed error logging. |
 | **Health Monitor** | Periodic log scanner (60 min default). Categorizes errors (vector_store, llm_provider, telegram, database, etc.). Alerts via Telegram. Exposed as `health` tool to LLM. |
-| **Dependencies** | Dynamic `import()` for all optional deps (provider SDKs, LanceDB, cheerio, whatsapp-web.js). Only loaded when feature is enabled. Zero runtime overhead for unused features. |
+| **Dependencies** | Dynamic `import()` for optional heavy deps (LanceDB, cheerio, whatsapp-web.js) — only loaded when feature is enabled. Provider SDKs use static imports. |
