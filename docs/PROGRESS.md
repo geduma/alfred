@@ -14,6 +14,8 @@
 ✅ Lint: 0 errors (133 warnings — all `no-explicit-any`)
 ✅ Smoke test on built `dist/`: fresh workspace bootstrap, auto token, SQLite (5 tables), WS handshake auth, graceful SIGTERM shutdown
 ⚠️ Docker build pending on a machine with Docker (not available locally) — risks mitigated (musl prebuilds, `PUPPETEER_SKIP_DOWNLOAD`, system chromium)
+   - **Plan de verificación**: primer build en Raspberry Pi 4/5 64-bit con docker compose v2 (requisito: OS arm64 — LanceDB solo publica binarios arm64).
+   - Dockerfile trimea `@huggingface/transformers`/`onnxruntime` (opcional dep de LanceDB, solo glibc, nunca cargada por el embedder `hashing`) para reducir ~250MB y evitar fallos en Alpine/musl. Restaurar solo si se cambia a un embedder transformers-based.
 
 ---
 

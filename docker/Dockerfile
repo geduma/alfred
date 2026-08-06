@@ -6,7 +6,13 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 WORKDIR /build
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci \
+    && rm -rf node_modules/@huggingface \
+           node_modules/onnxruntime-node \
+           node_modules/onnxruntime-common \
+           node_modules/onnxruntime-web \
+           node_modules/sharp \
+           node_modules/@img
 
 COPY src ./src
 COPY tsconfig.json ./
@@ -25,7 +31,13 @@ WORKDIR /app
 RUN apk add --no-cache chromium
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+    && rm -rf node_modules/@huggingface \
+           node_modules/onnxruntime-node \
+           node_modules/onnxruntime-common \
+           node_modules/onnxruntime-web \
+           node_modules/sharp \
+           node_modules/@img
 
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/

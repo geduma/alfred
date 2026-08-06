@@ -2,6 +2,13 @@
 
 Multi-channel, LLM-agnostic AI assistant with persistent personality, web access, file operations, and job scheduling. Runs in a single Docker container.
 
+## Requirements
+
+- **Docker** with **Compose v2** (`docker compose`, not the legacy `docker-compose` v1)
+- **64-bit Linux (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store only ships `arm64` binaries, so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
+- **RAM/swap**: building the image runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).
+- First build takes several minutes (downloads npm packages + system Chromium for the WhatsApp channel).
+
 ## Quick Start
 
 ```bash
@@ -11,6 +18,7 @@ cd alfred-personal
 
 # 2. Create the workspace directory on your host
 #    This will be mounted into the container at /workspace
+#    (skills/ dirs are auto-created on first startup if missing)
 mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,jobs,vectors,snapshots}}
 
 # 3. Copy configuration templates to the workspace
@@ -18,6 +26,7 @@ mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,j
 #     but pre-copying lets you configure before starting)
 cp system/alfred.json.example ~/.alfred-personal/config/alfred.json
 cp system/SOUL.md.example ~/.alfred-personal/config/SOUL.md
+cp system/secrets.env.example ~/.alfred-personal/config/secrets.env
 
 # 4. Edit the configuration with your API keys
 #    Required: LLM provider (api_key, api_url) and Telegram bot_token
@@ -36,6 +45,8 @@ docker attach alfred-agent
 # 8. Send a test message from Telegram or type in the CLI
 #    Alfred will respond using the configured LLM
 ```
+
+> **Permission note:** the container runs as the `node` user (UID 1000). On Raspberry Pi OS the default user is also UID 1000, so `~/.alfred-personal` works out of the box. If your user has a different UID, run `sudo chown -R 1000:1000 ~/.alfred-personal` after creating the directory.
 
 ### Development Mode (without Docker)
 
@@ -270,6 +281,10 @@ docker attach alfred-agent    # Access the CLI channel
 ```
 
 Volume mapping: `~/.alfred-personal` on the host → `/workspace` inside the container. All data persists across restarts.
+
+> **Image note:** the build deliberately removes the `@huggingface/transformers` / `onnxruntime` subtree pulled in by LanceDB's optional dependencies (Alfred's embedder is the built-in `hashing` vectorizer, so they're never loaded). This keeps the image ~250MB smaller and avoids a glibc-only binary inside the musl Alpine container. If you later switch `memory.vector_store.embedding.type` to a transformers-based provider, restore those packages in `docker/Dockerfile`.
+>
+> **Dependency note:** the `sqlite3` package is functional but its upstream repo (`node-sqlite3`) was archived in 2026. Consider migrating to a maintained alternative in a future release.
 
 ### Local Development
 
