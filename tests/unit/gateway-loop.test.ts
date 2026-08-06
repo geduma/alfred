@@ -209,4 +209,75 @@ describe('Gateway runAgentLoop', () => {
     expect(errorMsg).toBeDefined();
     expect((errorMsg as any).content).toContain('Invalid JSON');
   });
+
+  test('should respond to an unknown tool_call so the assistant message is not left dangling', async () => {
+    routerCall
+      .mockResolvedValueOnce({
+        content: '',
+        tool_calls: [{
+          id: 'call_ghost',
+          type: 'function',
+          function: { name: 'nonexistent_tool', arguments: '{}' },
+        }],
+        stop_reason: 'tool_use',
+      })
+      .mockResolvedValueOnce({
+        content: 'ok',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+      });
+
+    const session: any = {
+      id: 'session-ghost',
+      messages: [{ role: 'user', content: 'do something weird' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      () => {}
+    );
+
+    expect(result.content).toBe('ok');
+    expect(routerCall).toHaveBeenCalledTimes(2);
+
+    const toolMsg = session.messages.find((m: Message) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect((toolMsg as any).tool_call_id).toBe('call_ghost');
+    expect((toolMsg as any).content).toContain('nonexistent_tool');
+  });
+
+  test('should repair dangling tool_calls when preparing context', async () => {
+    const session: any = {
+      id: 'session-repair',
+      messages: [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'orphan_1', type: 'function', function: { name: 'exec', arguments: '{}' } }],
+        },
+        { role: 'user', content: 'and then?' },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).prepareContext(session, 'system prompt');
+
+    const assistantIdx = result.messages.findIndex((m: Message) => m.role === 'assistant' && m.tool_calls);
+    expect(assistantIdx).toBeGreaterThan(-1);
+
+    const toolMsg = result.messages[assistantIdx + 1];
+    expect(toolMsg.role).toBe('tool');
+    expect((toolMsg as any).tool_call_id).toBe('orphan_1');
+
+    expect(session.messages).toContainEqual(
+      expect.objectContaining({ role: 'tool', tool_call_id: 'orphan_1' })
+    );
+  });
 });

@@ -327,6 +327,8 @@ export class Gateway {
       }
     }
 
+    this.ensureToolResponses(session.messages);
+
     let contextMessages: Message[] = messages;
 
     if (this.vectorStore && currentMessage) {
@@ -355,6 +357,39 @@ export class Gateway {
     const compressedSystemPrompt = this.promptCompressor.compress(systemPrompt);
 
     return { messages: contextMessages, systemPrompt: compressedSystemPrompt };
+  }
+
+  private ensureToolResponses(messages: Message[]): void {
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role !== 'assistant' || !m.tool_calls || m.tool_calls.length === 0) continue;
+
+      const responded = new Set<string>();
+      for (let j = i + 1; j < messages.length; j++) {
+        const next = messages[j];
+        if (next.role === 'tool' && next.tool_call_id) {
+          responded.add(next.tool_call_id);
+        } else if (next.role === 'assistant') {
+          break;
+        }
+      }
+
+      const missing = m.tool_calls.filter(tc => !responded.has(tc.id));
+      if (missing.length === 0) continue;
+
+      const synthetic: Message[] = missing.map(tc => ({
+        role: 'tool' as const,
+        content: `Tool error: "${tc.function.name}" produced no result.`,
+        tool_call_id: tc.id,
+      }));
+
+      messages.splice(i + 1, 0, ...synthetic);
+      getLogger().warn(
+        { toolCallIds: missing.map(tc => tc.id) },
+        'Repaired dangling tool_calls in session history'
+      );
+      i += synthetic.length;
+    }
   }
 
   private async loadSkillsContext(): Promise<string> {
@@ -568,7 +603,11 @@ export class Gateway {
 
       const executeTool = async (toolCall: any): Promise<void> => {
         const tool = this.tools.find(t => t.tool.name === toolCall.function.name);
-        if (!tool) return;
+        if (!tool) {
+          const errorMsg: Message = { role: 'tool', content: `Tool "${toolCall.function.name}" not found or disabled`, tool_call_id: toolCall.id };
+          session.messages.push(errorMsg);
+          return;
+        }
 
         let args: Record<string, unknown>;
         try {
