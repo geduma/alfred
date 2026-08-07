@@ -8,7 +8,7 @@
 ## 30 SEGUNDOS
 
 **Alfred** es tu asistente IA personal que:
-- Se comunica via Telegram/WhatsApp
+- Se comunica via Telegram y CLI
 - Lee y escribe en tus archivos
 - Busca en internet
 - Entiende tu tono (SOUL.md)
@@ -25,20 +25,20 @@ git clone https://github.com/yourusername/alfred-personal.git
 cd alfred-personal
 
 # 2. Create workspace
-mkdir -p ~/.alfred-personal/{config,skills,files,db,logs,memory}
+mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,jobs,vectors,snapshots}}
 
-# 3. Configure (edit with your API keys + Telegram token)
-cp workspace/config/alfred.json ~/.alfred-personal/config/
+# 3. Copy templates (edit with your API keys + Telegram token)
+cp system/alfred.json.example ~/.alfred-personal/config/alfred.json
+cp system/SOUL.md.example ~/.alfred-personal/config/SOUL.md
+cp system/secrets.env.example ~/.alfred-personal/config/secrets.env
 vim ~/.alfred-personal/config/alfred.json
 
-# 4. Copy SOUL.md (personalidad)
-cp workspace/config/SOUL.md ~/.alfred-personal/config/
+# 4. Build and run (Docker Compose v2)
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d
 
-# 5. Run
-docker-compose up -d
-
-# 6. Check logs
-docker-compose logs -f alfred
+# 5. Check logs
+docker compose -f docker/docker-compose.yml logs -f alfred
 ```
 
 ---
@@ -90,15 +90,13 @@ Edita `~/.alfred-personal/config/alfred.json`:
 ✅ Ejecutar comandos shell  
 
 ### v1.5
-✅ WhatsApp  
-✅ Dashboard web  
 ✅ Skills personalizados — SKILL.md via `file_ops`
 
 ### v2.0
-✅ Discord/Slack  
-✅ Llamadas por voz  
-✅ Embeddings + búsqueda semántica  
+✅ Embeddings + búsqueda semántica (LanceDB RAG)  
 ✅ Health monitor — detección automática de fallos y alertas por Telegram  
+❌ Discord/Slack — roadmap (no implementado)  
+❌ Llamadas por voz — roadmap (no implementado)
 
 ---
 
@@ -163,10 +161,10 @@ Edit `/workspace/config/SOUL.md` para cambiar.
 
 ```bash
 # Ver logs en tiempo real
-docker-compose logs -f alfred
+docker compose -f docker/docker-compose.yml logs -f alfred
 
 # Estado del contenedor
-docker-compose ps
+docker compose -f docker/docker-compose.yml ps
 
 # Estadísticas de recursos
 docker stats alfred
@@ -194,7 +192,7 @@ Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, e
 
 | Problema | Solución |
 |----------|----------|
-| WebSocket error | `docker-compose logs alfred` |
+| WebSocket error | `docker compose -f docker/docker-compose.yml logs alfred` |
 | Provider no conecta | Verificar API key en alfred.json |
 | Telegram no responde | Verificar bot_token y allow_from |
 | Archivo no se crea | Verificar permisos en `/workspace/files` |
@@ -205,12 +203,13 @@ Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, e
 
 ## DOCUMENTACIÓN COMPLETA
 
-Ver `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` para:
-- Arquitectura detallada
-- Todas las opciones de configuración
-- API WebSocket
-- Development guide
-- Troubleshooting exhaustivo
+La documentación técnica vive en el repositorio:
+
+- `README.md` — Inicio, setup, arquitectura y deployment
+- `docs/PRD.md` — Requisitos de producto
+- `docs/AGENTS.md` — Instrucciones para agentes IA / developers
+- `docs/PROGRESS.md` — Progreso de implementación
+- `system/alfred-rules.md` — Reglas inyectadas en el system prompt
 
 ---
 
@@ -226,5 +225,5 @@ Ver `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` para:
 
 **¿Listo para comenzar?**
 
-El archivo `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` contiene todo lo que necesitas saber.
+Empieza por `README.md` y `docs/AGENTS.md` — contienen todo lo que necesitas saber.
 

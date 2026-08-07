@@ -219,12 +219,4 @@ export class VectorStoreManager {
       getLogger().info('Vector store closed');
     }
   }
-
-  get isReady(): boolean {
-    return this.initialized;
-  }
-
-  get embeddingDimension(): number {
-    return this.embedder.dimension;
-  }
 }

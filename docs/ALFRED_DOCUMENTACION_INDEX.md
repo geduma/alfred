@@ -4,7 +4,9 @@
 **Versión:** 2.1.0  
 **Fecha:** Julio 2026  
 **Autor:** geduma  
-**Preparado para:** El usuario
+**Preparado para:** El usuario  
+
+> **Nota:** Este índice referencia documentos generados externamente (en `/outputs/`). En el repositorio viven: `README.md`, `docs/AGENTS.md`, `docs/PRD.md`, `docs/PROGRESS.md`, `docs/ALFRED_QUICK_START.md`, `system/alfred-rules.md` y `system/*.example`. La especificación técnica completa (`ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md`) no está en el repo.
 
 ---
 
@@ -83,8 +85,7 @@ Estos documentos fueron generados durante el diseño y refinamiento:
 ```
 alfred-personal/
 ├── README.md                    ← Inicio repositorio
-├── CONTRIBUTING.md              ← Guía para contribuir
-├── LICENSE                      ← MIT License
+├── docs/                        ← Documentación en el repo (AGENTS, PRD, PROGRESS, QUICK_START, INDEX)
 │
 ├── docker/
 │   ├── Dockerfile              ← Imagen Docker optimizada
@@ -104,32 +105,19 @@ alfred-personal/
 │   │       ├── openai-compatible.ts
 │   │       ├── anthropic.ts
 │   │       └── gemini.ts
-│   ├── tools/                  ← Tools (exec, web-search, etc.)
-│   ├── channels/               ← Plugins (Telegram, WhatsApp, CLI)
-│   ├── db/                     ← SQLite
+│   ├── tools/                  ← Tools (exec, file_ops, web, job, system, health, memory)
+│   ├── channels/               ← Plugins (Telegram, CLI)
+│   ├── services/               ← Context compression, vector store, snapshots, health
+│   ├── db/                     ← SQLite + session-store
+│   ├── security/               ← Rate limiter
 │   ├── config/                 ← Config loader
 │   ├── types/                  ← TypeScript interfaces
-│   └── utils/                  ← Logger, validators
+│   └── utils/                  ← Logger, token-counter
 │
-├── workspace/
-│   ├── config/
-│   │   ├── alfred.json        ← Configuración principal
-│   │   ├── SOUL.md            ← Personalidad
-│   │   └── system-prompt-base.txt
-│   ├── skills/                ← SKILL.md cargables
-│   ├── files/                 ← Archivos de usuario
-│   ├── db/
-│   │   └── alfred.db          ← SQLite
-│   ├── logs/
-│   └── memory/
+├── system/                     ← Templates y reglas (alfred.json.example, SOUL.md.example,
+│   │                              alfred-rules.md, system-prompt-base.txt, secrets.env.example)
 │
-├── config/
-│   └── system-prompt-base.txt
-│
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
+├── tests/unit/                 ← Suite Jest (13 suites, 102 tests)
 │
 ├── .gitignore
 ├── package.json
@@ -199,7 +187,7 @@ alfred-personal/
 **Quiero implementar el LLM Router:**
 → Sección: "LLM ROUTER AGNÓSTICO"
 
-**Quiero agregar un nuevo canal (WhatsApp, Discord):**
+**Quiero agregar un nuevo canal (Discord, Slack):**
 → Sección: "CANALES MULTICANAL"
 
 **Quiero crear una skill personalizada:**
@@ -308,7 +296,6 @@ alfred-personal/
 - [TypeScript Handbook](https://www.typescriptlang.org/docs)
 - [Docker Docs](https://docs.docker.com)
 - [grammy (Telegram SDK)](https://grammy.dev)
-- [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 
 ---
 

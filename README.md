@@ -7,7 +7,7 @@ Multi-channel, LLM-agnostic AI assistant with persistent personality, web access
 - **Docker** with **Compose v2** (`docker compose`, not the legacy `docker-compose` v1)
 - **64-bit Linux (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store only ships `arm64` binaries, so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
 - **RAM/swap**: building the image runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).
-- First build takes several minutes (downloads npm packages + system Chromium for the WhatsApp channel).
+- First build takes several minutes (downloads npm packages).
 
 ## Quick Start
 
@@ -63,7 +63,6 @@ npm run dev
 |---|---|
 | **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
-| **WhatsApp** | Scan QR on first start (requires `whatsapp-web.js`) |
 
 ## Configuration
 
@@ -203,7 +202,7 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 }
 ```
 
-## 5 Universal Tools
+## Universal Tools
 
 | Tool | Domain |
 |---|---|
@@ -211,7 +210,9 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 | `file_ops` | Read/write/edit/list files within permitted paths |
 | `web` | Web search (DuckDuckGo) and URL content fetch |
 | `job` | Schedule one-time and recurring reminders |
+| `system` | Health/status/reload delegated to the gateway |
 | `health` | Query health monitor findings and trigger checks |
+| `memory` | Conditional — vector search + snapshots (registered only when the memory system is enabled) |
 
 ## Personality System
 
@@ -263,7 +264,7 @@ src/
 │   ├── health-monitor.ts     ← Log scanner + alert generator
 │   └── notification.ts      ← Alert delivery (Telegram)
 ├── tools/                    ← Universal tools (exec, file_ops, web, job, system, health + conditional memory)
-├── channels/                 ← Telegram, WhatsApp, CLI
+├── channels/                 ← Telegram, CLI
 ├── db/                       ← SQLite (embedded schema) + session persistence (with summary field)
 ├── security/                 ← Rate limiter
 └── types/                    ← TypeScript interfaces
@@ -282,7 +283,7 @@ docker attach alfred-agent    # Access the CLI channel
 
 Volume mapping: `~/.alfred-personal` on the host → `/workspace` inside the container. All data persists across restarts.
 
-> **Image note:** the build deliberately removes the `@huggingface/transformers` / `onnxruntime` subtree pulled in by LanceDB's optional dependencies (Alfred's embedder is the built-in `hashing` vectorizer, so they're never loaded). This keeps the image ~250MB smaller and avoids a glibc-only binary inside the musl Alpine container. If you later switch `memory.vector_store.embedding.type` to a transformers-based provider, restore those packages in `docker/Dockerfile`.
+> **Image note:** the build runs `npm ci` in both stages (with dev deps only in the builder) and cleans the npm cache in the final stage (`npm cache clean --force`) so `/root/.npm` doesn't ship in the image. The WhatsApp channel (whatsapp-web.js + system Chromium) was removed entirely — the image is estimated at ~0.5-1.0 GB instead of ~2.5 GB. Confirm with `docker compose build --no-cache` + `docker history --no-trunc`.
 >
 > **Dependency note:** the `sqlite3` package is functional but its upstream repo (`node-sqlite3`) was archived in 2026. Consider migrating to a maintained alternative in a future release.
 
@@ -364,6 +365,12 @@ Steps performed:
 
 ## Recent Improvements (v2.1)
 
+### Simplification & Cleanup
+- **WhatsApp channel removed**: `whatsapp-web.js`, its ~95MB dependency subtree, and system Chromium are gone from the repo, Dockerfile, and config. Channels are now Telegram + CLI only. Estimated Docker image drops from ~2.5 GB to ~0.5-1.0 GB (rebuild on the deploy host to confirm).
+- **Dead code removed**: `src/types/index.ts` barrel (orphaned), `SnapshotManager.delete/restore`, `SessionStore.delete/listActive`, `ContextCompressor.estimateMessageTokens/estimateTotalTokens`, and unused `VectorStoreManager` getters.
+- **Build script**: `npm run build` now runs `rm -rf dist && tsc` (no stale artifacts).
+- **Dockerfile**: `npm cache clean --force` in the final stage.
+
 ### Performance & Security
 - **Concurrency control**: Tool execution batches (max 3 concurrent) with 60s per-tool timeout (`src/gateway.ts`)
 - **Circuit breaker jitter**: ±30% jitter on reset timeout to prevent thundering herd (`src/services/circuit-breaker.ts`)
@@ -386,12 +393,11 @@ Steps performed:
 | Timing attack on auth token | Localhost/Docker only — impractical to exploit |
 | API keys in plaintext on disk | Conscious trade-off for simplicity in isolated Docker |
 | SSRF DNS rebinding | Low risk in Docker, complex to mitigate |
-| WhatsApp session uncrypted | Documented risk, requires external infrastructure |
 | No channel auth (beyond ACL) | By design — ACL whitelist is sufficient |
 | exec parseCommand rudimentary | Acceptable for current use cases |
 | No monthly spending limit | Future improvement (needs provider cost APIs) |
 | Hashing embedder (no semantics) | Intentional — zero-dependency, low-power design |
-| Docker image not optimized | Future improvement (multi-stage lite, Chromium optional) |
+| Docker image not optimized | Future improvement (multi-stage lite) |
 
 ## Docs
 

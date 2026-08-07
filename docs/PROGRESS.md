@@ -9,13 +9,13 @@
 **Progress:** 100% — **All phases complete** (2.1.0 production-ready)
 
 ✅ TypeScript compiles cleanly (`tsc`)
-✅ 55 tests pass (`jest` — 10 suites)
+✅ 102 tests pass (`jest` — 13 suites)
 ✅ Build successful (`npm run build`)
 ✅ Lint: 0 errors (133 warnings — all `no-explicit-any`)
 ✅ Smoke test on built `dist/`: fresh workspace bootstrap, auto token, SQLite (5 tables), WS handshake auth, graceful SIGTERM shutdown
-⚠️ Docker build pending on a machine with Docker (not available locally) — risks mitigated (musl prebuilds, `PUPPETEER_SKIP_DOWNLOAD`, system chromium)
+⚠️ Docker build pending on a machine with Docker (not available locally) — risks mitigated (musl prebuilds for sqlite3/lancedb)
    - **Plan de verificación**: primer build en Raspberry Pi 4/5 64-bit con docker compose v2 (requisito: OS arm64 — LanceDB solo publica binarios arm64).
-   - Dockerfile trimea `@huggingface/transformers`/`onnxruntime` (opcional dep de LanceDB, solo glibc, nunca cargada por el embedder `hashing`) para reducir ~250MB y evitar fallos en Alpine/musl. Restaurar solo si se cambia a un embedder transformers-based.
+   - WhatsApp (whatsapp-web.js + chromium) eliminado: imagen estimada 2.5 GB → ~0.5-1.0 GB. Confirmar en el host con `docker compose build --no-cache` + `docker history --no-trunc`.
 
 ---
 
@@ -32,7 +32,7 @@
 - [x] `src/types/llm.ts` — LLM types + interfaces
 - [x] `src/types/channel.ts` — Channel interface
 - [x] `src/types/tool.ts` — Tool interfaces
-- [x] `src/types/index.ts` — Barrel export
+- [x] `src/types/index.ts` — Barrel export (eliminado en cleanup v2.1: huérfano, sin importadores)
 - [x] `src/config/loader.ts` — Zod schema + provider chain validation (MemoryConfigSchema added)
 
 ### ✅ Phase 2: LLM Router Agnostic
@@ -58,7 +58,6 @@
 ### ✅ Phase 5: Channels
 - [x] `src/channels/channel-manager.ts` — Registry + dispatch
 - [x] `src/channels/telegram.ts` — Grammy bot
-- [x] `src/channels/whatsapp.ts` — whatsapp-web.js
 - [x] `src/channels/cli.ts` — Interactive readline
 
 ### ✅ Phase 6: SQLite Persistence
@@ -170,21 +169,28 @@
 - [x] **Schema embebido** — `schema.sql` → `src/db/schema.ts` (el `.sql` no llegaba a `dist/` y el fallback "inline" no creaba tablas)
 - [x] **Token auto-gen antes de validación** — el placeholder `CHANGE_ME` (9 chars) fallaba el schema `min(16)` antes de poder auto-generarse; ahora se genera antes de `new ConfigLoader()`
 - [x] **Leak de timers** — `executeToolWithTimeout` limpia su timer; `RateLimiter.stop()` en teardown de tests
-- [x] **WhatsApp system chromium** — detecta `/usr/bin/chromium`, `--no-sandbox`, `executable_path` configurable
-- [x] **Docker** — `PUPPETEER_SKIP_DOWNLOAD=true` en builder y runtime (evita descarga de Chrome en Alpine); prebuilds musl verificados para sqlite3 y lancedb
-- [x] **Tests** — 55 (10 suites): config-loader con fixture, exec, job-scheduler (chat_id/created_by), providers (3 mocks), gateway tool-loop, repos SQLite; logging silenciado vía `tests/jest.setup.ts`
+- [x] **WhatsApp eliminado (cleanup v2.1)** — `whatsapp-web.js` + chromium fuera del Dockerfile y deps; sin canales whatsapp en index/gateway/config
+- [x] **Docker** — `npm cache clean --force` en el stage final; prebuilds musl verificados para sqlite3 y lancedb
+- [x] **Tests** — 102 (13 suites): config-loader con fixture, exec (incl. 5 anti-evasión), job-scheduler (chat_id/created_by), providers (3 mocks), gateway tool-loop, repos SQLite, circuit-breaker, token-budget, skill-loader, context-compressor, rate-limiter; logging silenciado vía `tests/jest.setup.ts`
+
+### ✅ Phase 18: Simplification & Cleanup (v2.1)
+- [x] **WhatsApp eliminado del repo** — `rm src/channels/whatsapp.ts`; sin `case 'whatsapp'` en index; `whatsapp-web.js` fuera de package.json/lockfile (~95MB de node_modules); sin `apk add chromium` ni `PUPPETEER_SKIP_*` ni `rm -rf @huggingface/onnxruntime` (dead code) en Dockerfile; secciones `whatsapp` fuera de los config templates y de toda la documentación
+- [x] **Dead code eliminado** — `src/types/index.ts` (barrel huérfano), `SnapshotManager.delete/restore`, `SessionStore.delete/listActive`, `ContextCompressor.estimateMessageTokens/estimateTotalTokens`, getters `VectorStoreManager.isReady/embeddingDimension` (cada uno verificado con grep: 0 consumidores en src/tests)
+- [x] **Build script** — `"build": "rm -rf dist && tsc"` (sin artefactos stale; dist/channels sin whatsapp)
+- [x] **Docker** — `npm cache clean --force` en el stage final (evita `/root/.npm` en la imagen)
+- [x] **Tests** — 102/102 OK, 0 errores lint, `tsc --noEmit` limpio, build OK
+- [x] **Imagen estimada** — 2.5 GB → ~0.5-1.0 GB (pendiente confirmar en host: `docker compose build --no-cache` + `docker history --no-trunc`)
 
 ### Findings Accepted (not corrected)
 - **M2**: Timing attack en auth token — aceptado (localhost/Docker aislado)
 - **A9**: API keys en texto plano — aceptado por decisión del usuario
 - **M3**: SSRF DNS rebinding — riesgo bajo, mejora futura
-- **M6**: WhatsApp session sin cifrar — riesgo documentado
+- **M6**: WhatsApp session sin cifrar — riesgo ya no aplica (canal eliminado)
 - Sin autenticación en canales — diseño, ACL es suficiente
 - exec parseCommand rudimentario — mejora futura
 - Sin límite de gasto mensual — mejora futura
 - Hashing embedder sin semántica — intencional (zero-dependency)
 - Docker sin optimización de capas — mejora futura
-- Chromium siempre instalado — mejora futura
 - Health check sin readiness — mejora futura
 
 ---
@@ -206,4 +212,4 @@
 | **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
 | **Vector Store Embedding** | Built-in hashing vectorizer — zero dependencies, ~5KB RAM, ~5μs per embedding. No external APIs, no model downloads. Graceful disable if unavailable. Detailed error logging. |
 | **Health Monitor** | Periodic log scanner (60 min default). Categorizes errors (vector_store, llm_provider, telegram, database, etc.). Alerts via Telegram. Exposed as `health` tool to LLM. |
-| **Dependencies** | Dynamic `import()` for optional heavy deps (LanceDB, cheerio, whatsapp-web.js) — only loaded when feature is enabled. Provider SDKs use static imports. |
+| **Dependencies** | Dynamic `import()` for optional heavy deps (LanceDB, cheerio) — only loaded when feature is enabled. Provider SDKs use static imports. |
