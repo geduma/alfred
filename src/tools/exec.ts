@@ -231,7 +231,12 @@ export class ExecTool implements ToolHandler {
     const lower = normalized.toLowerCase();
 
     for (const pattern of this.deniedPatterns) {
-      if (lower.includes(pattern.toLowerCase())) {
+      const p = pattern.toLowerCase();
+      const isSingleWord = /^[a-z0-9_]+$/.test(p);
+      const denied = isSingleWord
+        ? new RegExp(`\\b${p}\\b`).test(lower)
+        : lower.includes(p);
+      if (denied) {
         getLogger().warn({ command, pattern }, 'Command denied by pattern');
         return false;
       }

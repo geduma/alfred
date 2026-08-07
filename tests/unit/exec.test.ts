@@ -15,6 +15,41 @@ describe('ExecTool', () => {
     expect(result.error).toBe('Command denied by policy');
   });
 
+  test('should not flag single-word patterns as substrings of longer words', async () => {
+    const tool = new ExecTool({ denied_patterns: ['dd'] });
+    const ok = await tool.execute({ command: 'echo embedding works' });
+    expect(ok.success).toBe(true);
+    expect(ok.output).toBe('embedding works');
+  });
+
+  test('should deny a single-word pattern when used as a standalone word', async () => {
+    const tool = new ExecTool({ denied_patterns: ['dd'] });
+    const denied = await tool.execute({ command: 'dd if=/dev/zero of=/tmp/x bs=1M' });
+    expect(denied.success).toBe(false);
+    expect(denied.error).toBe('Command denied by policy');
+  });
+
+  test('should deny mkfs as a standalone word', async () => {
+    const tool = new ExecTool({ denied_patterns: ['mkfs'] });
+    const denied = await tool.execute({ command: 'mkfs.ext4 /dev/sda1' });
+    expect(denied.success).toBe(false);
+    expect(denied.error).toBe('Command denied by policy');
+  });
+
+  test('should not flag single-word patterns inside similar words', async () => {
+    const tool = new ExecTool({ denied_patterns: ['sudo'] });
+    const ok = await tool.execute({ command: 'echo pseudo' });
+    expect(ok.success).toBe(true);
+    expect(ok.output).toBe('pseudo');
+  });
+
+  test('should keep substring matching for compound patterns', async () => {
+    const tool = new ExecTool({ denied_patterns: ['rm -rf'] });
+    const denied = await tool.execute({ command: 'rm -rf /' });
+    expect(denied.success).toBe(false);
+    expect(denied.error).toBe('Command denied by policy');
+  });
+
   test('should enforce allowed patterns when configured', async () => {
     const tool = new ExecTool({ allowed_patterns: ['ls'] });
     const ok = await tool.execute({ command: 'ls -la' });

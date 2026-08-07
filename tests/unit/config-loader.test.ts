@@ -6,13 +6,13 @@ import { ConfigLoader } from '../../src/config/loader';
 function buildConfig() {
   return {
     agent: { name: 'Alfred', version: '2.1.0', personality_file: '/workspace/config/SOUL.md' },
-    llm: { primary_provider: 'relio', fallback_providers: ['fallback'] },
+    llm: { primary_provider: 'primary', fallback_providers: ['fallback'] },
     providers: {
-      relio: {
+      primary: {
         type: 'openai-compatible',
         enabled: true,
         model: 'auto',
-        config: { api_url: 'http://relio.home/v1', api_key: 'test-key' },
+        config: { api_url: 'https://api.example.com/v1', api_key: 'test-key' },
       },
       fallback: {
         type: 'openai-compatible',
@@ -70,7 +70,7 @@ describe('ConfigLoader', () => {
 
   test('should have valid provider chain in order', () => {
     const loader = new ConfigLoader(configPath);
-    expect(loader.providerChain).toEqual(['relio', 'fallback']);
+    expect(loader.providerChain).toEqual(['primary', 'fallback']);
   });
 
   test('should list enabled channels only', () => {
@@ -94,7 +94,7 @@ describe('ConfigLoader', () => {
 
   test('should reload updated config from disk', async () => {
     const loader = new ConfigLoader(configPath);
-    expect(loader.llmConfig.primary_provider).toBe('relio');
+    expect(loader.llmConfig.primary_provider).toBe('primary');
 
     const updated = buildConfig();
     updated.llm.primary_provider = 'fallback';

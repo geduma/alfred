@@ -14,13 +14,13 @@ function buildConfig() {
       personality_file: '/workspace/config/SOUL.md',
       max_tool_iterations: 5,
     },
-    llm: { primary_provider: 'relio', fallback_providers: [] },
+    llm: { primary_provider: 'primary', fallback_providers: [] },
     providers: {
-      relio: {
+      primary: {
         type: 'openai-compatible',
         enabled: true,
         model: 'auto',
-        config: { api_url: 'http://relio.home/v1', api_key: 'test-key' },
+        config: { api_url: 'https://api.example.com/v1', api_key: 'test-key' },
       },
     },
     channels: { cli: { enabled: true, type: 'cli', config: {} } },
@@ -308,7 +308,7 @@ describe('Gateway runAgentLoop', () => {
     expect(result.content).toBe('adapted');
     expect(routerCall).toHaveBeenCalledTimes(2);
 
-    const learned = (gateway as any).providerContextBudgets.get('relio');
+    const learned = (gateway as any).providerContextBudgets.get('primary');
     expect(learned).toBeDefined();
     expect(learned).toBeLessThan(32000);
 

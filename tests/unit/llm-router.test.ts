@@ -11,13 +11,13 @@ import { ConfigLoader } from '../../src/config/loader';
 function buildConfig() {
   return {
     agent: { name: 'Alfred', version: '2.1.0', personality_file: '/workspace/config/SOUL.md' },
-    llm: { primary_provider: 'relio', fallback_providers: [], retry: { max_attempts: 3, base_delay_ms: 0, max_delay_ms: 0, backoff_factor: 2 } },
+    llm: { primary_provider: 'primary', fallback_providers: [], retry: { max_attempts: 3, base_delay_ms: 0, max_delay_ms: 0, backoff_factor: 2 } },
     providers: {
-      relio: {
+      primary: {
         type: 'openai-compatible',
         enabled: true,
         model: 'auto',
-        config: { api_url: 'http://relio.home/v1', api_key: 'test-key' },
+        config: { api_url: 'https://api.example.com/v1', api_key: 'test-key' },
       },
       fallback: {
         type: 'openai-compatible',
@@ -81,7 +81,7 @@ describe('LLMRouter circuit breaker behavior', () => {
     await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('All providers failed');
 
     const breaker = (router as any).circuitBreaker;
-    expect(breaker.getState('relio').open).toBe(false);
+    expect(breaker.getState('primary').open).toBe(false);
     expect(fakeProvider.call).toHaveBeenCalledTimes(6);
   });
 
@@ -102,7 +102,7 @@ describe('LLMRouter circuit breaker behavior', () => {
     await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('All providers failed');
 
     const breaker = (router as any).circuitBreaker;
-    expect(breaker.getState('relio').open).toBe(true);
+    expect(breaker.getState('primary').open).toBe(true);
 
     await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('Circuit breaker open');
     expect(fakeProvider.call).toHaveBeenCalledTimes(9);
@@ -128,7 +128,7 @@ describe('LLMRouter circuit breaker behavior', () => {
     expect(fakeProvider.call).toHaveBeenCalledTimes(3);
 
     const breaker = (router as any).circuitBreaker;
-    expect(breaker.getState('relio').open).toBe(false);
+    expect(breaker.getState('primary').open).toBe(false);
   });
 
   test('should not retry non-retryable client errors', async () => {
