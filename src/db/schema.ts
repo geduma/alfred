@@ -1,3 +1,4 @@
+export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   channel TEXT NOT NULL,
@@ -55,3 +56,4 @@ CREATE TABLE IF NOT EXISTS skills_cache (
   last_loaded DATETIME,
   hash TEXT
 );
+`;

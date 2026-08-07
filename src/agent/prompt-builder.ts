@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { SoulLoader } from './soul-loader';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
 const DEFAULT_BASE_PROMPT_PATH = path.resolve(__dirname, '../../system/system-prompt-base.txt');
 const RULES_PATH = path.resolve(__dirname, '../../system/alfred-rules.md');
-const PREFERENCES_PATH = path.resolve(__dirname, '../../workspace/memory/personality/preferences.md');
+const PREFERENCES_PATH = WORKSPACE_PATHS.preferences();
 
 export class PromptBuilder {
   private soulLoader: SoulLoader;
@@ -18,12 +19,27 @@ export class PromptBuilder {
     this.soulMd = await this.soulLoader.load(personalityFile);
   }
 
+  async reload(personalityFile?: string): Promise<void> {
+    if (personalityFile) {
+      this.soulMd = await this.soulLoader.load(personalityFile);
+    }
+  }
+
   async buildSystemPrompt(skillsContext?: string): Promise<string> {
-    const basePrompt = this.loadBasePrompt();
-    const rules = this.loadRules();
-    const preferences = this.loadPreferences();
+    const [basePrompt, rules, preferences] = await Promise.all([
+      this.loadBasePrompt(),
+      this.loadRules(),
+      this.loadPreferences(),
+    ]);
+    const userName = this.getUserName(preferences);
 
     let systemPrompt = `${this.soulMd}\n\n---\n\n${basePrompt}`;
+
+    if (userName && userName !== 'unknown') {
+      systemPrompt = `## User Identity\nYour user's name is "${userName}". Always address them as "Señor ${userName}".\n\n---\n\n${systemPrompt}`;
+    } else {
+      systemPrompt = `## User Identity\nYou do not know the user's name yet. Ask for it on the very first message of every new session. When they tell you, save it immediately to preferences.md using the file_ops tool by updating the user_name field.\n\n---\n\n${systemPrompt}`;
+    }
 
     if (preferences) {
       systemPrompt += `\n\n---\n\n${preferences}`;
@@ -40,25 +56,37 @@ export class PromptBuilder {
     return systemPrompt;
   }
 
-  private loadBasePrompt(): string {
+  private getUserName(preferencesRaw: string): string | null {
+    if (!preferencesRaw) return null;
+    for (const line of preferencesRaw.split('\n')) {
+      const match = line.match(/^user_name:\s*(.+)$/i);
+      if (match) return match[1].trim();
+    }
+    return null;
+  }
+
+  private async loadBasePrompt(): Promise<string> {
     const promptPath = process.env.BASE_PROMPT_PATH || DEFAULT_BASE_PROMPT_PATH;
-    if (fs.existsSync(promptPath)) {
-      return fs.readFileSync(promptPath, 'utf-8');
+    try {
+      return await fs.promises.readFile(promptPath, 'utf-8');
+    } catch {
+      return 'You are Alfred, a helpful AI assistant.';
     }
-    return 'You are Alfred, a helpful AI assistant.';
   }
 
-  private loadRules(): string {
-    if (fs.existsSync(RULES_PATH)) {
-      return fs.readFileSync(RULES_PATH, 'utf-8');
+  private async loadRules(): Promise<string> {
+    try {
+      return await fs.promises.readFile(RULES_PATH, 'utf-8');
+    } catch {
+      return '';
     }
-    return '';
   }
 
-  private loadPreferences(): string {
-    if (fs.existsSync(PREFERENCES_PATH)) {
-      return fs.readFileSync(PREFERENCES_PATH, 'utf-8');
+  private async loadPreferences(): Promise<string> {
+    try {
+      return await fs.promises.readFile(PREFERENCES_PATH, 'utf-8');
+    } catch {
+      return '';
     }
-    return '';
   }
 }

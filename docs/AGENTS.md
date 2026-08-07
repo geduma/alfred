@@ -32,7 +32,7 @@ npm run docker:up    # docker compose up -d
 ```
 src/
 ├── index.ts                  ← Entry point (wires all modules, auto-creates configs)
-├── gateway.ts                ← WebSocket server (port 18789) + SessionStore + JobRunner
+├── gateway.ts                ← WebSocket server (port 18789) + SessionStore + JobRunner + Context Compressor
 ├── config/loader.ts          ← Config loader with Zod validation
 ├── agent/
 │   ├── llm-router.ts         ← Router with automatic fallback chain
@@ -44,26 +44,41 @@ src/
 │       ├── openai-compatible.ts  ← Ollama, RunPod, LocalAI
 │       ├── anthropic.ts      ← Claude
 │       └── gemini.ts         ← Gemini
-├── tools/                    ← 4 universal tools
-│   ├── exec.ts               ← Shell with allowlist/denylist
+├── services/
+│   ├── context-compressor.ts ← Sliding window + LLM summarization for context management
+│   ├── prompt-compressor.ts  ← Telegraph English — rule-based prompt compression
+│   ├── token-budget.ts       ← Token budget tracking and stats
+│   ├── circuit-breaker.ts    ← Circuit breaker with jitter for provider resilience
+│   ├── vector-store/
+│   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
+│   │   └── embedder.ts      ← Agnostic embedder factory (hashing, Ollama, OpenAI, OpenAI-compatible)
+│   ├── snapshot.ts           ← Session snapshots for long-term memory checkpoints
+│   ├── health-monitor.ts     ← Periodic log scanner, error categorizer, alert generator
+│   └── notification.ts      ← Alert delivery (Telegram, with email-ready architecture)
+├── tools/                    ← Universal tools (exec, file_ops, web, job, system, health + conditional memory)
+│   ├── exec.ts               ← Async shell (cross-spawn) with allowlist/denylist
 │   ├── file-ops.ts           ← File CRUD with multi-path permission rules
 │   ├── web.ts                ← Unified web search + fetch (action: "search" | "fetch")
-│   └── job-scheduler.ts      ← Create/list/update/cancel reminders
+│   ├── job-scheduler.ts      ← Create/list/update/cancel reminders
+│   ├── system.ts             ← health/reload/status via gateway
+│   ├── health.ts             ← Query health monitor, view findings, trigger checks
+│   └── memory.ts             ← Memory tools (snapshot_save, snapshot_restore, context_stats)
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
-│   ├── whatsapp.ts           ← whatsapp-web.js
+│   ├── whatsapp.ts           ← whatsapp-web.js (15s init timeout)
 │   └── cli.ts                ← Interactive readline
 ├── db/                       ← Persistence
-│   ├── schema.sql            ← 5 tables
-│   ├── index.ts              ← Init + migrations
+│   ├── schema.ts             ← Embedded SQL schema (5 tables)
+│   ├── index.ts              ← Init + migrations + closeDatabase()
 │   ├── session-store.ts      ← Session serialization to workspace/memory/sessions/
 │   └── repositories/         ← Sessions, Messages, Commands
 ├── security/
-│   ├── rate-limiter.ts       ← Rate limiting by user/channel
-│   └── auth.ts               ← Gateway token + ACL
-├── types/                    ← TypeScript interfaces
-└── utils/logger.ts           ← Pino structured logger
+│   └── rate-limiter.ts       ← Rate limiting by user/channel
+├── types/                    ← TypeScript interfaces (MemoryConfig added)
+└── utils/
+    ├── logger.ts             ← Pino structured logger
+    └── token-counter.ts      ← Token estimation for context management
 ```
 
 ## Code Conventions
@@ -86,23 +101,65 @@ Single file: `workspace/config/alfred.json`
 - `tools` → Per-tool configuration
 - `channels` → Channel + permissions (ACL via `allow_from`)
 - `database` → SQLite path + settings
+- `memory` → Context compression, prompt compression, vector store, and snapshot settings
+- `memory.prompt_compression` → Telegraph English compression (enabled, mode: telegraph|off)
+- `memory.vector_store` → LanceDB RAG config (embedding provider, search params, ingest settings)
+- `memory.snapshots` → Session snapshot config (auto interval, max per session)
 - `security.gateway_auth_token` → Minimum 16 characters
 
-## 4 Universal Tools
+## Universal Tools
 
 | Tool | File | Domain |
 |---|---|---|
-| `exec` | `src/tools/exec.ts` | Shell commands with allowlist/denylist |
+| `exec` | `src/tools/exec.ts` | Async shell commands with allowlist/denylist (cross-spawn, timeout, sanitized env) |
 | `file_ops` | `src/tools/file-ops.ts` | Read/write/edit/delete/list files in permitted paths |
 | `web` | `src/tools/web.ts` | Web search (DuckDuckGo) and URL fetch (cheerio) |
-| `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/ |
+| `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/, delivers to originating channel/chat |
+| `system` | `src/tools/system.ts` | Health/status/reload delegated to gateway |
+| `health` | `src/tools/health.ts` | Query health monitor findings, trigger checks |
+| `memory` | `src/tools/memory.ts` | Conditional — snapshot_save/restore, context_stats |
 
 ## Personality System
 
 - **SOUL.md** (`workspace/config/SOUL.md`) — Core identity, user-editable only
 - **preferences.md** (`workspace/memory/personality/preferences.md`) — Dynamic preferences managed by the LLM via `file_ops`
-- **alfred-rules.md** (`config/alfred-rules.md`) — File access rules + personality protocol + job protocol, injected into system prompt
+- **alfred-rules.md** (`config/alfred-rules.md`) — File access rules + personality protocol + job protocol + skill implementation protocol, injected into system prompt
 - The LLM reads/writes `preferences.md` when the user requests behavior changes (language, tone, formality, etc.)
+
+## Skill Implementation Protocol
+
+When the user requests new functionality via any channel, Alfred's default
+response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/`.
+
+- **SKILL.md format**: YAML frontmatter (name, description, metadata) + markdown body (overview, when to use, how to use)
+- **Tools used**: The skill instructs Alfred how to orchestrate `exec`, `file_ops`, `web`, `job`, and `system` tools
+- **Fallback**: If the functionality requires capabilities beyond these tools, Alfred explains why and requests code implementation
+- **Rule location**: `system/alfred-rules.md` → section "Skill Implementation Protocol"
+
+Skills directories:
+```
+/workspace/skills/
+├── custom/    ← User-requested custom skills
+├── system/    ← System-level skills
+├── web/       ← Web-oriented skills
+└── files/     ← File-oriented skills
+```
+
+## Secrets Management
+
+Skill credentials (API keys, tokens, passwords for external services) are stored
+in `workspace/config/secrets.env`. This file is **read-only** for Alfred (enforced
+by `file-ops.ts` permissions on `/workspace/config`).
+
+- **Not for LLM config**: Provider API keys remain in `alfred.json`
+- **SKILL.md references**: Skills declare required env vars via `metadata.requires.env`
+- **exec tool**: Supports an `env` parameter — secrets are passed to the child
+  process and automatically sanitized from logs (`src/tools/exec.ts`)
+- **Protocol**: Documented in `system/alfred-rules.md` → "Secrets Management Protocol"
+- **Template**: `system/secrets.env.example` — auto-created on first startup
+
+Alfred must never output secret values in responses or log them. The `exec` tool's
+`env` parameter is the only approved channel for passing secrets to commands.
 
 ## Job Scheduler
 
@@ -118,20 +175,149 @@ Single file: `workspace/config/alfred.json`
 - Sessions stored in `workspace/memory/sessions/{sessionId}.json`
 - Loaded from disk on startup, saved after each interaction
 - Survives container restarts
+- Sessions now include an optional `summary` field generated by the context compressor
+
+## Context Compression
+
+Alfred uses a **Sliding Window + Summary** strategy to prevent unbounded context growth:
+
+- **Token budget**: `memory.max_context_tokens` (default: 32000) controls the soft limit
+- **Adaptive provider budget**: On a 413/request-too-large error, Alfred learns the provider's real context limit and persists it to `workspace/memory/provider-budgets.json`, then auto-compacts and retries (up to 3 cycles, then once without tools). Provider-specific values are never hardcoded; `provider.config.max_context_tokens` is an optional manual override.
+- **Output token cap**: `max_tokens` per call is derived from the effective context budget (`max(512, budget × 0.35)`), capped by the configured `max_tokens`, so output shrinks when the learned budget does.
+- **Compaction trigger**: When context exceeds `max_context_tokens × compaction_threshold` (default: 80%), compression activates
+- **Sliding window**: The last `max_verbatim_messages` (default: 20) are kept verbatim for precise recall
+- **LLM summarization**: Older messages are compressed into a structured summary via the LLM, preserving decisions, preferences, pending tasks, and key facts
+- **Structured format**: Summary uses sections: DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS
+- **Fallback**: If LLM summarization fails, a heuristic fallback extracts key points from recent messages
+
+Key implementation files:
+- `src/services/context-compressor.ts` — Core compression logic (token estimation, LLM summarization, fallback)
+- `src/utils/token-counter.ts` — Token estimation utility (≈4 chars/token heuristic)
+- `src/db/session-store.ts` — StoredSession now includes `summary` and optional `summarySections` fields
+
+## Prompt Compression (Telegraph English)
+
+Alfred applies **Telegraph English** compression to the system prompt before every LLM call:
+
+- **Rule-based**: Removes articles, auxiliary verbs, filler words, and shortens verbose phrases
+- **Zero dependencies**: Pure TypeScript, no Python, no models
+- **Latency:** <10ms per request
+- **Compression ratio:** ~20-35% (standard mode), ~30-45% (aggressive mode)
+- **Config**: `memory.prompt_compression` in alfred.json (`enabled`, `mode: "telegraph"|"off"`, `aggressive`)
+- **Fallback**: Set `mode: "off"` to disable (no performance impact)
+
+## Vector Store / RAG (LanceDB)
+
+Alfred uses **LanceDB** (embedded vector database) for long-term semantic memory:
+
+- **Embedding**: Built-in hashing vectorizer — zero dependencies, no external APIs, no API keys, ~5μs per embedding
+- **Ingest**: Every user message, tool response, and assistant reply is embedded and stored
+- **Search**: On each query, Alfred retrieves top-K semantically similar chunks from past sessions
+- **Injection**: Results are injected as `[RAG CONTEXT — Retrieved from long-term memory]` messages
+- **Config**: `memory.vector_store` in alfred.json (model, paths, search params)
+- **Auto-disable**: If embedder initialization fails, vector store is gracefully disabled with a log warning
+
+Key implementation files:
+- `src/services/vector-store/index.ts` — LanceDB init, ingest, search, delete
+- `src/services/vector-store/embedder.ts` — Agnostic embedder factory
+
+### Embedding
+
+**Default provider:** `hashing` — zero-dependency hashing vectorizer built into Alfred. No API keys, no external services, no model downloads, ~5μs per embedding. Uses word frequency hashing (djb2) + L2 normalization. Configurable dimension (default: 256).
+
+**Other supported providers:** `openai-compatible` (Ollama, RunPod, LocalAI), `openai`, `ollama` (native API). These require API keys or a running external service.
+
+`provider_ref` references an existing LLM provider to reuse its `api_url`/`api_key` (only for `openai-compatible` and `openai` types).
+
+```json
+// Built-in hashing vectorizer (recommended — zero deps, no external APIs)
+"embedding": { "type": "hashing", "dimension": 256 }
+
+// Using OpenAI API (requires api_key)
+"embedding": { "type": "openai", "model": "text-embedding-3-small", "dimension": 1536, "config": { "api_key": "sk-..." } }
+
+// Using local Ollama (requires Ollama running)
+"embedding": { "type": "ollama", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "http://localhost:11434" } }
+
+// Any OpenAI-compatible endpoint
+"embedding": { "type": "openai-compatible", "model": "nomic-embed-text", "dimension": 768, "config": { "api_url": "https://your-endpoint/v1", "api_key": "..." } }
+```
+
+## Health Monitor
+
+Alfred includes a periodic **health monitor** that scans application logs for errors and warnings:
+
+- **Interval**: Configurable via `health_monitor.check_interval_minutes` (default: 60 min)
+- **Severity threshold**: `warn` (level >= 40) or `error` (level >= 50) — configurable
+- **Categories**: `vector_store`, `llm_provider`, `telegram`, `database`, `tool_execution`, `session`, `snapshot`, `job_scheduler`, `other`
+- **State persistence**: Tracks last scanned byte position across restarts (`workspace/memory/health-monitor-state.json`)
+- **Alert delivery**: Telegram (via `channelManager.sendMessage`). Email-ready architecture via `NotificationService`.
+- **LLM-accessible**: The `health` tool allows Alfred to respond to queries like _"health findings"_ or _"trigger a health check now"_
+
+### Health Tool
+
+```json
+{
+  "name": "health",
+  "actions": ["status", "findings", "check", "configure"],
+  "filters": { "severity_threshold": "warn|error", "category": "string" }
+}
+```
+
+**Available via CLI/Telegram:** `health findings`, `health findings severity=error`, `health check`
+
+### Config
+
+```json
+{
+  "health_monitor": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "severity_threshold": "warn",
+    "notifications": {
+      "telegram": { "enabled": true }
+    }
+  }
+}
+```
+
+Key implementation files:
+- `src/services/health-monitor.ts` — Log scanner, error categorization, state management, alert triggering
+- `src/services/notification.ts` — Alert delivery to Telegram and future email channels
+- `src/tools/health.ts` — LLM-accessible health tool
+- `src/types/notification.ts` — TypeScript interfaces
+
+## Snapshots
+
+Snapshots are point-in-time session checkpoints for long-term memory recall:
+
+- **Auto-snapshot**: Creates a snapshot every N messages (`auto_snapshot_interval`, default: 50)
+- **Manual**: Programmatic via SnapshotManager API (future tool integration)
+- **Pruning**: Oldest snapshots are auto-deleted when exceeding `max_snapshots_per_session`
+- **Storage**: JSON files in `workspace/memory/snapshots/`
+- **Integration**: Snapshots tag vectors in LanceDB for cross-session search filtering
+- **Config**: `memory.snapshots` in alfred.json (enabled, interval, max)
+
+The snapshot pipeline in `prepareContext()` runs after each successful interaction, checking the message counter against the configured interval.
 
 ## Auto-Created Configs
 
 On first startup, if `workspace/config/alfred.json` or `workspace/config/SOUL.md` don't exist, they are auto-created from:
-- `config/alfred.json.example`
-- `config/SOUL.md.example`
+- `system/alfred.json.example`
+- `system/SOUL.md.example`
 
 The user is prompted to edit these files with real API keys.
+
+If `security.gateway_auth_token` starts with `CHANGE_ME`, Alfred auto-generates a
+random token and writes it back to the config **before** schema validation runs,
+so a fresh volume boots without manual edits.
 
 ## Testing
 
 - Unit tests in `tests/unit/`
-- Jest with `ts-jest`
+- Jest with `ts-jest`, logger silenced via `tests/jest.setup.ts`
 - Run: `npm test`
+- Verify: `npx tsc --noEmit`, `npm run lint`, `npm run build`
 
 ## Docker
 
@@ -147,6 +333,26 @@ docker compose -f docker/docker-compose.yml logs -f alfred
 ```
 
 Volume: `~/.alfred-personal:/workspace`
+
+## Performance Changes (v2.1)
+
+| Change | File | What |
+|--------|------|------|
+| Concurrency control | `src/gateway.ts` | Max 3 concurrent tools, 60s per-tool timeout |
+| Circuit breaker jitter | `src/services/circuit-breaker.ts` | ±30% jitter on reset timeout |
+| WAL autocheckpoint | `src/db/index.ts` | Set to 1000 for write perf |
+| SAFETY_MULTIPLIER | `src/utils/token-counter.ts` | 1.3 → 1.15 |
+| Shutdown timeout | `src/gateway.ts` | 10s graceful shutdown |
+| Token budget tracker | `src/services/token-budget.ts`, `src/agent/llm-router.ts` | Integrated in LLMRouter |
+| Secrets filter universal | `src/tools/file-ops.ts` | Applies to all files, not just config |
+| exec flag normalization | `src/tools/exec.ts` | `-r -f` → `-rf` before denylist |
+| Anthropic system prompt | `src/agent/providers/anthropic.ts` | Uses `params.system` properly |
+| Config loader async | `src/config/loader.ts`, `src/index.ts` | `reload()` async; `ensureWorkspace()` on `WORKSPACE_ROOT` |
+| MemoryTool conditional | `src/tools/index.ts` | Only registers when enabled |
+
+## Unused Dependencies Removed
+
+`js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64` — not imported anywhere in source code.
 
 ## Agent Notes
 

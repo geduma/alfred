@@ -1,9 +1,9 @@
-import OpenAI from 'openai';
 import { BaseProvider } from './base';
 import { LLMCallParams, LLMResponse } from '../../types/llm';
+import OpenAI from 'openai';
 
 export class OpenAICompatibleProvider extends BaseProvider {
-  private client: OpenAI;
+  private client: any = null;
 
   constructor(config: any) {
     super(config);
@@ -15,17 +15,26 @@ export class OpenAICompatibleProvider extends BaseProvider {
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create({
+    const client = this.client;
+    const response = await client.chat.completions.create({
       model: this.getModel(),
       messages: [
         ...(params.system ? [{ role: 'system' as const, content: params.system }] : []),
         ...params.messages.map(m => ({
-          role: m.role as 'user' | 'assistant',
+          role: m.role,
           content: m.content,
-          ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+          ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
         })),
       ],
-      tools: params.tools as any[],
+      tools: params.tools?.map(t => ({
+        type: 'function' as const,
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema,
+        },
+      })),
       temperature: params.temperature ?? this.getTemperature(),
       max_tokens: params.max_tokens ?? this.getMaxTokens(),
       top_p: params.top_p,

@@ -1,4 +1,4 @@
-version: '3.9'
+name: alfred
 
 services:
   alfred:
@@ -21,17 +21,11 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
+      WORKSPACE: /workspace
       CONFIG_PATH: /workspace/config/alfred.json
-
-    networks:
-      - alfred-net
 
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "10"
-
-networks:
-  alfred-net:
-    driver: bridge

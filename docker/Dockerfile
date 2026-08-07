@@ -1,9 +1,18 @@
 FROM node:22-alpine AS builder
 
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 WORKDIR /build
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci \
+    && rm -rf node_modules/@huggingface \
+           node_modules/onnxruntime-node \
+           node_modules/onnxruntime-common \
+           node_modules/onnxruntime-web \
+           node_modules/sharp \
+           node_modules/@img
 
 COPY src ./src
 COPY tsconfig.json ./
@@ -13,12 +22,22 @@ RUN npm run build
 
 FROM node:22-alpine
 
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    NODE_ENV=production
+
 WORKDIR /app
 
 RUN apk add --no-cache chromium
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+    && rm -rf node_modules/@huggingface \
+           node_modules/onnxruntime-node \
+           node_modules/onnxruntime-common \
+           node_modules/onnxruntime-web \
+           node_modules/sharp \
+           node_modules/@img
 
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/
@@ -26,7 +45,7 @@ COPY system/ ./system/
 RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
     chmod +x /usr/local/bin/alfred-cli
 
-RUN mkdir -p /workspace/{db,files,skills,config,logs,memory}
+RUN mkdir -p /workspace/{db,files,skills,config,logs,memory/{sessions,jobs,personality,vectors,snapshots}}
 
 RUN chown -R node:node /app /workspace
 

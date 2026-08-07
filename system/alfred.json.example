@@ -1,7 +1,7 @@
 {
   "agent": {
     "name": "Alfred",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "personality_file": "/workspace/config/SOUL.md"
   },
   "llm": {
@@ -127,6 +127,44 @@
     "system": {
       "enabled": true,
       "config": {}
+    },
+    "health": {
+      "enabled": true,
+      "config": {}
+    }
+  },
+  "memory": {
+    "max_context_tokens": 32000,
+    "max_verbatim_messages": 20,
+    "compaction_threshold": 0.8,
+    "compaction_model": "auto",
+    "summary_sections": ["decisions", "preferences", "pending", "context"],
+    "prompt_compression": {
+      "enabled": true,
+      "mode": "telegraph",
+      "aggressive": false
+    },
+    "vector_store": {
+      "enabled": false,
+      "type": "lancedb",
+      "path": "/workspace/memory/vectors",
+      "embedding": {
+        "type": "hashing",
+        "dimension": 256
+      },
+      "ingest": {
+        "on_message": true,
+        "max_chunk_size": 512
+      },
+      "search": {
+        "top_k": 5,
+        "min_score": 0.5
+      }
+    },
+    "snapshots": {
+      "enabled": false,
+      "auto_snapshot_interval": 50,
+      "max_snapshots_per_session": 20
     }
   },
   "database": {
@@ -151,7 +189,7 @@
     }
   },
   "security": {
-    "gateway_auth_token": "CHANGE_ME",
+    "gateway_auth_token": "CHANGE_ME_generated_automatically_at_first_boot",
     "rate_limiting": {
       "enabled": true,
       "requests_per_user_per_hour": 100,
@@ -160,6 +198,16 @@
     "audit_logging": {
       "enabled": true,
       "log_file": "/workspace/logs/audit.log"
+    }
+  },
+  "health_monitor": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "severity_threshold": "warn",
+    "notifications": {
+      "telegram": {
+        "enabled": true
+      }
     }
   }
 }

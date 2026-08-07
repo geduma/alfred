@@ -1,9 +1,10 @@
 # ALFRED — Índice de Documentación Completa
 
 **Proyecto:** Alfred Pennyworth - Agente IA Personal Multicanal  
-**Versión:** 2.0.0  
+**Versión:** 2.1.0  
 **Fecha:** Julio 2026  
-**Preparado para:** Señor Felipe
+**Autor:** geduma  
+**Preparado para:** El usuario
 
 ---
 
@@ -173,7 +174,7 @@ alfred-personal/
 
 ---
 
-### Para Usuarios (Señor Felipe)
+### Para Usuarios
 
 **1. Solo necesitas:**
 - ALFRED_QUICK_START.md (setup)
@@ -203,6 +204,11 @@ alfred-personal/
 
 **Quiero crear una skill personalizada:**
 → Sección: "SKILLS - SKILL.MD"
+→ Además: leer "Secrets Management Protocol" en `system/alfred-rules.md`
+
+**Quiero entender cómo gestionar credenciales para skills:**
+→ Protocolo de secretos en `system/alfred-rules.md` → "Secrets Management Protocol"
+→ Template: `workspace/config/secrets.env` (auto-creado desde `system/secrets.env.example`)
 
 **Quiero entender web search:**
 → Sección: "ACCESO A INTERNET"
@@ -353,11 +359,11 @@ alfred-personal/
 
 ---
 
-**Documentación Preparada para Señor Felipe**
+**Documentación Preparada para el Usuario**
 
 **Todos los archivos están en `/outputs/` listos para descargar**
 
-Versión: 2.0.0  
+Versión: 2.1.0  
 Fecha: Julio 2026  
 Estado: ✅ Completo y Listo para Implementación
 

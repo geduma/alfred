@@ -1,20 +1,23 @@
 import { ProviderConfig, ProviderType, LLMProvider } from '../../types/llm';
-import { OpenAICompatibleProvider } from './openai-compatible';
-import { AnthropicProvider } from './anthropic';
-import { GeminiProvider } from './gemini';
 
 export class ProviderFactory {
-  static createProvider(config: ProviderConfig): LLMProvider {
+  static async createProvider(config: ProviderConfig): Promise<LLMProvider> {
     const type: ProviderType = config.type;
 
     switch (type) {
       case 'openai-compatible':
-      case 'openai':
+      case 'openai': {
+        const { OpenAICompatibleProvider } = await import('./openai-compatible.js');
         return new OpenAICompatibleProvider(config);
-      case 'anthropic':
+      }
+      case 'anthropic': {
+        const { AnthropicProvider } = await import('./anthropic.js');
         return new AnthropicProvider(config);
-      case 'gemini':
+      }
+      case 'gemini': {
+        const { GeminiProvider } = await import('./gemini.js');
         return new GeminiProvider(config);
+      }
       default:
         throw new Error(`Unsupported provider type: ${type}`);
     }

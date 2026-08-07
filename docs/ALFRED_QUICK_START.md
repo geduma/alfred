@@ -1,7 +1,7 @@
 # ALFRED — Quick Start Guide
 
-**Versión:** 2.0.0  
-**Para:** Señor Felipe  
+**Versión:** 2.1.0  
+**Para:** El usuario  
 
 ---
 
@@ -89,15 +89,16 @@ Edita `~/.alfred-personal/config/alfred.json`:
 ✅ Leer/escribir archivos en `/workspace/files/`  
 ✅ Ejecutar comandos shell  
 
-### Próxima Versión (v1.5)
+### v1.5
 ✅ WhatsApp  
 ✅ Dashboard web  
-✅ Skills personalizados  
+✅ Skills personalizados — SKILL.md via `file_ops`
 
 ### v2.0
 ✅ Discord/Slack  
 ✅ Llamadas por voz  
 ✅ Embeddings + búsqueda semántica  
+✅ Health monitor — detección automática de fallos y alertas por Telegram  
 
 ---
 
@@ -132,7 +133,7 @@ Reinicia Alfred. **Eso es.**
 Tu asistente siempre responde como Alfred Pennyworth:
 - Español latinoamericano
 - Elegante y preciso
-- Te trata como "Señor Felipe"
+- Te trata como "Señor [user_name]"
 - Refinado pero directo
 
 Edit `/workspace/config/SOUL.md` para cambiar.
@@ -146,9 +147,11 @@ Edit `/workspace/config/SOUL.md` para cambiar.
 ├── config/
 │   ├── alfred.json        ← Configuración principal
 │   ├── SOUL.md            ← Personalidad de Alfred
+│   ├── secrets.env        ← Secretos para skills (IMAP, APIs, etc.)
 │
 ├── files/                 ← Tus archivos (puede leer/escribir)
-├── skills/                ← Skills personalizados (.md)
+├── skills/
+│   └── custom/            ← Skills personalizados (SKILL.md)
 ├── db/
 │   └── alfred.db          ← Base de datos (conversaciones, audit)
 └── logs/                  ← Logs de auditoría
@@ -175,6 +178,16 @@ sqlite3 ~/.alfred-personal/db/alfred.db
 cat ~/.alfred-personal/config/alfred.json | jq
 ```
 
+### Health Monitor automático
+
+Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, envía una alerta por Telegram.
+
+**Comandos disponibles** (via Telegram o CLI):
+- `health findings` — ver todos los hallazgos recientes
+- `health findings severity=error` — solo errores graves
+- `health check` — forzar escaneo inmediato
+- `health status` — estado del monitor
+
 ---
 
 ## TROUBLESHOOTING
@@ -185,6 +198,8 @@ cat ~/.alfred-personal/config/alfred.json | jq
 | Provider no conecta | Verificar API key en alfred.json |
 | Telegram no responde | Verificar bot_token y allow_from |
 | Archivo no se crea | Verificar permisos en `/workspace/files` |
+| Vector store falla | Verificar que haya suficiente RAM disponible o deshabilitar `memory.vector_store.enabled: false` |
+| Health alert sin mensaje | Verificar `health_monitor.severity_threshold` — con `"warn"` captura todo, con `"error"` solo graves |
 
 ---
 
@@ -209,7 +224,7 @@ Ver `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` para:
 
 ---
 
-**¿Listo para comenzar, Señor Felipe?**
+**¿Listo para comenzar?**
 
 El archivo `ALFRED_ESPECIFICACION_TECNICA_COMPLETA.md` contiene todo lo que necesitas saber.
 

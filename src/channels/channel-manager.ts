@@ -54,4 +54,12 @@ export class ChannelManager {
     }
     return this.messageHandler(msg);
   }
+
+  signalReady(): void {
+    for (const channel of this.channels.values()) {
+      if (typeof (channel as any).signalReady === 'function') {
+        (channel as any).signalReady();
+      }
+    }
+  }
 }

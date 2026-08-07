@@ -3,8 +3,15 @@ import path from 'path';
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
+import { WORKSPACE_PATHS } from '../utils/workspace';
 
-const JOBS_DIR = path.resolve(__dirname, '../../workspace/memory/jobs');
+const JOB_FILE_CACHE: Map<string, Job> = new Map();
+
+interface JobContext {
+  channel?: string;
+  userId?: string;
+  chat_id?: string | number;
+}
 
 export interface Job {
   id: string;
@@ -13,6 +20,7 @@ export interface Job {
   created_by: {
     channel: string;
     user_id: string;
+    chat_id?: string | number;
   };
   notification_channels: string[] | null;
   schedule: JobSchedule;
@@ -32,6 +40,12 @@ export interface JobSchedule {
 }
 
 export class JobSchedulerTool implements ToolHandler {
+  private jobsDir: string;
+
+  constructor(jobsDir?: string) {
+    this.jobsDir = jobsDir || WORKSPACE_PATHS.jobs();
+  }
+
   tool: Tool = {
     name: 'job',
     description: 'Schedule, list, update, or cancel reminders and delayed tasks',
@@ -54,22 +68,23 @@ export class JobSchedulerTool implements ToolHandler {
     },
   };
 
+  private async ensureDir(): Promise<void> {
+    await fs.promises.mkdir(this.jobsDir, { recursive: true }).catch(() => {});
+  }
+
   async execute(params: Record<string, unknown>): Promise<ToolExecutionResult> {
     const action = params.action as string;
-
-    if (!fs.existsSync(JOBS_DIR)) {
-      fs.mkdirSync(JOBS_DIR, { recursive: true });
-    }
+    await this.ensureDir();
 
     switch (action) {
       case 'create':
         return this.create(params);
       case 'list':
-        return this.list();
+        return await this.list();
       case 'update':
-        return this.update(params);
+        return await this.update(params);
       case 'cancel':
-        return this.cancel(params);
+        return await this.cancel(params);
       default:
         return { success: false, output: '', error: `Unknown action: ${action}` };
     }
@@ -92,8 +107,9 @@ export class JobSchedulerTool implements ToolHandler {
       message,
       created_at: new Date().toISOString(),
       created_by: {
-        channel: 'cli',
-        user_id: 'cli_user',
+        channel: (params.__context as JobContext | undefined)?.channel || 'cli',
+        user_id: (params.__context as JobContext | undefined)?.userId || 'cli_user',
+        chat_id: (params.__context as JobContext | undefined)?.chat_id,
       },
       notification_channels: params.channel ? [params.channel as string] : null,
       schedule,
@@ -111,8 +127,8 @@ export class JobSchedulerTool implements ToolHandler {
     };
   }
 
-  private list(): ToolExecutionResult {
-    const jobs = this.loadAllJobs();
+  private async list(): Promise<ToolExecutionResult> {
+    const jobs = await this.loadAllJobs();
     const active = jobs.filter(j => j.enabled);
 
     if (active.length === 0) {
@@ -127,18 +143,17 @@ export class JobSchedulerTool implements ToolHandler {
     return { success: true, output: `Active reminders:\n\n${output}` };
   }
 
-  private update(params: Record<string, unknown>): ToolExecutionResult {
+  private async update(params: Record<string, unknown>): Promise<ToolExecutionResult> {
     const jobId = params.job_id as string;
     if (!jobId) {
       return { success: false, output: '', error: 'job_id is required for update' };
     }
 
-    const filePath = this.jobFilePath(jobId);
-    if (!fs.existsSync(filePath)) {
+    const job = await this.loadJob(jobId);
+    if (!job) {
       return { success: false, output: '', error: `Job ${jobId} not found` };
     }
 
-    const job: Job = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     const updates: string[] = [];
 
     if (params.message) {
@@ -166,18 +181,19 @@ export class JobSchedulerTool implements ToolHandler {
     return { success: true, output: `Job ${jobId} updated (${updates.join(', ')}).` };
   }
 
-  private cancel(params: Record<string, unknown>): ToolExecutionResult {
+  private async cancel(params: Record<string, unknown>): Promise<ToolExecutionResult> {
     const jobId = params.job_id as string;
     if (!jobId) {
       return { success: false, output: '', error: 'job_id is required for cancel' };
     }
 
-    const filePath = this.jobFilePath(jobId);
-    if (!fs.existsSync(filePath)) {
+    const exists = await this.jobExists(jobId);
+    if (!exists) {
       return { success: false, output: '', error: `Job ${jobId} not found` };
     }
 
-    fs.unlinkSync(filePath);
+    await this.deleteJobFile(jobId);
+    JOB_FILE_CACHE.delete(jobId);
     return { success: true, output: `Reminder ${jobId} cancelled.` };
   }
 
@@ -235,7 +251,7 @@ export class JobSchedulerTool implements ToolHandler {
     }
 
     const now = new Date();
-    let next = new Date(now);
+    const next = new Date(now);
 
     if (schedule.type === 'daily' && schedule.hour !== undefined && schedule.minute !== undefined) {
       next.setHours(schedule.hour, schedule.minute, 0, 0);
@@ -267,67 +283,125 @@ export class JobSchedulerTool implements ToolHandler {
     return null;
   }
 
-  loadAllJobs(): Job[] {
-    if (!fs.existsSync(JOBS_DIR)) return [];
-    return fs.readdirSync(JOBS_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try {
-          return JSON.parse(fs.readFileSync(path.join(JOBS_DIR, f), 'utf-8')) as Job;
-        } catch {
-          return null;
-        }
-      })
-      .filter((j): j is Job => j !== null);
+  async loadAllJobs(): Promise<Job[]> {
+    if (JOB_FILE_CACHE.size > 0) {
+      return Array.from(JOB_FILE_CACHE.values());
+    }
+
+    let files: string[];
+    try {
+      files = await fs.promises.readdir(this.jobsDir);
+    } catch {
+      return [];
+    }
+
+    const jobs = await Promise.all(
+      files
+        .filter(f => f.endsWith('.json'))
+        .map(async f => {
+          try {
+            return JSON.parse(await fs.promises.readFile(path.join(this.jobsDir, f), 'utf-8')) as Job;
+          } catch {
+            return null;
+          }
+        })
+    );
+
+    const validJobs = jobs.filter((j): j is Job => j !== null);
+    for (const job of validJobs) {
+      JOB_FILE_CACHE.set(job.id, job);
+    }
+    return validJobs;
   }
 
-  fireDueJobs(channelManager: any): void {
-    const now = Date.now();
-    const jobs = this.loadAllJobs();
+  private async loadJob(jobId: string): Promise<Job | null> {
+    const cached = JOB_FILE_CACHE.get(jobId);
+    if (cached) return cached;
 
-    for (const job of jobs) {
-      if (!job.enabled || !job.next_fire) continue;
+    const fp = this.jobFilePath(jobId);
+    try {
+      const data = await fs.promises.readFile(fp, 'utf-8');
+      const job = JSON.parse(data) as Job;
+      JOB_FILE_CACHE.set(jobId, job);
+      return job;
+    } catch {
+      return null;
+    }
+  }
+
+  private async jobExists(jobId: string): Promise<boolean> {
+    if (JOB_FILE_CACHE.has(jobId)) return true;
+    try {
+      await fs.promises.access(this.jobFilePath(jobId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  clearCache(): void {
+    JOB_FILE_CACHE.clear();
+  }
+
+  async fireDueJobs(channelManager: any): Promise<void> {
+    const now = Date.now();
+    const jobs = await this.loadAllJobs();
+
+    await Promise.all(jobs.map(async (job) => {
+      if (!job.enabled || !job.next_fire) return;
 
       const fireTime = new Date(job.next_fire).getTime();
       if (fireTime <= now) {
         getLogger().info({ jobId: job.id, message: job.message }, 'Firing job');
 
-        this.deliver(job, channelManager);
+        try {
+          await this.deliver(job, channelManager);
+        } catch (error: any) {
+          getLogger().error({ jobId: job.id, error: error.message }, 'Job delivery failed');
+        }
 
         if (job.schedule.type === 'once') {
-          this.deleteJobFile(job.id);
+          await this.deleteJobFile(job.id);
+          JOB_FILE_CACHE.delete(job.id);
         } else {
           job.last_fired = new Date().toISOString();
           job.next_fire = this.computeNextFire(job.schedule);
           this.saveJob(job);
         }
       }
-    }
+    }));
   }
 
-  private deliver(job: Job, channelManager: any): void {
+  private async deliver(job: Job, channelManager: any): Promise<void> {
+    const metadata = job.created_by.chat_id !== undefined ? { chat_id: job.created_by.chat_id } : undefined;
+    const reminder = `⏰ Reminder: ${job.message}`;
+
     if (job.notification_channels) {
-      for (const ch of job.notification_channels) {
-        channelManager.sendMessage(ch, job.created_by.user_id, `⏰ Reminder: ${job.message}`);
-      }
+      await Promise.all(
+        job.notification_channels.map(ch =>
+          channelManager.sendMessage(ch, job.created_by.user_id, reminder, metadata)
+        )
+      );
     } else {
-      channelManager.sendMessage(job.created_by.channel, job.created_by.user_id, `⏰ Reminder: ${job.message}`);
+      await channelManager.sendMessage(job.created_by.channel, job.created_by.user_id, reminder, metadata);
     }
   }
 
   private saveJob(job: Job): void {
-    if (!fs.existsSync(JOBS_DIR)) {
-      fs.mkdirSync(JOBS_DIR, { recursive: true });
-    }
-    fs.writeFileSync(this.jobFilePath(job.id), JSON.stringify(job, null, 2), 'utf-8');
+    JOB_FILE_CACHE.set(job.id, job);
+    fs.promises.writeFile(this.jobFilePath(job.id), JSON.stringify(job), 'utf-8').catch(err => {
+      getLogger().error({ error: err.message, jobId: job.id }, 'Failed to save job');
+    });
   }
 
-  private deleteJobFile(id: string): void {
+  private async deleteJobFile(id: string): Promise<void> {
     const fp = this.jobFilePath(id);
-    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    try {
+      await fs.promises.unlink(fp);
+    } catch { /* not found */ }
   }
 
   private jobFilePath(id: string): string {
-    return path.join(JOBS_DIR, `${id}.json`);
+    return path.join(this.jobsDir, `${id}.json`);
   }
 }

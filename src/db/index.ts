@@ -2,15 +2,14 @@ import Database from 'sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { getLogger } from '../utils/logger';
+import { SCHEMA_SQL } from './schema';
 
 let dbInstance: Database.Database | null = null;
 
 export function initializeDatabase(dbPath: string): Promise<Database.Database> {
   return new Promise((resolve, reject) => {
     const dir = path.dirname(dbPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    fs.promises.mkdir(dir, { recursive: true }).catch(() => {});
 
     const db = new Database.Database(dbPath, (err) => {
       if (err) {
@@ -20,6 +19,7 @@ export function initializeDatabase(dbPath: string): Promise<Database.Database> {
 
       db.run('PRAGMA foreign_keys = ON');
       db.run('PRAGMA journal_mode = WAL');
+      db.run('PRAGMA wal_autocheckpoint = 1000');
 
       runSchema(db)
         .then(() => {
@@ -32,16 +32,17 @@ export function initializeDatabase(dbPath: string): Promise<Database.Database> {
   });
 }
 
-function runSchema(db: Database.Database): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const schemaPath = path.resolve(__dirname, 'schema.sql');
-    if (!fs.existsSync(schemaPath)) {
-      getLogger().warn('schema.sql not found, creating tables inline');
-      resolve();
-      return;
-    }
+async function runSchema(db: Database.Database): Promise<void> {
+  let schema = SCHEMA_SQL;
 
-    const schema = fs.readFileSync(schemaPath, 'utf-8');
+  const schemaPath = path.resolve(__dirname, 'schema.sql');
+  try {
+    schema = await fs.promises.readFile(schemaPath, 'utf-8');
+  } catch {
+    getLogger().debug('schema.sql not found, using embedded schema');
+  }
+
+  return new Promise((resolve, reject) => {
     const statements = schema.split(';').filter(s => s.trim());
 
     let idx = 0;
@@ -72,4 +73,27 @@ export function getDatabase(): Database.Database {
     throw new Error('Database not initialized. Call initializeDatabase() first.');
   }
   return dbInstance;
+}
+
+export function isDatabaseInitialized(): boolean {
+  return dbInstance !== null;
+}
+
+export function closeDatabase(): Promise<void> {
+  return new Promise((resolve) => {
+    const db = dbInstance;
+    dbInstance = null;
+    if (!db) {
+      resolve();
+      return;
+    }
+    db.close((err) => {
+      if (err) {
+        getLogger().warn({ error: err.message }, 'Failed to close database cleanly');
+      } else {
+        getLogger().info('Database closed');
+      }
+      resolve();
+    });
+  });
 }

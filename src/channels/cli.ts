@@ -1,6 +1,7 @@
 import * as readline from 'readline';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
+import { getLogger } from '../utils/logger';
 
 export class CLIChannel implements Channel {
   private channelManager: ChannelManager;
@@ -14,15 +15,11 @@ export class CLIChannel implements Channel {
   async start(): Promise<void> {
     this.running = true;
 
-    console.log('\n🚀 Alfred CLI — Escribe "exit" para salir\n');
-
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       prompt: '🧐 ',
     });
-
-    this.rl.prompt();
 
     this.rl.on('line', async (input: string) => {
       const trimmed = input.trim();
@@ -32,9 +29,8 @@ export class CLIChannel implements Channel {
       }
 
       if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
-        console.log('\n👋 Goodbye, Señor Felipe.\n');
-        this.running = false;
-        this.rl?.close();
+        console.log('\n👋 Goodbye.\n');
+        this.exit(0);
         return;
       }
 
@@ -61,10 +57,19 @@ export class CLIChannel implements Channel {
 
     this.rl.on('close', () => {
       if (this.running) {
-        this.running = false;
-        process.exit(0);
+        getLogger().info('CLI channel closed by user (Ctrl+C)');
+        this.exit(0);
       }
     });
+  }
+
+  signalReady(): void {
+    console.log('\n╔═══════════════════════════════════════════╗');
+    console.log('║   ✅ Alfred is running!                   ║');
+    console.log('║   WebSocket: ws://127.0.0.1:18789          ║');
+    console.log('╚═══════════════════════════════════════════╝');
+    console.log(' Escribe "exit" para salir\n');
+    this.rl?.prompt();
   }
 
   async sendMessage(_userId: string, message: string): Promise<void> {
@@ -73,8 +78,30 @@ export class CLIChannel implements Channel {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.restoreStdin();
     if (this.rl) {
       this.rl.close();
+      this.rl = null;
     }
+  }
+
+  private restoreStdin(): void {
+    try {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+    } catch {
+      // stdin may not be a TTY, ignore
+    }
+  }
+
+  private exit(code: number): void {
+    this.running = false;
+    this.restoreStdin();
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
+    }
+    process.exit(code);
   }
 }

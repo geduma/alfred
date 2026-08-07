@@ -37,14 +37,29 @@ export class TelegramChannel implements Channel {
 
       if (!msg.content) return;
 
+      const chatId = ctx.chat?.id;
+      if (!chatId) return;
+
+      ctx.api.sendChatAction(chatId, 'typing').catch(() => {});
+
+      const typingInterval = setInterval(() => {
+        ctx.api.sendChatAction(chatId, 'typing').catch(() => {});
+      }, 4000);
+
       try {
         const response = await this.channelManager.handleMessage(msg);
+        clearInterval(typingInterval);
+
         if (response) {
-          await this.sendMessage(userId, response, { chat_id: ctx.chat?.id });
+          await this.sendMessage(userId, response, { chat_id: chatId });
+        } else {
+          getLogger().warn({ userId }, 'Empty response from handler');
+          await ctx.reply('Disculpe, no obtuve una respuesta. ¿Podría repetirlo?');
         }
       } catch (error: any) {
+        clearInterval(typingInterval);
         getLogger().error({ error: error.message }, 'Telegram message handling failed');
-        await ctx.reply('Sorry, an internal error occurred.');
+        await ctx.reply('Lo siento, ocurrió un error interno.').catch(() => {});
       }
     });
 
@@ -58,7 +73,11 @@ export class TelegramChannel implements Channel {
 
   async sendMessage(userId: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
     const chatId = metadata?.chat_id ? Number(metadata.chat_id) : Number(userId);
-    await this.bot.api.sendMessage(chatId, message);
+    try {
+      await this.bot.api.sendMessage(chatId, message);
+    } catch (error: any) {
+      getLogger().error({ error: error.message, chatId }, 'Telegram sendMessage failed');
+    }
   }
 
   async stop(): Promise<void> {
