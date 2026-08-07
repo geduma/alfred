@@ -13,7 +13,7 @@
 - **Logging:** pino@8.18
 - **Validation:** zod@3.22
 - **Test:** Jest + ts-jest
-- **Docker:** node:22-alpine (~180MB)
+- **Docker:** node:22-alpine (base ~180MB; final image est. ~0.5-1.0GB tras eliminar WhatsApp/Chromium)
 
 ## Commands
 
@@ -62,7 +62,7 @@ src/
 │   ├── job-scheduler.ts      ← Create/list/update/cancel reminders
 │   ├── system.ts             ← health/reload/status via gateway
 │   ├── health.ts             ← Query health monitor, view findings, trigger checks
-│   └── memory.ts             ← Memory tools (snapshot_save, snapshot_restore, context_stats)
+│   └── memory.ts             ← Memory tools (search, snapshots, snapshot_get, snapshot_restore)
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
@@ -116,7 +116,7 @@ Single file: `workspace/config/alfred.json`
 | `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/, delivers to originating channel/chat |
 | `system` | `src/tools/system.ts` | Health/status/reload delegated to gateway |
 | `health` | `src/tools/health.ts` | Query health monitor findings, trigger checks |
-| `memory` | `src/tools/memory.ts` | Conditional — snapshot_save/restore, context_stats |
+| `memory` | `src/tools/memory.ts` | Conditional — search, snapshots, snapshot_get, snapshot_restore |
 
 ## Personality System
 
@@ -351,7 +351,15 @@ Volume: `~/.alfred-personal:/workspace`
 
 ## Unused Dependencies Removed
 
-`js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64` — not imported anywhere in source code.
+`js-yaml`, `marked`, `undici`, `@lancedb/lancedb-darwin-x64`, `whatsapp-web.js` — not imported anywhere in source code. `whatsapp-web.js` (and its `fluent-ffmpeg`/`web-streams-polyfill` transitive deps) pulled in system Chromium; its removal cut ~95MB from `node_modules` and ~2GB from the Docker image.
+
+## Removed Dead Code (v2.1 cleanup)
+
+- `src/types/index.ts` — orphaned barrel export (nothing imported it)
+- `SnapshotManager.delete/restore` (`src/services/snapshot.ts`)
+- `SessionStore.delete/listActive` (`src/db/session-store.ts`)
+- `ContextCompressor.estimateMessageTokens/estimateTotalTokens` (`src/services/context-compressor.ts`)
+- `VectorStoreManager.isReady/embeddingDimension` getters (`src/services/vector-store/index.ts`)
 
 ## Agent Notes
 

@@ -4,7 +4,7 @@
   "description": "Personal AI Agent - Multicanal, agnóstico a LLM, con SOUL.md",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "jest",
@@ -51,7 +51,6 @@
     "llm",
     "multicanal",
     "telegram",
-    "whatsapp",
     "personal-assistant"
   ],
   "author": "geduma",

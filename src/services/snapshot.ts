@@ -147,23 +147,6 @@ export class SnapshotManager {
     return this.store.get(snapshotId);
   }
 
-  async delete(snapshotId: string): Promise<void> {
-    await this.store.delete(snapshotId);
-  }
-
-  async restore(session: StoredSession, snapshotId: string): Promise<StoredSession> {
-    const snapshot = await this.store.get(snapshotId);
-    if (!snapshot) throw new Error(`Snapshot ${snapshotId} not found`);
-
-    const snapshots = await this.store.list(session.id);
-    const targetSnapshot = snapshots.find(s => s.id === snapshotId);
-    if (!targetSnapshot) throw new Error(`Snapshot ${snapshotId} not found for session ${session.id}`);
-
-    session.summary = targetSnapshot.summary;
-    getLogger().info({ snapshotId, sessionId: session.id }, 'Session restored from snapshot');
-    return session;
-  }
-
   private async enforceLimit(sessionId: string): Promise<void> {
     const max = this.config.max_snapshots_per_session || 20;
     const existing = await this.store.list(sessionId);

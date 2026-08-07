@@ -69,39 +69,6 @@ export class SessionStore {
     await fs.promises.writeFile(filePath, JSON.stringify(session), 'utf-8');
   }
 
-  async delete(sessionId: string): Promise<void> {
-    await this.ensureDir();
-    const filePath = this.sessionPath(sessionId);
-    try {
-      await fs.promises.unlink(filePath);
-    } catch { /* not found */ }
-  }
-
-  async listActive(): Promise<StoredSession[]> {
-    await this.ensureDir();
-
-    let files: string[];
-    try {
-      files = await fs.promises.readdir(SESSIONS_DIR);
-    } catch {
-      return [];
-    }
-
-    const results = await Promise.all(
-      files
-        .filter(f => f.endsWith('.json'))
-        .map(async f => {
-          try {
-            return JSON.parse(await fs.promises.readFile(path.join(SESSIONS_DIR, f), 'utf-8')) as StoredSession;
-          } catch {
-            return null;
-          }
-        })
-    );
-
-    return results.filter((s): s is StoredSession => s !== null);
-  }
-
   private sessionPath(sessionId: string): string {
     const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
     return path.join(SESSIONS_DIR, `${safeId}.json`);

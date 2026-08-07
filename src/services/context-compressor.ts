@@ -72,14 +72,6 @@ export class ContextCompressor {
     return total > threshold;
   }
 
-  estimateMessageTokens(messages: Message[]): number {
-    return estimateMessagesTokens(messages);
-  }
-
-  estimateTotalTokens(messages: Message[], systemPromptTokens: number, extraTokens = 0): number {
-    return estimateMessagesTokens(messages) + systemPromptTokens + extraTokens;
-  }
-
   async compactSession(
     existingSummary: string | undefined,
     messages: Message[],

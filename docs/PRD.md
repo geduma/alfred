@@ -10,12 +10,12 @@
 
 ## 1. Resumen Ejecutivo
 
-Alfred es un asistente IA personal que funciona como gateway multicanal descentralizado. Permite al usuario interactuar con modelos de lenguaje (LLM) a través de Telegram, WhatsApp y CLI, con personalidad persistente, acceso a internet y ejecución de herramientas, todo en un solo contenedor Docker.
+Alfred es un asistente IA personal que funciona como gateway multicanal descentralizado. Permite al usuario interactuar con modelos de lenguaje (LLM) a través de Telegram y CLI, con personalidad persistente, acceso a internet y ejecución de herramientas, todo en un solo contenedor Docker.
 
 ## 2. Problema
 
 El usuario necesita un asistente IA que:
-- Sea multicanal (Telegram, WhatsApp, CLI)
+- Sea multicanal (Telegram, CLI)
 - Pueda cambiar de LLM sin modificar código
 - Tenga personalidad consistente
 - Acceda a internet para información actualizada
@@ -39,7 +39,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 | Validación | zod@3.22 |
 | Testing | Jest + ts-jest |
 | Docker | node:22-alpine, multi-stage build |
-| Tamaño imagen | ~180MB |
+| Tamaño imagen | ~0.5-1.0 GB (base node:22-alpine ~180MB; WhatsApp/Chromium eliminados)
 
 ## 5. Características Funcionales (Features)
 
@@ -83,10 +83,13 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 
 | Tool | Propósito | Seguridad |
 |---|---|---|
-| exec | Comandos shell | Allowlist/denylist, timeout |
+| exec | Comandos shell | Allowlist/denylist, timeout, sanitize de env |
 | file_ops | CRUD archivos | Confinado a /workspace/files, max 100MB |
-| web_search | Búsqueda web | DuckDuckGo, 10s timeout |
-| web_fetch | Fetch de URLs | Max 10MB, 15s timeout, limpia HTML |
+| web | Búsqueda web + fetch (unificado) | DuckDuckGo, timeout, limpieza de HTML |
+| job | Recordatorios one-time/recurrentes | Persistidos en workspace/memory/jobs/ |
+| system | Health/status/reload | Delegado al gateway |
+| health | Hallazgos del health monitor | Solo lectura + check bajo demanda |
+| memory | Vector search + snapshots (condicional) | Habilitado solo con sistema de memoria activo |
 
 ### F5.7 Persistencia SQLite
 - **ID:** F-DB-001
@@ -223,7 +226,7 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 
 | Métrica | Target v1.0 | Target v1.5 |
 |---|---|---|
-| Canales activos | 2 (Telegram + CLI) | 3 (+ WhatsApp) |
+| Canales activos | 2 (Telegram + CLI) | 2 (Telegram + CLI) |
 | LLM providers | 3 configurados | 5 activos |
 | Tests | >10 unit tests | >30 tests |
 | Tiempo setup | <5 min | <5 min |
