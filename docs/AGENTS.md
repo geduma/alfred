@@ -66,7 +66,6 @@ src/
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
-│   ├── whatsapp.ts           ← whatsapp-web.js (15s init timeout)
 │   └── cli.ts                ← Interactive readline
 ├── db/                       ← Persistence
 │   ├── schema.ts             ← Embedded SQL schema (5 tables)

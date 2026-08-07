@@ -63,7 +63,6 @@ npm run dev
 |---|---|
 | **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
-| **WhatsApp** | Scan QR on first start (requires `whatsapp-web.js`) |
 
 ## Configuration
 

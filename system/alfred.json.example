@@ -74,18 +74,6 @@
         "allow_from": ["YOUR_USER_ID"]
       }
     },
-    "whatsapp": {
-      "enabled": false,
-      "type": "whatsapp",
-      "config": {
-        "session_file": "/workspace/config/whatsapp-session.json",
-        "timeout_seconds": 60,
-        "qr_timeout_seconds": 120
-      },
-      "permissions": {
-        "allow_from": ["+34123456789"]
-      }
-    },
     "cli": {
       "enabled": true,
       "type": "cli",

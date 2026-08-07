@@ -74,7 +74,6 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - **ID:** F-CH-001
 - **Descripción:** Múltiples canales de comunicación
 - **v1.0:** Telegram (grammy), CLI (readline)
-- **v1.5:** WhatsApp (whatsapp-web.js)
 - **v2.0:** Discord, Slack
 - **ACL:** Whitelist de usuarios por canal
 
@@ -191,7 +190,6 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - [x] Seguridad: rate limiter, auth, ACL
 
 ### v1.5 — Septiembre 2026
-- [ ] WhatsApp plugin (whatsapp-web.js)
 - [ ] Skills loader (SKILL.md parser)
 - [ ] Web dashboard (Vue/React)
 - [ ] Audit logging avanzado
@@ -238,6 +236,5 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 |---|---|---|---|
 | API key de LLM expirada | Alto | Media | Fallback automático a siguiente provider |
 | Rate limiting de Telegram | Medio | Baja | Queue de mensajes + rate limiter |
-| whatsapp-web.js requiere Chrome | Alto | Alta | Docker incluye Chromium |
 | SQLite locked en alta concurrencia | Medio | Baja | WAL mode + timeouts |
 | Costo de API de pago (Anthropic/OpenAI) | Medio | Alta | Ollama cloud como primary (gratuito) |

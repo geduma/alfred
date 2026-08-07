@@ -308,7 +308,6 @@ alfred-personal/
 - [TypeScript Handbook](https://www.typescriptlang.org/docs)
 - [Docker Docs](https://docs.docker.com)
 - [grammy (Telegram SDK)](https://grammy.dev)
-- [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 
 ---
 

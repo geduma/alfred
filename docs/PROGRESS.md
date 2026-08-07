@@ -58,7 +58,6 @@
 ### ✅ Phase 5: Channels
 - [x] `src/channels/channel-manager.ts` — Registry + dispatch
 - [x] `src/channels/telegram.ts` — Grammy bot
-- [x] `src/channels/whatsapp.ts` — whatsapp-web.js
 - [x] `src/channels/cli.ts` — Interactive readline
 
 ### ✅ Phase 6: SQLite Persistence
@@ -206,4 +205,4 @@
 | **Intellectual Honesty** | SOUL.md instructs to never flatter, correct only with evidence, question when appropriate, maintain respect |
 | **Vector Store Embedding** | Built-in hashing vectorizer — zero dependencies, ~5KB RAM, ~5μs per embedding. No external APIs, no model downloads. Graceful disable if unavailable. Detailed error logging. |
 | **Health Monitor** | Periodic log scanner (60 min default). Categorizes errors (vector_store, llm_provider, telegram, database, etc.). Alerts via Telegram. Exposed as `health` tool to LLM. |
-| **Dependencies** | Dynamic `import()` for optional heavy deps (LanceDB, cheerio, whatsapp-web.js) — only loaded when feature is enabled. Provider SDKs use static imports. |
+| **Dependencies** | Dynamic `import()` for optional heavy deps (LanceDB, cheerio) — only loaded when feature is enabled. Provider SDKs use static imports. |

@@ -7,7 +7,6 @@ import { PromptBuilder } from './agent/prompt-builder';
 import { Gateway } from './gateway';
 import { ChannelManager } from './channels/channel-manager';
 import { TelegramChannel } from './channels/telegram';
-import { WhatsAppChannel } from './channels/whatsapp';
 import { CLIChannel } from './channels/cli';
 import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
@@ -119,12 +118,6 @@ async function main(): Promise<void> {
     switch (chConfig.type) {
       case 'telegram':
         channelManager.register(name, new TelegramChannel(channelManager, {
-          config: chConfig.config,
-          permissions: chConfig.permissions,
-        }));
-        break;
-      case 'whatsapp':
-        channelManager.register(name, new WhatsAppChannel(channelManager, {
           config: chConfig.config,
           permissions: chConfig.permissions,
         }));

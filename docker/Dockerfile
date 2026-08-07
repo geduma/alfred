@@ -1,18 +1,9 @@
 FROM node:22-alpine AS builder
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-
 WORKDIR /build
 
 COPY package*.json ./
-RUN npm ci \
-    && rm -rf node_modules/@huggingface \
-           node_modules/onnxruntime-node \
-           node_modules/onnxruntime-common \
-           node_modules/onnxruntime-web \
-           node_modules/sharp \
-           node_modules/@img
+RUN npm ci
 
 COPY src ./src
 COPY tsconfig.json ./
@@ -22,22 +13,12 @@ RUN npm run build
 
 FROM node:22-alpine
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    NODE_ENV=production
+ENV NODE_ENV=production
 
 WORKDIR /app
 
-RUN apk add --no-cache chromium
-
 COPY package*.json ./
-RUN npm ci --omit=dev \
-    && rm -rf node_modules/@huggingface \
-           node_modules/onnxruntime-node \
-           node_modules/onnxruntime-common \
-           node_modules/onnxruntime-web \
-           node_modules/sharp \
-           node_modules/@img
+RUN npm ci --omit=dev
 
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/
