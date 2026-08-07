@@ -71,8 +71,16 @@ export interface ProviderConfig {
   };
 }
 
+export interface RetryConfig {
+  max_attempts: number;
+  base_delay_ms: number;
+  max_delay_ms: number;
+  backoff_factor: number;
+}
+
 export interface LLMConfig {
   primary_provider: string;
   fallback_providers: string[];
   model_selection?: 'automatic' | 'manual';
+  retry?: RetryConfig;
 }

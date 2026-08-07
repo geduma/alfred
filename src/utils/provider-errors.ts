@@ -1,9 +1,52 @@
 const THROTTLE_PATTERN = /\b(429|413)\b|rate limit|too many requests|tokens[_ ]?per[_ ]?minute|request too large|reduce your message size|context window/i;
 
+const RETRYABLE_STATUS = new Set([408, 409, 413, 425, 429, 500, 502, 503, 504]);
+
+const NETWORK_ERROR_PATTERN = /\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network error|request timed out|timeout|timed out|temporarily unavailable)\b/i;
+
 export const MIN_CONTEXT_BUDGET = 2048;
 
 export function isThrottleError(message: string): boolean {
   return THROTTLE_PATTERN.test(message);
+}
+
+export function getErrorMessage(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const message = (error as any).message;
+    if (typeof message === 'string') return message;
+    return JSON.stringify(error);
+  }
+  return String(error ?? '');
+}
+
+export function getErrorStatus(error: unknown): number | null {
+  if (error && typeof error === 'object') {
+    const status = (error as any).status;
+    const numeric = typeof status === 'string' ? parseInt(status, 10) : status;
+    if (typeof numeric === 'number' && numeric >= 100 && numeric < 600) {
+      return numeric;
+    }
+  }
+  const match = getErrorMessage(error).match(/\b(status)?\s*([45]\d{2})\b/i);
+  if (match) {
+    const parsed = parseInt(match[2], 10);
+    if (parsed >= 100 && parsed < 600) return parsed;
+  }
+  return null;
+}
+
+export function isRetryableError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (status !== null && RETRYABLE_STATUS.has(status)) {
+    return true;
+  }
+  const message = getErrorMessage(error);
+  if (THROTTLE_PATTERN.test(message)) {
+    return true;
+  }
+  return NETWORK_ERROR_PATTERN.test(message);
 }
 
 export function parseRequestedTokens(message: string): number | null {

@@ -29,6 +29,12 @@ const LLMConfigSchema = z.object({
   primary_provider: z.string().min(1),
   fallback_providers: z.array(z.string()),
   model_selection: z.enum(['automatic', 'manual']).optional(),
+  retry: z.object({
+    max_attempts: z.number().int().min(1).max(10).default(3),
+    base_delay_ms: z.number().int().min(0).default(1000),
+    max_delay_ms: z.number().int().min(0).default(15000),
+    backoff_factor: z.number().min(1).max(10).default(2),
+  }).optional(),
 });
 
 const ChannelConfigSchema = z.object({

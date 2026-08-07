@@ -130,13 +130,13 @@ export class VectorStoreManager {
 
       return results
         .filter((r: any) => {
-          const score = this.cosineSimilarity(queryVector, r.vector as number[]);
+          const score = this.cosineSimilarity(queryVector, this.toNumberArray(r.vector));
           return score >= (this.config.search.min_score || 0.5);
         })
         .slice(0, k)
         .map((r: any) => ({
           text: r.text as string,
-          score: this.cosineSimilarity(queryVector, r.vector as number[]),
+          score: this.cosineSimilarity(queryVector, this.toNumberArray(r.vector)),
           metadata: {
             sessionId: r.sessionId as string,
             channel: r.channel as string,
@@ -200,6 +200,16 @@ export class VectorStoreManager {
     }
     const denom = Math.sqrt(normA) * Math.sqrt(normB);
     return denom === 0 ? 0 : dot / denom;
+  }
+
+  private toNumberArray(vector: unknown): number[] {
+    if (Array.isArray(vector)) return vector as number[];
+    if (ArrayBuffer.isView(vector)) return Array.from(vector as Float32Array);
+    if (vector && typeof (vector as any).toArray === 'function') {
+      const arr = (vector as any).toArray();
+      return Array.isArray(arr) ? arr as number[] : Array.from(arr as Float32Array);
+    }
+    return [];
   }
 
   async close(): Promise<void> {

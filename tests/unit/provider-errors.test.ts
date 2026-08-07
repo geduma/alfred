@@ -1,5 +1,8 @@
 import {
   isThrottleError,
+  isRetryableError,
+  getErrorStatus,
+  getErrorMessage,
   parseRequestedTokens,
   nextContextBudget,
   MIN_CONTEXT_BUDGET,
@@ -40,6 +43,74 @@ describe('provider-errors', () => {
       expect(isThrottleError('Invalid API key')).toBe(false);
       expect(isThrottleError('')).toBe(false);
       expect(isThrottleError(undefined as unknown as string)).toBe(false);
+    });
+  });
+
+  describe('getErrorStatus', () => {
+    test('extracts numeric status from error object', () => {
+      expect(getErrorStatus({ status: 413, message: 'too large' })).toBe(413);
+    });
+
+    test('extracts string status from error object', () => {
+      expect(getErrorStatus({ status: '502', message: 'bad gateway' })).toBe(502);
+    });
+
+    test('extracts status embedded in message', () => {
+      expect(getErrorStatus(new Error('Provider error: (status 413)'))).toBe(413);
+      expect(getErrorStatus('HTTP 500 Internal Server Error')).toBe(500);
+    });
+
+    test('returns null for errors without a status', () => {
+      expect(getErrorStatus(new Error('Connection refused'))).toBeNull();
+      expect(getErrorStatus(null)).toBeNull();
+    });
+  });
+
+  describe('getErrorMessage', () => {
+    test('returns message from Error instances', () => {
+      expect(getErrorMessage(new Error('boom'))).toBe('boom');
+    });
+
+    test('returns strings as-is', () => {
+      expect(getErrorMessage('raw')).toBe('raw');
+    });
+
+    test('handles arbitrary objects', () => {
+      expect(getErrorMessage({ code: 'E1' })).toBe('{"code":"E1"}');
+      expect(getErrorMessage(undefined)).toBe('');
+    });
+  });
+
+  describe('isRetryableError', () => {
+    test('retries 5xx and transient statuses', () => {
+      expect(isRetryableError({ status: 500 })).toBe(true);
+      expect(isRetryableError({ status: 502 })).toBe(true);
+      expect(isRetryableError({ status: 503 })).toBe(true);
+      expect(isRetryableError({ status: 504 })).toBe(true);
+      expect(isRetryableError({ status: 408 })).toBe(true);
+      expect(isRetryableError({ status: 409 })).toBe(true);
+    });
+
+    test('retries throttling statuses', () => {
+      expect(isRetryableError({ status: 429 })).toBe(true);
+      expect(isRetryableError({ status: 413 })).toBe(true);
+      expect(isRetryableError(new Error('Request too large (status 413)'))).toBe(true);
+      expect(isRetryableError('You are being rate limited. Please retry.')).toBe(true);
+    });
+
+    test('retries network and timeout errors', () => {
+      expect(isRetryableError(new Error('ECONNREFUSED'))).toBe(true);
+      expect(isRetryableError(new Error('socket hang up'))).toBe(true);
+      expect(isRetryableError({ message: 'Request timed out' })).toBe(true);
+    });
+
+    test('does not retry client errors or missing statuses', () => {
+      expect(isRetryableError({ status: 400 })).toBe(false);
+      expect(isRetryableError({ status: 401 })).toBe(false);
+      expect(isRetryableError({ status: 402 })).toBe(false);
+      expect(isRetryableError({ status: 404 })).toBe(false);
+      expect(isRetryableError(new Error('Connection refused'))).toBe(false);
+      expect(isRetryableError(undefined)).toBe(false);
     });
   });
 

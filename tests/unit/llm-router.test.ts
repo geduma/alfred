@@ -11,13 +11,19 @@ import { ConfigLoader } from '../../src/config/loader';
 function buildConfig() {
   return {
     agent: { name: 'Alfred', version: '2.1.0', personality_file: '/workspace/config/SOUL.md' },
-    llm: { primary_provider: 'relio', fallback_providers: [] },
+    llm: { primary_provider: 'relio', fallback_providers: [], retry: { max_attempts: 3, base_delay_ms: 0, max_delay_ms: 0, backoff_factor: 2 } },
     providers: {
       relio: {
         type: 'openai-compatible',
         enabled: true,
         model: 'auto',
         config: { api_url: 'http://relio.home/v1', api_key: 'test-key' },
+      },
+      fallback: {
+        type: 'openai-compatible',
+        enabled: true,
+        model: 'model-fallback',
+        config: { api_url: 'http://localhost:11434/v1', api_key: 'test-key-2' },
       },
     },
     channels: { cli: { enabled: false, type: 'cli', config: {} } },
@@ -76,7 +82,7 @@ describe('LLMRouter circuit breaker behavior', () => {
 
     const breaker = (router as any).circuitBreaker;
     expect(breaker.getState('relio').open).toBe(false);
-    expect(fakeProvider.call).toHaveBeenCalledTimes(2);
+    expect(fakeProvider.call).toHaveBeenCalledTimes(6);
   });
 
   test('should open the circuit breaker on non-throttling errors', async () => {
@@ -99,6 +105,94 @@ describe('LLMRouter circuit breaker behavior', () => {
     expect(breaker.getState('relio').open).toBe(true);
 
     await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('Circuit breaker open');
+    expect(fakeProvider.call).toHaveBeenCalledTimes(9);
+  });
+
+  test('should retry transient failures and succeed on a later attempt', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn()
+        .mockRejectedValueOnce(new Error('Provider error: (status 503)'))
+        .mockRejectedValueOnce(new Error('socket hang up'))
+        .mockResolvedValueOnce({ content: 'ok', stop_reason: 'end_turn' }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('ok');
     expect(fakeProvider.call).toHaveBeenCalledTimes(3);
+
+    const breaker = (router as any).circuitBreaker;
+    expect(breaker.getState('relio').open).toBe(false);
+  });
+
+  test('should not retry non-retryable client errors', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn().mockRejectedValue(new Error('400 Bad Request')),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('All providers failed');
+    expect(fakeProvider.call).toHaveBeenCalledTimes(1);
+  });
+
+  test('should respect configured retry max_attempts', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn().mockRejectedValue(new Error('Provider error: (status 503)')),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const cfg = buildConfig();
+    cfg.llm.retry = { max_attempts: 2, base_delay_ms: 0, max_delay_ms: 0, backoff_factor: 2 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow('All providers failed');
+    expect(fakeProvider.call).toHaveBeenCalledTimes(2);
+  });
+
+  test('should fall back to the next provider after exhausting retries', async () => {
+    const primary = {
+      validateConfig: async () => true,
+      call: jest.fn().mockRejectedValue(new Error('Provider error: (status 503)')),
+    };
+    const fallback = {
+      validateConfig: async () => true,
+      call: jest.fn().mockResolvedValue({ content: 'from fallback', stop_reason: 'end_turn' }),
+    };
+    createProvider.mockImplementation(async (config: any) => {
+      return config.model === 'auto' ? primary : fallback;
+    });
+
+    const cfg = buildConfig();
+    cfg.llm.fallback_providers = ['fallback'];
+    cfg.llm.retry = { max_attempts: 2, base_delay_ms: 0, max_delay_ms: 0, backoff_factor: 2 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('from fallback');
+    expect(primary.call).toHaveBeenCalledTimes(2);
+    expect(fallback.call).toHaveBeenCalledTimes(1);
   });
 });

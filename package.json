@@ -18,7 +18,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.1",
     "@google/generative-ai": "^0.19.0",
-    "@lancedb/lancedb": "^0.31.0",
+    "@lancedb/lancedb": "^0.22.3",
     "axios": "^1.7.4",
     "cheerio": "^1.0.0-rc.12",
     "cross-spawn": "^7.0.6",
