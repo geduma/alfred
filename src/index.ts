@@ -8,6 +8,7 @@ import { Gateway } from './gateway';
 import { ChannelManager } from './channels/channel-manager';
 import { TelegramChannel } from './channels/telegram';
 import { CLIChannel } from './channels/cli';
+import { WebChannel } from './channels/web';
 import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
 import { WORKSPACE_ROOT, WORKSPACE_PATHS } from './utils/workspace';
@@ -59,6 +60,37 @@ async function ensureWorkspace(): Promise<void> {
       }
     }
   }
+
+  await copyDefaultSkills();
+}
+
+async function copyDefaultSkills(): Promise<void> {
+  const sourceDir = path.resolve(__dirname, '../system/skills-custom');
+  const targetDir = path.join(WORKSPACE_ROOT, 'skills', 'custom');
+
+  let files: string[];
+  try {
+    files = await fs.promises.readdir(sourceDir);
+  } catch {
+    return;
+  }
+
+  await fs.promises.mkdir(targetDir, { recursive: true }).catch(() => {});
+  const skillFiles = files.filter(f => f.endsWith('.md'));
+
+  for (const file of skillFiles) {
+    const target = path.join(targetDir, file);
+    try {
+      await fs.promises.access(target);
+    } catch {
+      try {
+        await fs.promises.copyFile(path.join(sourceDir, file), target);
+        console.log(`📄 Copied default skill ${file} to ${target}`);
+      } catch {
+        // skip on failure
+      }
+    }
+  }
 }
 
 let gateway: Gateway | null = null;
@@ -66,7 +98,7 @@ let gateway: Gateway | null = null;
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════╗');
   console.log('║     Alfred Pennyworth — AI Assistant      ║');
-  console.log('║          Version 2.1.0                    ║');
+  console.log('║          Version 2.2.0                    ║');
   console.log('╚═══════════════════════════════════════════╝');
 
   console.log('\n🔧 Checking configuration files...');
@@ -108,12 +140,7 @@ async function main(): Promise<void> {
 
   const channelManager = new ChannelManager();
 
-  gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager);
-
-  channelManager.setMessageHandler(async (msg) => {
-    return gateway ? gateway.processMessage(msg) : null;
-  });
-
+  let webChannel: WebChannel | null = null;
   for (const { name, config: chConfig } of configLoader.enabledChannels) {
     switch (chConfig.type) {
       case 'telegram':
@@ -125,10 +152,20 @@ async function main(): Promise<void> {
       case 'cli':
         channelManager.register(name, new CLIChannel(channelManager));
         break;
+      case 'web':
+        webChannel = new WebChannel();
+        channelManager.register(name, webChannel);
+        break;
       default:
         getLogger().warn({ type: chConfig.type }, 'Unknown channel type, skipping');
     }
   }
+
+  gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager, webChannel);
+
+  channelManager.setMessageHandler(async (msg) => {
+    return gateway ? gateway.processMessage(msg) : null;
+  });
 
   const dbPath = configLoader.database.config.path;
   try {

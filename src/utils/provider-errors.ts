@@ -63,3 +63,16 @@ export function nextContextBudget(current: number, requested: number | null): nu
   }
   return Math.max(MIN_CONTEXT_BUDGET, next);
 }
+
+export class BudgetBlockedError extends Error {
+  readonly code = 'BUDGET_BLOCKED';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'BudgetBlockedError';
+  }
+}
+
+export function isBudgetBlockedError(error: unknown): boolean {
+  return error instanceof BudgetBlockedError || (error as any)?.code === 'BUDGET_BLOCKED';
+}

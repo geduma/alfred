@@ -54,11 +54,23 @@ export class SkillLoader {
     }
 
     const skillFiles = files.filter(f => f.endsWith('.md'));
+
+    const customDir = path.join(this.skillsDir, 'custom');
+    try {
+      const customFiles = await fs.promises.readdir(customDir);
+      for (const file of customFiles.filter(f => f.endsWith('.md'))) {
+        skillFiles.push(path.join('custom', file));
+      }
+    } catch {
+      // no custom dir, use root skills only
+    }
+
     const skills: Skill[] = [];
 
     for (const file of skillFiles) {
       try {
-        const content = await fs.promises.readFile(path.join(this.skillsDir, file), 'utf-8');
+        const fullPath = path.join(this.skillsDir, file);
+        const content = await fs.promises.readFile(fullPath, 'utf-8');
         const skill = this.parseSkill(content, file);
         if (skill) skills.push(skill);
       } catch (error: any) {

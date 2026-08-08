@@ -1,7 +1,7 @@
 {
   "name": "alfred-personal",
-  "version": "2.1.0",
-  "description": "Personal AI Agent - Multicanal, agnóstico a LLM, con SOUL.md",
+  "version": "2.2.0",
+  "description": "Personal AI Agent - Multicanal, agn\u00f3stico a LLM, con SOUL.md",
   "main": "dist/index.js",
   "scripts": {
     "build": "rm -rf dist && tsc",

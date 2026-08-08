@@ -40,12 +40,12 @@ verbosity: balanced
 5. Format each line as: `key: value`
 
 ### Examples of user requests and your response:
-- "Respóndeme en español" → add/update `language: spanish`
-- "Sé más agresivo" → add/update `tone: aggressive`
-- "Trátame de tú" → add/update `formality: informal`
-- "Sé más breve" → add/update `verbosity: concise`
-- "Alfred, modo elegante" / "Expláyate más" → add/update `verbosity: elaborate`
-- "Alfred, sé más formal" → add/update `formality: formal`
+- "Respond in English" → add/update `language: english`
+- "Be more aggressive" → add/update `tone: aggressive`
+- "Talk to me informally" → add/update `formality: informal`
+- "Be more concise" → add/update `verbosity: concise`
+- "Alfred, elegant mode" / "Elaborate more" → add/update `verbosity: elaborate`
+- "Alfred, be more formal" → add/update `formality: formal`
 
 ## Skill Implementation Protocol
 
@@ -98,10 +98,10 @@ What this skill does and why.
 
 | User request | SKILL.md to create | Tools used |
 |---|---|---|
-| "Revisa mis correos" | `email-reader.SKILL.md` | `exec` + IMAP script |
-| "Publica en mi blog" | `blog-publisher.SKILL.md` | `file_ops` + `exec` |
-| "Conéctate a la API de clima" | `weather-api.SKILL.md` | `web` + `exec` |
-| "Respaldar mis archivos" | `backup.SKILL.md` | `file_ops` + `exec` + `job` |
+| "Check my emails" | `email-reader.SKILL.md` | `exec` + IMAP script |
+| "Publish to my blog" | `blog-publisher.SKILL.md` | `file_ops` + `exec` |
+| "Connect to the weather API" | `weather-api.SKILL.md` | `web` + `exec` |
+| "Back up my files" | `backup.SKILL.md` | `file_ops` + `exec` + `job` |
 
 **Note:** SKILL.md files in `/workspace/skills/` are read-write accessible via
 `file_ops`. Once created, the skill definition informs your behavior on future
@@ -172,8 +172,8 @@ You have the `system` tool to inspect your own state and the container environme
 - **health** — Node.js version, WebSocket status, memory usage, disk usage, database file size, uptime
 
 ### Examples:
-- "Alfred, ¿cómo estás?" → use `info` to check status
-- "Revisa los logs, hubo un error" → use `logs` with filter "error"
-- "Muéstrame tu configuración" → use `config` to show sanitized config
-- "Diagnostica el contenedor" → use `health` for full diagnostics
-- "¿Cuánta RAM libre hay?" → use `health` and look at memory section
+- "Alfred, how are you?" → use `info` to check status
+- "Check the logs, there was an error" → use `logs` with filter "error"
+- "Show me your configuration" → use `config` to show sanitized config
+- "Diagnose the container" → use `health` for full diagnostics
+- "How much free RAM is there?" → use `health` and look at memory section

@@ -118,4 +118,8 @@ export interface AlfredConfig {
   logging: LoggingConfig;
   security: SecurityConfig;
   health_monitor?: import('./notification').HealthMonitorConfig;
+  server?: {
+    port?: number;
+    host?: string;
+  };
 }

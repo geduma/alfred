@@ -195,4 +195,121 @@ describe('LLMRouter circuit breaker behavior', () => {
     expect(primary.call).toHaveBeenCalledTimes(2);
     expect(fallback.call).toHaveBeenCalledTimes(1);
   });
+
+  describe('token budget gating', () => {
+    const blockedBudget = {
+      allowed: false,
+      reason: 'daily_limit',
+      remainingPercent: 0,
+      dailyRemainingPercent: 0,
+      monthlyRemainingPercent: 50,
+    };
+    const allowedBudget = {
+      allowed: true,
+      remainingPercent: 100,
+      dailyRemainingPercent: 100,
+      monthlyRemainingPercent: 100,
+    };
+
+    test('should throw BudgetBlockedError when block_all and budget exceeded', async () => {
+      const fakeProvider = {
+        validateConfig: async () => true,
+        call: jest.fn().mockResolvedValue({ content: 'ok', stop_reason: 'end_turn' }),
+      };
+      createProvider.mockResolvedValue(fakeProvider);
+
+      const cfg = buildConfig();
+      (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_all' };
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+      const config = new ConfigLoader(configPath);
+      const { LLMRouter } = require('../../src/agent/llm-router');
+      const router = new LLMRouter(config);
+      await router.initialize();
+
+      jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(blockedBudget as any);
+
+      await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toMatchObject({ code: 'BUDGET_BLOCKED' });
+      expect(fakeProvider.call).not.toHaveBeenCalled();
+    });
+
+    test('should skip paid providers when budget exceeded and block_paid_providers', async () => {
+      const paidProvider = {
+        validateConfig: async () => true,
+        call: jest.fn().mockResolvedValue({ content: 'paid', stop_reason: 'end_turn' }),
+      };
+      const freeProvider = {
+        validateConfig: async () => true,
+        call: jest.fn().mockResolvedValue({ content: 'free', stop_reason: 'end_turn' }),
+      };
+      createProvider.mockImplementation(async (config: any) => {
+        return config.model === 'auto' ? paidProvider : freeProvider;
+      });
+
+      const cfg = buildConfig();
+      cfg.providers.primary.type = 'anthropic';
+      cfg.llm.fallback_providers = ['fallback'];
+      (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_paid_providers' };
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+      const config = new ConfigLoader(configPath);
+      const { LLMRouter } = require('../../src/agent/llm-router');
+      const router = new LLMRouter(config);
+      await router.initialize();
+
+      jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(blockedBudget as any);
+
+      const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+      expect(response.content).toBe('free');
+      expect(paidProvider.call).not.toHaveBeenCalled();
+      expect(freeProvider.call).toHaveBeenCalledTimes(1);
+    });
+
+    test('should use paid providers when budget is within limits', async () => {
+      const paidProvider = {
+        validateConfig: async () => true,
+        call: jest.fn().mockResolvedValue({ content: 'paid', stop_reason: 'end_turn' }),
+      };
+      createProvider.mockResolvedValue(paidProvider);
+
+      const cfg = buildConfig();
+      cfg.providers.primary.type = 'anthropic';
+      (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_paid_providers' };
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+      const config = new ConfigLoader(configPath);
+      const { LLMRouter } = require('../../src/agent/llm-router');
+      const router = new LLMRouter(config);
+      await router.initialize();
+
+      jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(allowedBudget as any);
+
+      const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+      expect(response.content).toBe('paid');
+      expect(paidProvider.call).toHaveBeenCalledTimes(1);
+    });
+
+    test('should throw BudgetBlockedError when budget exceeded and only paid providers exist', async () => {
+      const paidProvider = {
+        validateConfig: async () => true,
+        call: jest.fn().mockResolvedValue({ content: 'paid', stop_reason: 'end_turn' }),
+      };
+      createProvider.mockResolvedValue(paidProvider);
+
+      const cfg = buildConfig();
+      cfg.providers.primary.type = 'anthropic';
+      (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_paid_providers' };
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+      const config = new ConfigLoader(configPath);
+      const { LLMRouter } = require('../../src/agent/llm-router');
+      const router = new LLMRouter(config);
+      await router.initialize();
+
+      jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(blockedBudget as any);
+
+      await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toMatchObject({ code: 'BUDGET_BLOCKED' });
+      expect(paidProvider.call).not.toHaveBeenCalled();
+    });
+  });
 });

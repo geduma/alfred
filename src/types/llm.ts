@@ -64,11 +64,17 @@ export interface ProviderConfig {
     top_p?: number;
     timeout_seconds?: number;
   };
+  paid?: boolean;
   capabilities?: {
     supports_tools?: boolean;
     supports_vision?: boolean;
     supports_streaming?: boolean;
   };
+}
+
+export function isPaidProvider(type: ProviderType, explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit;
+  return type === 'anthropic' || type === 'openai' || type === 'gemini';
 }
 
 export interface RetryConfig {
@@ -78,9 +84,20 @@ export interface RetryConfig {
   backoff_factor: number;
 }
 
+export type LimitReachedPolicy = 'block_paid_providers' | 'block_all';
+
+export interface SpendingLimitsConfig {
+  enabled: boolean;
+  daily_token_limit: number;
+  monthly_token_limit: number;
+  warn_threshold: number;
+  on_limit_reached: LimitReachedPolicy;
+}
+
 export interface LLMConfig {
   primary_provider: string;
   fallback_providers: string[];
   model_selection?: 'automatic' | 'manual';
   retry?: RetryConfig;
+  spending_limits?: SpendingLimitsConfig;
 }

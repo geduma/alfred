@@ -44,6 +44,7 @@ export class ContextCompressor {
   private config: MemoryConfig;
   private llmRouter: LLMRouter | null = null;
   private contextBudget: number | null = null;
+  private thresholdOverride: number | null = null;
 
   constructor(config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
@@ -61,6 +62,18 @@ export class ContextCompressor {
     this.contextBudget = budget;
   }
 
+  setThresholdOverride(value: number | null): void {
+    this.thresholdOverride = value;
+  }
+
+  clearThresholdOverride(): void {
+    this.thresholdOverride = null;
+  }
+
+  getEffectiveThreshold(): number {
+    return this.thresholdOverride ?? this.config.compaction_threshold;
+  }
+
   private getBudget(): number {
     return this.contextBudget ?? this.config.max_context_tokens;
   }
@@ -68,7 +81,7 @@ export class ContextCompressor {
   shouldCompact(messages: Message[], systemPromptTokens: number, extraTokens = 0): boolean {
     const msgTokens = estimateMessagesTokens(messages);
     const total = msgTokens + systemPromptTokens + extraTokens;
-    const threshold = this.getBudget() * this.config.compaction_threshold;
+    const threshold = this.getBudget() * this.getEffectiveThreshold();
     return total > threshold;
   }
 
@@ -81,7 +94,7 @@ export class ContextCompressor {
   ): Promise<CompactedContext> {
     const originalTokenCount = estimateMessagesTokens(messages) + extraTokens;
     const totalTokens = originalTokenCount + systemPromptTokens;
-    const threshold = this.getBudget() * this.config.compaction_threshold;
+    const threshold = this.getBudget() * this.getEffectiveThreshold();
 
     if (!force && totalTokens <= threshold) {
       return {

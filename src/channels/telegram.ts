@@ -54,12 +54,12 @@ export class TelegramChannel implements Channel {
           await this.sendMessage(userId, response, { chat_id: chatId });
         } else {
           getLogger().warn({ userId }, 'Empty response from handler');
-          await ctx.reply('Disculpe, no obtuve una respuesta. ¿Podría repetirlo?');
+          await ctx.reply("I'm sorry, I didn't get a response. Could you repeat that?");
         }
       } catch (error: any) {
         clearInterval(typingInterval);
         getLogger().error({ error: error.message }, 'Telegram message handling failed');
-        await ctx.reply('Lo siento, ocurrió un error interno.').catch(() => {});
+        await ctx.reply("I'm sorry, an internal error occurred.").catch(() => {});
       }
     });
 
