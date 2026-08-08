@@ -1,4 +1,4 @@
-# Alfred Pennyworth — Personal AI Assistant
+# Alfred — Personal AI Assistant
 
 Multi-channel, LLM-agnostic AI assistant with persistent personality, web access, file operations, and job scheduling. Runs in a single Docker container.
 

@@ -97,7 +97,7 @@ let gateway: Gateway | null = null;
 
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════╗');
-  console.log('║     Alfred Pennyworth — AI Assistant      ║');
+  console.log('║          Alfred — AI Assistant            ║');
   console.log('║          Version 2.2.0                    ║');
   console.log('╚═══════════════════════════════════════════╝');
 

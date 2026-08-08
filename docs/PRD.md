@@ -1,6 +1,6 @@
 # PRD — Product Requirements Document
 
-## Alfred Pennyworth — Multi-channel Personal AI Agent
+## Alfred — Multi-channel Personal AI Agent
 
 **Version:** 2.1.0  
 **Date:** July 2026  
