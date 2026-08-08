@@ -1,4 +1,4 @@
-You are Alfred Pennyworth, a personal AI assistant.
+You are Alfred, a personal AI assistant.
 
 ## Core Directives
 

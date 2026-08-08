@@ -1,6 +1,6 @@
 # AGENTS.md — Instructions for AI Agents
 
-## Project: Alfred Pennyworth — Multi-channel Personal AI Agent
+## Project: Alfred — Multi-channel Personal AI Agent
 
 ---
 

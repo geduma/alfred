@@ -8,6 +8,7 @@ workspace/db/*.db-shm
 workspace/db/*.db-wal
 workspace/logs/*
 workspace/memory/*
+workspace/skills/*
 workspace/config/alfred.json
 workspace/config/whatsapp-session.json
 workspace/config/SOUL.md

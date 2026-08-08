@@ -136,7 +136,7 @@ Restart Alfred. **That's it.**
 
 ## PERSONALITY (SOUL.md)
 
-Your assistant always responds as Alfred Pennyworth:
+Your assistant always responds as Alfred:
 - English
 - Elegant and precise
 - Addresses you as "Mr. [user_name]"
