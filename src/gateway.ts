@@ -1,9 +1,12 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import http from 'http';
+import path from 'path';
 import fs from 'fs';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
 import { ChannelManager } from './channels/channel-manager';
+import { WebChannel } from './channels/web';
 import { getLogger } from './utils/logger';
 import { ToolHandler } from './types/tool';
 import { createTools } from './tools/index';
@@ -15,7 +18,7 @@ import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
 import { SnapshotManager } from './services/snapshot';
 import { approximateSystemPromptTokens, estimateTokenCount } from './utils/token-counter';
-import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET } from './utils/provider-errors';
+import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET, isBudgetBlockedError } from './utils/provider-errors';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RateLimiter } from './security/rate-limiter';
@@ -44,6 +47,8 @@ const MIN_OUTPUT_TOKENS = 512;
 
 export class Gateway {
   private wss: WebSocketServer | null = null;
+  private httpServer: http.Server | null = null;
+  private webChannel: WebChannel | null = null;
   private config: ConfigLoader;
   private llmRouter: LLMRouter;
   private promptBuilder: PromptBuilder;
@@ -57,6 +62,7 @@ export class Gateway {
   private jobScheduler: JobSchedulerTool;
   private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
   private port: number;
+  private host: string;
   private contextCompressor: ContextCompressor;
   private promptCompressor: PromptCompressor;
   private vectorStore: VectorStoreManager | null = null;
@@ -76,13 +82,16 @@ export class Gateway {
     config: ConfigLoader,
     llmRouter: LLMRouter,
     promptBuilder: PromptBuilder,
-    channelManager: ChannelManager
+    channelManager: ChannelManager,
+    webChannel?: WebChannel | null
   ) {
     this.config = config;
     this.llmRouter = llmRouter;
     this.promptBuilder = promptBuilder;
     this.channelManager = channelManager;
-    this.port = 18789;
+    this.webChannel = webChannel || null;
+    this.port = config.serverConfig.port;
+    this.host = config.serverConfig.host;
     this.sessionStore = new SessionStore();
     this.jobScheduler = new JobSchedulerTool();
     this.rateLimiter = new RateLimiter();
@@ -107,7 +116,14 @@ export class Gateway {
   }
 
   private buildTools(): ToolHandler[] {
-    return createTools(this.config, this.healthMonitor, this.vectorStore, this.snapshotManager);
+    return createTools(
+      this.config,
+      this.healthMonitor,
+      this.vectorStore,
+      this.snapshotManager,
+      this.llmRouter.getBudgetTracker(),
+      this.llmRouter
+    );
   }
 
   private buildServices(): void {
@@ -232,20 +248,124 @@ export class Gateway {
     return this.jobScheduler;
   }
 
+  private async checkDegraded(): Promise<{ active: boolean; reason?: 'daily_limit' | 'monthly_limit' }> {
+    const limits = this.config.llmConfig.spending_limits;
+    if (!limits?.enabled || limits.on_limit_reached !== 'block_all') {
+      return { active: false };
+    }
+    const budget = await this.llmRouter.getBudgetTracker().checkBudget();
+    if (!budget.allowed) {
+      return { active: true, reason: budget.reason };
+    }
+    return { active: false };
+  }
+
+  private buildDegradedMessage(reason?: string): string {
+    if (reason === 'daily_limit') {
+      return "Alfred is in degraded service mode: the daily token budget has been exhausted. Please try again tomorrow.";
+    }
+    return "Alfred is in degraded service mode: the monthly token budget has been exhausted. Please try again next month.";
+  }
+
+  private async getBudgetRemainingPercent(): Promise<number | null> {
+    const limits = this.config.llmConfig.spending_limits;
+    if (!limits?.enabled) return null;
+    const budget = await this.llmRouter.getBudgetTracker().checkBudget();
+    return budget.remainingPercent;
+  }
+
+  private async checkBudgetAlert(): Promise<void> {
+    try {
+      const warning = await this.llmRouter.getBudgetTracker().evaluateWarning();
+      if (!warning) return;
+
+      const healthConfig = this.config.healthMonitor;
+      if (!healthConfig?.enabled) return;
+
+      const notifier = new NotificationService(healthConfig, this.channelManager);
+      const usage = await this.llmRouter.getBudgetTracker().getTokenUsage();
+      const limits = this.config.llmConfig.spending_limits;
+
+      if (warning === 'daily') {
+        const pct = limits?.daily_token_limit ? Math.round((usage.today / limits.daily_token_limit) * 100) : 0;
+        await notifier.sendAlert(
+          'Daily token budget near limit',
+          `Current usage: ${usage.today.toLocaleString()} tokens (${pct}% of the daily limit).`,
+          'warn'
+        );
+      } else {
+        const pct = limits?.monthly_token_limit ? Math.round((usage.thisMonth / limits.monthly_token_limit) * 100) : 0;
+        await notifier.sendAlert(
+          'Monthly token budget near limit',
+          `Current usage: ${usage.thisMonth.toLocaleString()} tokens (${pct}% of the monthly limit).`,
+          'warn'
+        );
+      }
+    } catch (error: any) {
+      getLogger().debug({ error: error.message }, 'Budget alert check failed');
+    }
+  }
+
   async start(): Promise<void> {
-    this.wss = new WebSocketServer({ port: this.port });
+    this.httpServer = http.createServer((req, res) => this.handleStaticRequest(req, res));
+    this.wss = new WebSocketServer({ noServer: true });
+
+    this.httpServer.on('upgrade', (req, socket, head) => {
+      const url = req.url || '/';
+      const isWeb = url === '/ws' || url.startsWith('/ws?') || url.startsWith('/ws/');
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        if (isWeb) {
+          (ws as any).webClient = true;
+          getLogger().debug('Web client upgrade accepted (path-routed /ws, no auth yet — TODO)');
+        }
+        this.wss!.emit('connection', ws, req);
+      });
+    });
+
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
+    this.httpServer.listen(this.port, this.host);
 
     this.startJobRunner();
     await this.initServices();
 
-    getLogger().info({ port: this.port }, 'Gateway WebSocket server started');
+    getLogger().info({ port: this.port, host: this.host }, 'Gateway HTTP + WebSocket server started');
 
     this.skillLoader.startWatching();
     const initialSkills = await this.skillLoader.loadSkills();
     getLogger().info({ skillsLoaded: initialSkills.length }, 'Skills initialized');
 
     await this.channelManager.startAll();
+  }
+
+  private handleStaticRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const urlPath = (req.url || '/').split('?')[0];
+    const webDir = path.resolve(__dirname, '../web');
+    const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
+    const filePath = path.resolve(webDir, rel);
+
+    if (!filePath.startsWith(webDir)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden');
+      return;
+    }
+
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return;
+      }
+      const types: Record<string, string> = {
+        '.html': 'text/html; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.js': 'application/javascript; charset=utf-8',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.svg': 'image/svg+xml',
+      };
+      res.writeHead(200, { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' });
+      res.end(data);
+    });
   }
 
   private async initServices(): Promise<void> {
@@ -330,8 +450,14 @@ export class Gateway {
           if (this.vectorStore) {
             await this.vectorStore.close();
           }
+          if (this.webChannel) {
+            await this.webChannel.stop();
+          }
           if (this.wss) {
             this.wss.close();
+          }
+          if (this.httpServer) {
+            await new Promise<void>((resolve) => this.httpServer!.close(() => resolve()));
           }
           await this.channelManager.stopAll();
         })(),
@@ -391,6 +517,23 @@ export class Gateway {
   }
 
   private async prepareContext(
+    session: StoredSession,
+    systemPrompt: string,
+    currentMessage?: string
+  ): Promise<{ messages: Message[]; systemPrompt: string }> {
+    const budgetPercent = await this.getBudgetRemainingPercent();
+    if (budgetPercent !== null && budgetPercent < 20) {
+      this.contextCompressor.setThresholdOverride(0.6);
+    }
+
+    try {
+      return await this.prepareContextInner(session, systemPrompt, currentMessage);
+    } finally {
+      this.contextCompressor.clearThresholdOverride();
+    }
+  }
+
+  private async prepareContextInner(
     session: StoredSession,
     systemPrompt: string,
     currentMessage?: string
@@ -584,11 +727,18 @@ export class Gateway {
 
     getLogger().debug('New WebSocket client connected');
 
+    if ((ws as any).webClient && this.webChannel) {
+      this.webChannel.addClient(ws);
+    }
+
     const onMessage = async (data: Buffer) => {
       await this.onMessage(ws, data.toString());
     };
 
     const onClose = () => {
+      if ((ws as any).webClient && this.webChannel) {
+        this.webChannel.removeClient(ws);
+      }
       this.wsSessions.delete(ws);
       ws.off('message', onMessage);
       ws.off('error', onError);
@@ -621,6 +771,12 @@ export class Gateway {
         case 'reload':
           await this.handleReload(ws, req);
           break;
+        case 'config_get':
+          this.handleConfigGet(ws, req);
+          break;
+        case 'config_update':
+          await this.handleConfigUpdate(ws, req);
+          break;
         default:
           this.sendError(ws, req.id, `Unknown method: ${req.method}`);
       }
@@ -631,6 +787,16 @@ export class Gateway {
   }
 
   private handleConnect(ws: WebSocket, req: GatewayRequest): void {
+    if ((ws as any).webClient) {
+      // TODO: add authentication for the web channel before exposing it publicly.
+      this.sendResponse(ws, req.id, {
+        status: 'connected',
+        webClient: true,
+        gateway: { version: this.config.allConfig.agent.version },
+      });
+      return;
+    }
+
     const auth = req.params?.auth as { token?: string; sessionId?: string } | undefined;
     const authToken = auth?.token;
 
@@ -875,6 +1041,21 @@ export class Gateway {
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const ingestParams = { channel: 'ws', userId: sessionKey };
 
+    const degraded = await this.checkDegraded();
+    if (degraded.active) {
+      const content = this.buildDegradedMessage(degraded.reason);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', message);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
+      this.sendEvent(ws, 'agent_complete', {
+        runId,
+        content,
+        toolCalls: [],
+        usage: undefined,
+        degraded: true,
+      });
+      return;
+    }
+
     try {
       const userMsg: Message = { role: 'user', content: message };
       session.messages.push(userMsg);
@@ -902,6 +1083,7 @@ export class Gateway {
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
       this.debounceSave(session);
+      await this.checkBudgetAlert();
 
       this.sendEvent(ws, 'agent_complete', {
         runId,
@@ -912,7 +1094,17 @@ export class Gateway {
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Agent request failed');
       try {
-        this.sendError(ws, req.id, `Agent error: ${error.message}`);
+        if (isBudgetBlockedError(error)) {
+          this.sendEvent(ws, 'agent_complete', {
+            runId,
+            content: this.buildDegradedMessage(),
+            toolCalls: [],
+            usage: undefined,
+            degraded: true,
+          });
+        } else {
+          this.sendError(ws, req.id, `Agent error: ${error.message}`);
+        }
       } catch { /* connection may be closed */ }
     }
   }
@@ -955,6 +1147,14 @@ export class Gateway {
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const ingestParams = { channel: params.channel, userId: params.userId, metadata: params.metadata };
 
+    const degraded = await this.checkDegraded();
+    if (degraded.active) {
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
+      const content = this.buildDegradedMessage(degraded.reason);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
+      return content;
+    }
+
     try {
       const userMsg: Message = { role: 'user', content: params.content };
       session.messages.push(userMsg);
@@ -982,9 +1182,13 @@ export class Gateway {
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
       this.debounceSave(session);
+      await this.checkBudgetAlert();
       return content;
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');
+      if (isBudgetBlockedError(error)) {
+        return this.buildDegradedMessage();
+      }
       return `I'm sorry. An error occurred: ${error.message}`;
     }
   }
@@ -1018,6 +1222,60 @@ export class Gateway {
     }));
 
     this.sendResponse(ws, 'tool_list', { tools: toolList });
+  }
+
+  private handleConfigGet(ws: WebSocket, req: GatewayRequest): void {
+    const raw = this.config.allConfig;
+    this.sendResponse(ws, req.id, { config: this.sanitizeConfig(raw) });
+  }
+
+  private async handleConfigUpdate(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const patch = req.params?.config;
+    if (!patch || typeof patch !== 'object') {
+      this.sendError(ws, req.id, 'config object is required');
+      return;
+    }
+
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.config.configPathValue, 'utf-8'));
+      const merged = this.deepMerge(raw, patch);
+      await this.config.writeRaw(merged);
+      this.sendResponse(ws, req.id, {
+        status: 'saved',
+        message: 'Configuration saved. Use "reload" to apply changes.',
+      });
+    } catch (error: any) {
+      getLogger().error({ error: error.message }, 'Config update failed');
+      this.sendError(ws, req.id, `Config update failed: ${error.message}`);
+    }
+  }
+
+  private sanitizeConfig(raw: any): any {
+    const redacted = JSON.parse(JSON.stringify(raw));
+    if (redacted.providers) {
+      for (const name of Object.keys(redacted.providers)) {
+        const config = redacted.providers[name]?.config;
+        if (config?.api_key) {
+          config.api_key = '*****';
+        }
+      }
+    }
+    if (redacted.security?.gateway_auth_token) {
+      redacted.security.gateway_auth_token = '*****';
+    }
+    return redacted;
+  }
+
+  private deepMerge(base: any, patch: any): any {
+    const out = Array.isArray(base) ? [...base] : { ...base };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
+        out[key] = this.deepMerge(base[key], value);
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
   }
 
   private sendResponse(ws: WebSocket, id: string, payload: unknown): void {

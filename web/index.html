@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alfred — Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Alfred <span class="subtitle">— control panel</span></h1>
+    <div class="connection">
+      <span id="conn-dot" class="dot offline"></span>
+      <span id="conn-label">Disconnected</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="config">Settings</button>
+  </nav>
+
+  <main>
+    <section id="tab-chat" class="tab-panel active">
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <input id="chat-input" type="text" placeholder="Type your message..." autofocus>
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <section id="tab-config" class="tab-panel">
+      <div class="config-header">
+        <p>Edit the configuration as JSON. Secrets (api_key, gateway_auth_token) are shown masked.</p>
+        <div class="config-actions">
+          <button id="config-refresh">Load</button>
+          <button id="config-save">Save</button>
+          <button id="config-reload">Apply (reload)</button>
+        </div>
+      </div>
+      <textarea id="config-editor" class="config-editor" spellcheck="false"></textarea>
+      <div id="config-status" class="config-status"></div>
+    </section>
+  </main>
+
+  <script src="js/ws-client.js"></script>
+  <script src="js/chat.js"></script>
+  <script src="js/config.js"></script>
+</body>
+</html>

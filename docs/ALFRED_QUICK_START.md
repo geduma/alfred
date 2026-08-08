@@ -1,23 +1,23 @@
 # ALFRED — Quick Start Guide
 
-**Versión:** 2.1.0  
-**Para:** El usuario  
+**Version:** 2.2.0  
+**For:** The user  
 
 ---
 
-## 30 SEGUNDOS
+## 30 SECONDS
 
-**Alfred** es tu asistente IA personal que:
-- Se comunica via Telegram y CLI
-- Lee y escribe en tus archivos
-- Busca en internet
-- Entiende tu tono (SOUL.md)
-- Usa cualquier LLM (Ollama cloud, Anthropic, OpenAI, etc.)
-- Todo en UN contenedor Docker
+**Alfred** is your personal AI assistant that:
+- Communicates via Telegram, CLI, and web
+- Reads and writes your files
+- Searches the internet
+- Understands your tone (SOUL.md)
+- Uses any LLM (Ollama cloud, Anthropic, OpenAI, etc.)
+- Everything in ONE Docker container
 
 ---
 
-## SETUP (5 MINUTOS)
+## SETUP (5 MINUTES)
 
 ```bash
 # 1. Clone
@@ -43,9 +43,9 @@ docker compose -f docker/docker-compose.yml logs -f alfred
 
 ---
 
-## CONFIGURACIÓN MÍNIMA
+## MINIMUM CONFIGURATION
 
-Edita `~/.alfred-personal/config/alfred.json`:
+Edit `~/.alfred-personal/config/alfred.json`:
 
 ```json
 {
@@ -77,32 +77,40 @@ Edita `~/.alfred-personal/config/alfred.json`:
 }
 ```
 
-**¡Eso es!** El resto está auto-configurado.
+**That's it!** Everything else is auto-configured.
 
 ---
 
-## ¿QUÉ PUEDES HACER?
+## WHAT CAN YOU DO?
 
-### Inmediato
+### Immediate
 ✅ Chat via Telegram  
-✅ Preguntas (Alfred busca en internet)  
-✅ Leer/escribir archivos en `/workspace/files/`  
-✅ Ejecutar comandos shell  
+✅ Questions (Alfred searches the internet)  
+✅ Read/write files in `/workspace/files/`  
+✅ Execute shell commands  
+✅ Web UI at `http://YOUR_HOST:18789`
 
 ### v1.5
-✅ Skills personalizados — SKILL.md via `file_ops`
+✅ Custom skills — SKILL.md via `file_ops`
 
 ### v2.0
-✅ Embeddings + búsqueda semántica (LanceDB RAG)  
-✅ Health monitor — detección automática de fallos y alertas por Telegram  
-❌ Discord/Slack — roadmap (no implementado)  
-❌ Llamadas por voz — roadmap (no implementado)
+✅ Embeddings + semantic search (LanceDB RAG)  
+✅ Health monitor — automatic failure detection and Telegram alerts  
+
+### v2.2
+✅ Token spending limits — daily/monthly budgets with paid-provider gating  
+✅ Daily digest, weekly review, and system check skills  
+✅ Web channel with config editor (live over WebSocket)
+
+### Roadmap
+❌ Discord/Slack — roadmap (not implemented)  
+❌ Voice calls — roadmap (not implemented)
 
 ---
 
-## CAMBIAR LLM
+## SWITCHING LLM
 
-¿Quieres cambiar de Ollama a Anthropic?
+Want to switch from Ollama to Anthropic?
 
 ```json
 {
@@ -122,108 +130,107 @@ Edita `~/.alfred-personal/config/alfred.json`:
 }
 ```
 
-Reinicia Alfred. **Eso es.**
+Restart Alfred. **That's it.**
 
 ---
 
-## PERSONALIDAD (SOUL.md)
+## PERSONALITY (SOUL.md)
 
-Tu asistente siempre responde como Alfred Pennyworth:
-- Español latinoamericano
-- Elegante y preciso
-- Te trata como "Señor [user_name]"
-- Refinado pero directo
+Your assistant always responds as Alfred Pennyworth:
+- English
+- Elegant and precise
+- Addresses you as "Mr. [user_name]"
+- Refined but direct
 
-Edit `/workspace/config/SOUL.md` para cambiar.
+Edit `/workspace/config/SOUL.md` to change it.
 
 ---
 
-## ARCHIVOS IMPORTANTES
+## IMPORTANT FILES
 
 ```
 ~/.alfred-personal/
 ├── config/
-│   ├── alfred.json        ← Configuración principal
-│   ├── SOUL.md            ← Personalidad de Alfred
-│   ├── secrets.env        ← Secretos para skills (IMAP, APIs, etc.)
+│   ├── alfred.json        ← Main configuration
+│   ├── SOUL.md            ← Alfred's personality
+│   ├── secrets.env        ← Secrets for skills (IMAP, APIs, etc.)
 │
-├── files/                 ← Tus archivos (puede leer/escribir)
+├── files/                 ← Your files (readable/writable)
 ├── skills/
-│   └── custom/            ← Skills personalizados (SKILL.md)
+│   └── custom/            ← Custom skills (SKILL.md)
 ├── db/
-│   └── alfred.db          ← Base de datos (conversaciones, audit)
-└── logs/                  ← Logs de auditoría
+│   └── alfred.db          ← Database (conversations, audit, token usage)
+└── logs/                  ← Audit logs
 ```
 
 ---
 
-## MONITOREO
+## MONITORING
 
 ```bash
-# Ver logs en tiempo real
+# Watch logs in real time
 docker compose -f docker/docker-compose.yml logs -f alfred
 
-# Estado del contenedor
+# Container status
 docker compose -f docker/docker-compose.yml ps
 
-# Estadísticas de recursos
+# Resource statistics
 docker stats alfred
 
-# Conectarse a BD
+# Connect to the DB
 sqlite3 ~/.alfred-personal/db/alfred.db
 
-# Verificar configuración
+# Verify configuration
 cat ~/.alfred-personal/config/alfred.json | jq
 ```
 
-### Health Monitor automático
+### Automatic Health Monitor
 
-Alfred escanea sus propios logs cada 60 minutos. Si detecta errores repetidos, envía una alerta por Telegram.
+Alfred scans its own logs every 60 minutes. If it detects repeated errors, it sends an alert via Telegram.
 
-**Comandos disponibles** (via Telegram o CLI):
-- `health findings` — ver todos los hallazgos recientes
-- `health findings severity=error` — solo errores graves
-- `health check` — forzar escaneo inmediato
-- `health status` — estado del monitor
+**Available commands** (via Telegram, CLI, or web):
+- `health findings` — see all recent findings
+- `health findings severity=error` — only critical errors
+- `health check` — force an immediate scan
+- `health status` — monitor status
+- `health budget` — token spending status
 
 ---
 
 ## TROUBLESHOOTING
 
-| Problema | Solución |
+| Problem | Solution |
 |----------|----------|
 | WebSocket error | `docker compose -f docker/docker-compose.yml logs alfred` |
-| Provider no conecta | Verificar API key en alfred.json |
-| Telegram no responde | Verificar bot_token y allow_from |
-| Archivo no se crea | Verificar permisos en `/workspace/files` |
-| Vector store falla | Verificar que haya suficiente RAM disponible o deshabilitar `memory.vector_store.enabled: false` |
-| Health alert sin mensaje | Verificar `health_monitor.severity_threshold` — con `"warn"` captura todo, con `"error"` solo graves |
+| Provider won't connect | Check the API key in alfred.json |
+| Telegram not responding | Check bot_token and allow_from |
+| File not created | Check permissions in `/workspace/files` |
+| Vector store fails | Make sure there is enough RAM or disable `memory.vector_store.enabled: false` |
+| Health alert without message | Check `health_monitor.severity_threshold` — with `"warn"` it catches everything, with `"error"` only critical |
 
 ---
 
-## DOCUMENTACIÓN COMPLETA
+## FULL DOCUMENTATION
 
-La documentación técnica vive en el repositorio:
+The technical documentation lives in the repository:
 
-- `README.md` — Inicio, setup, arquitectura y deployment
-- `docs/PRD.md` — Requisitos de producto
-- `docs/AGENTS.md` — Instrucciones para agentes IA / developers
-- `docs/PROGRESS.md` — Progreso de implementación
-- `system/alfred-rules.md` — Reglas inyectadas en el system prompt
-
----
-
-## PRÓXIMOS PASOS
-
-1. ✅ Setup inicial (arriba)
-2. 📝 Personalizar `SOUL.md` si deseas
-3. 💬 Envía mensaje via Telegram
-4. 🎯 Alfred responde como si fuera tu asistente personal
-5. 🚀 Agregar skills/plugins según necesites
+- `README.md` — Getting started, setup, architecture, and deployment
+- `docs/PRD.md` — Product requirements
+- `docs/AGENTS.md` — Instructions for AI agents / developers
+- `system/alfred-rules.md` — Rules injected into the system prompt
 
 ---
 
-**¿Listo para comenzar?**
+## NEXT STEPS
 
-Empieza por `README.md` y `docs/AGENTS.md` — contienen todo lo que necesitas saber.
+1. ✅ Initial setup (above)
+2. 📝 Customize `SOUL.md` if you wish
+3. 💬 Send a message via Telegram
+4. 🎯 Alfred responds as your personal assistant
+5. 🚀 Add skills/plugins as you need them
 
+---
+
+**Ready to get started?**
+
+Start with `README.md` and `docs/AGENTS.md` — they contain everything you need to know.

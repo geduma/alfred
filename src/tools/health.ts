@@ -1,15 +1,17 @@
 import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { HealthMonitor } from '../services/health-monitor';
+import { TokenBudgetTracker } from '../services/token-budget';
+import { LLMRouter } from '../agent/llm-router';
 
 export class HealthTool implements ToolHandler {
   tool: Tool = {
     name: 'health',
-    description: 'Query health monitor status, view recent findings, or trigger an immediate check',
+    description: 'Query consolidated system status, view recent health findings, trigger an immediate health check, or view token budget usage',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['status', 'findings', 'check', 'configure'] },
+        action: { type: 'string', enum: ['status', 'findings', 'check', 'budget', 'configure'] },
         severity_threshold: { type: 'string', enum: ['warn', 'error'], description: 'Filter findings by severity' },
         category: { type: 'string', description: 'Filter findings by category' },
       },
@@ -18,9 +20,13 @@ export class HealthTool implements ToolHandler {
   };
 
   private monitor: HealthMonitor;
+  private budgetTracker: TokenBudgetTracker | null;
+  private router: LLMRouter | null;
 
-  constructor(monitor: HealthMonitor) {
+  constructor(monitor: HealthMonitor, budgetTracker?: TokenBudgetTracker | null, router?: LLMRouter | null) {
     this.monitor = monitor;
+    this.budgetTracker = budgetTracker || null;
+    this.router = router || null;
   }
 
   async execute(params: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -33,6 +39,8 @@ export class HealthTool implements ToolHandler {
         return this.findings(params);
       case 'check':
         return this.runCheck();
+      case 'budget':
+        return this.budget();
       case 'configure':
         return { success: true, output: 'Configure the health monitor via alfred.json → health_monitor section' };
       default:
@@ -40,11 +48,54 @@ export class HealthTool implements ToolHandler {
     }
   }
 
-  private status(): ToolExecutionResult {
-    return {
-      success: true,
-      output: 'Health monitor is running. Use "health findings" to view recent issues.',
-    };
+  private async status(): Promise<ToolExecutionResult> {
+    const lines: string[] = ['Consolidated status:'];
+    lines.push(`- Health monitor: running`);
+
+    const findings = await this.monitor.getFindings();
+    const errors = findings.filter(f => f.severity === 'error');
+    lines.push(`- Health findings: ${findings.length} total, ${errors.length} errors`);
+
+    if (this.budgetTracker) {
+      const budget = await this.budgetTracker.checkBudget();
+      const usage = await this.budgetTracker.getTokenUsage();
+      lines.push(
+        `- Token budget: ${budget.allowed ? 'within limits' : `EXCEEDED (${budget.reason})`} | today: ${usage.today.toLocaleString()}, this month: ${usage.thisMonth.toLocaleString()} | remaining: ${Math.round(budget.remainingPercent)}%`
+      );
+    } else {
+      lines.push('- Token budget: not configured (no spending_limits section)');
+    }
+
+    if (this.router) {
+      const states = this.router.getCircuitStates();
+      if (states.length > 0) {
+        lines.push(`- Providers: ${states.map(s => `${s.provider}:${s.open ? 'OPEN' : 'ok'}`).join(', ')}`);
+      }
+    }
+
+    return { success: true, output: lines.join('\n') };
+  }
+
+  private async budget(): Promise<ToolExecutionResult> {
+    if (!this.budgetTracker) {
+      return { success: true, output: 'Token budget tracking is not enabled. Add a "spending_limits" section to alfred.json to enable it.' };
+    }
+
+    const budget = await this.budgetTracker.checkBudget();
+    const usage = await this.budgetTracker.getTokenUsage();
+    const lines: string[] = ['Token budget status:'];
+
+    lines.push(`- Allowed: ${budget.allowed ? 'yes' : `no (${budget.reason})`}`);
+    lines.push(`- Today: ${usage.today.toLocaleString()} tokens`);
+    lines.push(`- This month: ${usage.thisMonth.toLocaleString()} tokens`);
+    lines.push(`- Remaining: ${Math.round(budget.remainingPercent)}% (daily ${Math.round(budget.dailyRemainingPercent)}% / monthly ${Math.round(budget.monthlyRemainingPercent)}%)`);
+
+    const providers = Object.entries(usage.byProvider);
+    if (providers.length > 0) {
+      lines.push(`- By provider: ${providers.map(([name, p]) => `${name}: ${p.tokens.toLocaleString()}`).join(', ')}`);
+    }
+
+    return { success: true, output: lines.join('\n') };
   }
 
   private async findings(params: Record<string, unknown>): Promise<ToolExecutionResult> {

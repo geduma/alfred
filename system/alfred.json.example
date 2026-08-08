@@ -1,18 +1,26 @@
 {
   "agent": {
     "name": "Alfred",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "personality_file": "/workspace/config/SOUL.md"
   },
   "llm": {
     "primary_provider": "ollama-runpod",
     "fallback_providers": ["ollama-local", "anthropic"],
-    "model_selection": "automatic"
+    "model_selection": "automatic",
+    "spending_limits": {
+      "enabled": true,
+      "daily_token_limit": 500000,
+      "monthly_token_limit": 10000000,
+      "warn_threshold": 0.8,
+      "on_limit_reached": "block_paid_providers"
+    }
   },
   "providers": {
     "ollama-runpod": {
       "type": "openai-compatible",
       "enabled": true,
+      "paid": true,
       "model": "mistral-large",
       "config": {
         "api_url": "https://api.runpod.io/v1/YOUR_ENDPOINT_ID/openai/v1",
@@ -80,6 +88,11 @@
       "config": {
         "interactive": true
       }
+    },
+    "web": {
+      "enabled": true,
+      "type": "web",
+      "config": {}
     }
   },
   "tools": {
@@ -197,5 +210,9 @@
         "enabled": true
       }
     }
+  },
+  "server": {
+    "port": 18789,
+    "host": "0.0.0.0"
   }
 }

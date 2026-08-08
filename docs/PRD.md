@@ -1,209 +1,210 @@
 # PRD — Product Requirements Document
 
-## Alfred Pennyworth — Agente IA Personal Multicanal
+## Alfred Pennyworth — Multi-channel Personal AI Agent
 
-**Versión:** 2.1.0  
-**Fecha:** Julio 2026  
-**Estado:** Implementado
+**Version:** 2.1.0  
+**Date:** July 2026  
+**Status:** Implemented
 
 ---
 
-## 1. Resumen Ejecutivo
+## 1. Executive Summary
 
-Alfred es un asistente IA personal que funciona como gateway multicanal descentralizado. Permite al usuario interactuar con modelos de lenguaje (LLM) a través de Telegram y CLI, con personalidad persistente, acceso a internet y ejecución de herramientas, todo en un solo contenedor Docker.
+Alfred is a personal AI assistant that works as a decentralized multi-channel gateway. It lets the user interact with language models (LLMs) through Telegram, CLI, and web, with a persistent personality, internet access, and tool execution, all in a single Docker container.
 
-## 2. Problema
+## 2. Problem
 
-El usuario necesita un asistente IA que:
-- Sea multicanal (Telegram, CLI)
-- Pueda cambiar de LLM sin modificar código
-- Tenga personalidad consistente
-- Acceda a internet para información actualizada
-- Ejecute comandos y manipule archivos localmente
-- Sea 100% autogestionable y open-source
-- Se ejecute en un solo contenedor Docker
+The user needs an AI assistant that:
+- Is multi-channel (Telegram, CLI, web)
+- Can switch LLMs without modifying code
+- Has a consistent personality
+- Accesses the internet for up-to-date information
+- Executes commands and manipulates files locally
+- Is 100% self-managed and open-source
+- Runs in a single Docker container
 
-## 3. Visión del Producto
+## 3. Product Vision
 
-Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digital, accesible desde cualquier canal de mensajería, con capacidad de ejecutar tareas, buscar información y mantener contexto, todo configurado desde un único archivo JSON.
+A personal AI agent with a personality (SOUL.md) that operates as a digital butler, accessible from any messaging channel, with the ability to execute tasks, search for information, and maintain context, all configured from a single JSON file.
 
-## 4. Stack Técnico
+## 4. Technical Stack
 
-| Componente | Especificación |
+| Component | Specification |
 |---|---|
 | Runtime | Node.js 22 LTS |
-| Lenguaje | TypeScript 5.4+ |
-| Base de datos | SQLite3 embebido |
+| Language | TypeScript 5.4+ |
+| Database | Embedded SQLite3 |
 | WebSocket | ws@8.17 |
 | Logging | pino@8.18 |
-| Validación | zod@3.22 |
+| Validation | zod@3.22 |
 | Testing | Jest + ts-jest |
 | Docker | node:22-alpine, multi-stage build |
-| Tamaño imagen | ~0.5-1.0 GB (base node:22-alpine ~180MB; WhatsApp/Chromium eliminados)
+| Image size | ~0.5-1.0 GB (base node:22-alpine ~180MB; WhatsApp/Chromium removed) |
 
-## 5. Características Funcionales (Features)
+## 5. Functional Features
 
-### F5.1 Configuración Centralizada
+### F5.1 Centralized Configuration
 - **ID:** F-CONFIG-001
-- **Descripción:** Todo se configura desde un único archivo `alfred.json`
-- **Validación:** Schema con Zod en startup
-- **Cobertura:** LLM providers, canales, tools, seguridad, base de datos, logging
+- **Description:** Everything is configured from a single `alfred.json` file
+- **Validation:** Zod schema at startup
+- **Coverage:** LLM providers, channels, tools, security, database, logging
 
-### F5.2 LLM Agnóstico
+### F5.2 LLM Agnostic
 - **ID:** F-LLM-001
-- **Descripción:** Soporta múltiples providers sin cambiar código
+- **Description:** Supports multiple providers without changing code
 - **Providers:** openai-compatible (Ollama, RunPod, LocalAI), Anthropic, OpenAI, Gemini
-- **Fallback:** Cadena automática si el provider principal falla
+- **Fallback:** Automatic chain if the primary provider fails
 - **Config:** `llm.primary_provider` + `llm.fallback_providers`
 
-### F5.3 Personalidad Persistente (SOUL.md)
+### F5.3 Persistent Personality (SOUL.md)
 - **ID:** F-SOUL-001
-- **Descripción:** Archivo Markdown define tono, valores, límites y comportamiento
-- **Inyección:** Se carga en cada interacción como parte del system prompt
-- **Idioma:** Siempre español latinoamericano
-- **Tratamiento:** "Señor [user_name]" (dinámico desde preferences.md)
+- **Description:** A Markdown file defines tone, values, limits, and behavior
+- **Injection:** Loaded in every interaction as part of the system prompt
+- **Language:** Always English by default
+- **Address:** "Mr. [user_name]" (dynamic from preferences.md)
 
-### F5.4 Gateway WebSocket
+### F5.4 WebSocket Gateway
 - **ID:** F-GW-001
-- **Descripción:** Hub central WebSocket (puerto 18789)
-- **Protocolo:** JSON-RPC-like (req/res/event)
-- **Auth:** Token de gateway
-- **Funciones:** connect, agent, skill_list
+- **Description:** Central WebSocket hub (port 18789)
+- **Protocol:** JSON-RPC-like (req/res/event)
+- **Auth:** Gateway token
+- **Functions:** connect, agent, skill_list, config_get, config_update
 
-### F5.5 Canales Multicanal
+### F5.5 Multi-channel Channels
 - **ID:** F-CH-001
-- **Descripción:** Múltiples canales de comunicación
+- **Description:** Multiple communication channels
 - **v1.0:** Telegram (grammy), CLI (readline)
 - **v2.0:** Discord, Slack
-- **ACL:** Whitelist de usuarios por canal
+- **v2.2:** Web (web UI + push WebSocket on /ws)
+- **ACL:** Per-channel user whitelist
 
 ### F5.6 Tools
 - **ID:** F-TOOL-001
-- **Descripción:** Conjunto de herramientas ejecutables por el LLM
+- **Description:** Set of tools executable by the LLM
 
-| Tool | Propósito | Seguridad |
+| Tool | Purpose | Security |
 |---|---|---|
-| exec | Comandos shell | Allowlist/denylist, timeout, sanitize de env |
-| file_ops | CRUD archivos | Confinado a /workspace/files, max 100MB |
-| web | Búsqueda web + fetch (unificado) | DuckDuckGo, timeout, limpieza de HTML |
-| job | Recordatorios one-time/recurrentes | Persistidos en workspace/memory/jobs/ |
-| system | Health/status/reload | Delegado al gateway |
-| health | Hallazgos del health monitor | Solo lectura + check bajo demanda |
-| memory | Vector search + snapshots (condicional) | Habilitado solo con sistema de memoria activo |
+| exec | Shell commands | Allowlist/denylist, timeout, env sanitization |
+| file_ops | File CRUD | Confined to /workspace/files, max 100MB |
+| web | Web search + fetch (unified) | DuckDuckGo, timeout, HTML cleanup |
+| job | One-time/recurring reminders | Persisted in workspace/memory/jobs/ |
+| system | Health/status/reload | Delegated to the gateway |
+| health | Health monitor findings + budget + circuit states | Read-only + on-demand check |
+| memory | Vector search + snapshots (conditional) | Enabled only with the memory system active |
 
-### F5.7 Persistencia SQLite
+### F5.7 SQLite Persistence
 - **ID:** F-DB-001
-- **Descripción:** Base de datos embebida SQLite
-- **Tablas:** sessions, messages, command_log, user_context, skills_cache
+- **Description:** Embedded SQLite database
+- **Tables:** sessions, messages, command_log, user_context, skills_cache, token_usage_log
 - **Features:** WAL mode, foreign keys, auto-migration
 
 ### F5.8 Context Compression
 - **ID:** F-MEM-001
-- **Descripción:** Gestión inteligente del contexto para evitar crecimiento ilimitado
-- **Estrategia:** Sliding window + LLM summarization
-- **Compresión:** Mensajes antiguos se comprimen en resumen estructurado con secciones: DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS
-- **Threshold:** Configurable via `memory.max_context_tokens` (default: 32000) y `memory.compaction_threshold` (default: 0.8)
-- **Adaptativo:** Ante un error 413/request-too-large, Alfred aprende el límite real del provider y lo persiste en `workspace/memory/provider-budgets.json`, compacta y reintenta (hasta 3 ciclos, luego una vez sin tools). Sin valores hardcodeados por modelo; `provider.config.max_context_tokens` es un override manual opcional
-- **Output:** `max_tokens` por llamada se deriva del presupuesto efectivo (`max(512, budget × 0.35)`), acotado por el `max_tokens` configurado
-- **Verbatim:** Últimos N mensajes se mantienen intactos (`max_verbatim_messages`, default: 20)
-- **Persistencia:** Full history en disco, versión compactada se envía al LLM
-- **Fallback:** Si el LLM no genera resumen, se usa heurística basada en mensajes recientes
+- **Description:** Intelligent context management to avoid unbounded growth
+- **Strategy:** Sliding window + LLM summarization
+- **Compression:** Older messages are compressed into a structured summary with sections: DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS
+- **Threshold:** Configurable via `memory.max_context_tokens` (default: 32000) and `memory.compaction_threshold` (default: 0.8)
+- **Adaptive:** On a 413/request-too-large error, Alfred learns the provider's real limit and persists it to `workspace/memory/provider-budgets.json`, compacts and retries (up to 3 cycles, then once without tools). No model-specific hardcoded values; `provider.config.max_context_tokens` is an optional manual override
+- **Output:** `max_tokens` per call is derived from the effective budget (`max(512, budget × 0.35)`), capped by the configured `max_tokens`
+- **Verbatim:** The last N messages are kept intact (`max_verbatim_messages`, default: 20)
+- **Persistence:** Full history on disk, compacted version sent to the LLM
+- **Fallback:** If the LLM does not generate a summary, a heuristic based on recent messages is used
 
-### F5.8 Skills Modulares (v1.5)
+### F5.8 Modular Skills (v1.5)
 - **ID:** F-SKILL-001
-- **Descripción:** Habilidades definidas en SKILL.md con frontmatter YAML
-- **Carga:** Sin recompilación, desde /workspace/skills/
-- **Discovery:** Automático vía skill_loader tool
-- **Secretos:** Las credenciales se almacenan en `workspace/config/secrets.env` (auto-creado desde template), nunca en el SKILL.md
-- **Protocolo:** Documentado en `system/alfred-rules.md` → "Secrets Management Protocol"
+- **Description:** Skills defined in SKILL.md with YAML frontmatter
+- **Loading:** No recompilation, from /workspace/skills/
+- **Discovery:** Automatic via skill_loader tool
+- **Secrets:** Credentials are stored in `workspace/config/secrets.env` (auto-created from template), never in the SKILL.md
+- **Protocol:** Documented in `system/alfred-rules.md` → "Secrets Management Protocol"
 
 ### F5.9 Secrets Management (v2.0)
 - **ID:** F-SECRETS-001
-- **Descripción:** Gestión de credenciales para skills (API keys, tokens, passwords)
-- **Almacenamiento:** `workspace/config/secrets.env` en formato KEY=VALUE
-- **Permisos:** Solo lectura para Alfred (vía file_ops → `/workspace/config` = `r`)
-- **Template:** `system/secrets.env.example` se auto-crea en primer startup
-- **Acceso:** Alfred lee el archivo cuando ejecuta una skill y pasa secretos al tool `exec` vía parámetro `env` (sanitizado de logs)
-- **Uso:** El usuario gestiona el archivo manualmente; Alfred notifica qué variables necesita
+- **Description:** Credential management for skills (API keys, tokens, passwords)
+- **Storage:** `workspace/config/secrets.env` in KEY=VALUE format
+- **Permissions:** Read-only for Alfred (via file_ops → `/workspace/config` = `r`)
+- **Template:** `system/secrets.env.example` is auto-created on first startup
+- **Access:** Alfred reads the file when executing a skill and passes secrets to the `exec` tool via the `env` parameter (sanitized from logs)
+- **Usage:** The user manages the file manually; Alfred notifies which variables it needs
 
-### F5.10 Seguridad
+### F5.10 Security
 - **ID:** F-SEC-001
-- **Descripción:** Seguridad en capas
-- **Capas:** Gateway auth, tool policy, channel ACL, file confinement, audit logging, rate limiting, secrets isolation
+- **Description:** Layered security
+- **Layers:** Gateway auth, tool policy, channel ACL, file confinement, audit logging, rate limiting, secrets isolation
 
-## 6. Requisitos No Funcionales
+## 6. Non-Functional Requirements
 
-| ID | Requisito | Métrica |
+| ID | Requirement | Metric |
 |---|---|---|
-| NFR-001 | Agnóstico a LLM | Sin código específico por provider |
-| NFR-002 | Single container | Docker con SQLite embebido |
-| NFR-003 | 100% open-source | Stack sin costo de licencias |
-| NFR-004 | Tiempo de respuesta | <30s por request (incluyendo LLM) |
-| NFR-005 | Escalable horizontal | Sessions distribuidas vía Redis (v2.0) |
+| NFR-001 | LLM agnostic | No provider-specific code |
+| NFR-002 | Single container | Docker with embedded SQLite |
+| NFR-003 | 100% open-source | Stack with no license cost |
+| NFR-004 | Response time | <30s per request (including LLM) |
+| NFR-005 | Horizontally scalable | Distributed sessions via Redis (v2.0) |
 | NFR-006 | Type-safe | TypeScript strict + Zod runtime |
-| NFR-007 | Resiliente | Fallback automático de providers |
-| NFR-008 | Auditable | Todos los comandos loggeados en SQLite |
+| NFR-007 | Resilient | Automatic provider fallback |
+| NFR-008 | Auditable | All commands logged in SQLite |
 
 ## 7. User Stories
 
-### US-001: Conversación vía Telegram
-> Como usuario, quiero chatear con Alfred via Telegram para obtener respuestas rápidas.
+### US-001: Conversation via Telegram
+> As a user, I want to chat with Alfred via Telegram to get quick answers.
 
-**Criterios de aceptación:**
-- Mensaje en Telegram → Alfred responde en <30s
-- Personalidad SOUL.md se mantiene
-- Alfred puede buscar en internet si es necesario
+**Acceptance criteria:**
+- Message in Telegram → Alfred responds in <30s
+- SOUL.md personality is maintained
+- Alfred can search the internet if necessary
 
-### US-002: Cambio de LLM
-> Como usuario, quiero cambiar el modelo LLM editando un archivo, no código.
+### US-002: LLM switching
+> As a user, I want to change the LLM model by editing a file, not code.
 
-**Criterios de aceptación:**
-- Editar `alfred.json` → cambiar `primary_provider`
-- Reiniciar contenedor → nuevo provider activo
-- Fallback automático si el provider falla
+**Acceptance criteria:**
+- Edit `alfred.json` → change `primary_provider`
+- Restart container → new provider active
+- Automatic fallback if the provider fails
 
-### US-003: Ejecución de comandos
-> Como usuario, quiero que Alfred ejecute comandos shell por mí.
+### US-003: Command execution
+> As a user, I want Alfred to execute shell commands for me.
 
-**Criterios de aceptación:**
-- Alfred puede ejecutar comandos permitidos
-- Comandos peligrosos son bloqueados
-- Output se muestra en la respuesta
+**Acceptance criteria:**
+- Alfred can execute allowed commands
+- Dangerous commands are blocked
+- Output is shown in the response
 
-### US-004: Búsqueda web
-> Como usuario, quiero preguntar sobre temas actuales y obtener respuestas con fuentes.
+### US-004: Web search
+> As a user, I want to ask about current topics and get answers with sources.
 
-**Criterios de aceptación:**
-- "¿Qué pasó hoy?" → Alfred busca y resume
-- Cita fuentes en la respuesta
-- Sin costo de API (DuckDuckGo)
+**Acceptance criteria:**
+- "What happened today?" → Alfred searches and summarizes
+- Cites sources in the response
+- No API cost (DuckDuckGo)
 
 ## 8. Roadmap
 
-### v1.0 (MVP) — Implementado
-- [x] Gateway WebSocket
-- [x] Config loader centralizado
+### v1.0 (MVP) — Implemented
+- [x] WebSocket gateway
+- [x] Centralized config loader
 - [x] LLM Router (Ollama cloud + fallback chain)
-- [x] SOUL.md loader + inyector
+- [x] SOUL.md loader + injector
 - [x] Telegram plugin
 - [x] Tools: exec, file-ops, web-search, web-fetch
-- [x] SQLite schema + repositorios
-- [x] CLI client de testing
+- [x] SQLite schema + repositories
+- [x] CLI testing client
 - [x] Dockerfile + docker-compose
-- [x] Seguridad: rate limiter, auth, ACL
+- [x] Security: rate limiter, auth, ACL
 
-### v1.5 — Septiembre 2026
+### v1.5 — September 2026
 - [ ] Skills loader (SKILL.md parser)
 - [ ] Web dashboard (Vue/React)
-- [ ] Audit logging avanzado
-- [ ] OpenAI y Gemini como providers activos
+- [ ] Advanced audit logging
+- [ ] OpenAI and Gemini as active providers
 
 ### v2.0 — Q4 2026
 - [x] Context Compression (Sliding Window + Summary)
 - [ ] Discord plugin
 - [ ] Slack plugin
-- [ ] Redis para sesiones distribuidas
-- [ ] LanceDB para embeddings
+- [ ] Redis for distributed sessions
+- [ ] LanceDB for embeddings
 - [ ] Voice support
 
 ### v3.0+ — 2027
@@ -222,22 +223,22 @@ Un agente IA personal con personalidad (SOUL.md) que opera como mayordomo digita
 - [ ] Custom LLM providers
 - [ ] Mobile apps
 
-## 9. Métricas de Éxito
+## 9. Success Metrics
 
-| Métrica | Target v1.0 | Target v1.5 |
+| Metric | Target v1.0 | Target v1.5 |
 |---|---|---|
-| Canales activos | 2 (Telegram + CLI) | 2 (Telegram + CLI) |
-| LLM providers | 3 configurados | 5 activos |
+| Active channels | 2 (Telegram + CLI) | 2 (Telegram + CLI) |
+| LLM providers | 3 configured | 5 active |
 | Tests | >10 unit tests | >30 tests |
-| Tiempo setup | <5 min | <5 min |
-| Tamaño Docker | ~180MB | <200MB |
+| Setup time | <5 min | <5 min |
+| Docker size | ~180MB | <200MB |
 | Uptime | 99% | 99.5% |
 
-## 10. Riesgos y Mitigaciones
+## 10. Risks and Mitigations
 
-| Riesgo | Impacto | Probabilidad | Mitigación |
+| Risk | Impact | Probability | Mitigation |
 |---|---|---|---|
-| API key de LLM expirada | Alto | Media | Fallback automático a siguiente provider |
-| Rate limiting de Telegram | Medio | Baja | Queue de mensajes + rate limiter |
-| SQLite locked en alta concurrencia | Medio | Baja | WAL mode + timeouts |
-| Costo de API de pago (Anthropic/OpenAI) | Medio | Alta | Ollama cloud como primary (gratuito) |
+| Expired LLM API key | High | Medium | Automatic fallback to next provider |
+| Telegram rate limiting | Medium | Low | Message queue + rate limiter |
+| SQLite locked under high concurrency | Medium | Low | WAL mode + timeouts |
+| Paid API cost (Anthropic/OpenAI) | Medium | High | Ollama cloud as primary (free) |

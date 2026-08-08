@@ -10,12 +10,16 @@ import { MemoryTool } from './memory';
 import { HealthMonitor } from '../services/health-monitor';
 import { VectorStoreManager } from '../services/vector-store/index';
 import { SnapshotManager } from '../services/snapshot';
+import { TokenBudgetTracker } from '../services/token-budget';
+import { LLMRouter } from '../agent/llm-router';
 
 export function createTools(
   config: ConfigLoader,
   healthMonitor?: HealthMonitor | null,
   vectorStore?: VectorStoreManager | null,
   snapshotManager?: SnapshotManager | null,
+  budgetTracker?: TokenBudgetTracker | null,
+  router?: LLMRouter | null,
 ): ToolHandler[] {
   const tools: ToolHandler[] = [];
   const enabledTools = config.enabledTools;
@@ -41,7 +45,7 @@ export function createTools(
   }
 
   if (enabledTools.includes('health') && healthMonitor) {
-    tools.push(new HealthTool(healthMonitor));
+    tools.push(new HealthTool(healthMonitor, budgetTracker, router));
   }
 
   if (vectorStore || snapshotManager) {

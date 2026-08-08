@@ -8,6 +8,7 @@ RUN npm ci
 COPY src ./src
 COPY tsconfig.json ./
 COPY system/ ./system/
+COPY web/ ./web/
 
 RUN npm run build
 
@@ -22,6 +23,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/
+COPY web/ ./web/
 
 RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
     chmod +x /usr/local/bin/alfred-cli

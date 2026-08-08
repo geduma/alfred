@@ -47,7 +47,7 @@ src/
 ├── services/
 │   ├── context-compressor.ts ← Sliding window + LLM summarization for context management
 │   ├── prompt-compressor.ts  ← Telegraph English — rule-based prompt compression
-│   ├── token-budget.ts       ← Token budget tracking and stats
+│   ├── token-budget.ts       ← Token budget + spending limits (daily/monthly, paid-provider gating)
 │   ├── circuit-breaker.ts    ← Circuit breaker with jitter for provider resilience
 │   ├── vector-store/
 │   │   ├── index.ts          ← LanceDB vector store manager (init, ingest, search, delete)
@@ -61,17 +61,18 @@ src/
 │   ├── web.ts                ← Unified web search + fetch (action: "search" | "fetch")
 │   ├── job-scheduler.ts      ← Create/list/update/cancel reminders
 │   ├── system.ts             ← health/reload/status via gateway
-│   ├── health.ts             ← Query health monitor, view findings, trigger checks
+│   ├── health.ts             ← Health monitor + budget status + circuit states (actions: status|budget|findings|check|configure)
 │   └── memory.ts             ← Memory tools (search, snapshots, snapshot_get, snapshot_restore)
 ├── channels/                 ← Communication channels
 │   ├── channel-manager.ts
 │   ├── telegram.ts           ← Grammy bot
-│   └── cli.ts                ← Interactive readline
+│   ├── cli.ts                ← Interactive readline
+│   └── web.ts                ← Push-only WebChannel (web clients register and receive broadcasts)
 ├── db/                       ← Persistence
-│   ├── schema.ts             ← Embedded SQL schema (5 tables)
+│   ├── schema.ts             ← Embedded SQL schema (6 tables: + token_usage_log)
 │   ├── index.ts              ← Init + migrations + closeDatabase()
 │   ├── session-store.ts      ← Session serialization to workspace/memory/sessions/
-│   └── repositories/         ← Sessions, Messages, Commands
+│   └── repositories/         ← Sessions, Messages, Commands, TokenUsage
 ├── security/
 │   └── rate-limiter.ts       ← Rate limiting by user/channel
 ├── types/                    ← TypeScript interfaces (MemoryConfig added)
@@ -96,14 +97,16 @@ Single file: `workspace/config/alfred.json`
 
 - `llm.primary_provider` → Active provider
 - `llm.fallback_providers` → Fallback chain
-- `providers` → Full provider list (each with `type`, `enabled`, `model`, `config`)
+- `providers` → Full provider list (each with `type`, `enabled`, `model`, `config`; `paid: true` marks a provider as paid for spending-limit gating)
 - `tools` → Per-tool configuration
-- `channels` → Channel + permissions (ACL via `allow_from`)
+- `channels` → Channel + permissions (ACL via `allow_from`); `web` is a push-only channel for web clients
 - `database` → SQLite path + settings
 - `memory` → Context compression, prompt compression, vector store, and snapshot settings
-- `memory.prompt_compression` → Telegraph English compression (enabled, mode: telegraph|off)
+- `memory.prompt_compression` → Telegraph English compression (enabled, mode: telegraph|off; `aggressive` is evaluated but kept `false`)
 - `memory.vector_store` → LanceDB RAG config (embedding provider, search params, ingest settings)
 - `memory.snapshots` → Session snapshot config (auto interval, max per session)
+- `spending_limits` → Optional. If the section is missing, spending control is disabled (zero change vs v2.1). `enabled` default `false`, `warn_threshold` default `0.8`, `on_limit_reached` default `block_paid_providers`
+- `server` → Optional. `port` (default 18789, `0` allowed for tests), `host` (default `0.0.0.0`)
 - `security.gateway_auth_token` → Minimum 16 characters
 
 ## Universal Tools
@@ -115,7 +118,7 @@ Single file: `workspace/config/alfred.json`
 | `web` | `src/tools/web.ts` | Web search (DuckDuckGo) and URL fetch (cheerio) |
 | `job` | `src/tools/job-scheduler.ts` | CRUD reminders, persisted to workspace/memory/jobs/, delivers to originating channel/chat |
 | `system` | `src/tools/system.ts` | Health/status/reload delegated to gateway |
-| `health` | `src/tools/health.ts` | Query health monitor findings, trigger checks |
+| `health` | `src/tools/health.ts` | Health monitor + budget status + circuit states (`status`/`budget`/`findings`/`check`/`configure`) |
 | `memory` | `src/tools/memory.ts` | Conditional — search, snapshots, snapshot_get, snapshot_restore |
 
 ## Personality System
@@ -258,12 +261,16 @@ Alfred includes a periodic **health monitor** that scans application logs for er
 ```json
 {
   "name": "health",
-  "actions": ["status", "findings", "check", "configure"],
+  "actions": ["status", "budget", "findings", "check", "configure"],
   "filters": { "severity_threshold": "warn|error", "category": "string" }
 }
 ```
 
-**Available via CLI/Telegram:** `health findings`, `health findings severity=error`, `health check`
+**Available via CLI/Telegram:** `health findings`, `health findings severity=error`, `health check`, `health budget`, `health status`
+
+- `status` → consolidated: health monitor + findings + token budget + circuit states
+- `budget` → daily/monthly allowance, remaining %, per-provider usage (incl. paid markers)
+- `findings` / `check` / `configure` → health monitor operations
 
 ### Config
 
@@ -298,6 +305,45 @@ Snapshots are point-in-time session checkpoints for long-term memory recall:
 - **Config**: `memory.snapshots` in alfred.json (enabled, interval, max)
 
 The snapshot pipeline in `prepareContext()` runs after each successful interaction, checking the message counter against the configured interval.
+
+## Spending Limits (v2.2)
+
+Token-based budget control with real spend tracking persisted in SQLite (`token_usage_log`):
+
+- **Per-request tracking**: `LLMRouter.call()` records usage per provider after each call
+- **Daily/monthly caps**: `spending_limits.daily_tokens` / `monthly_tokens`; remaining % = `min(daily, monthly)`
+- **Enforcement**: `on_limit_reached` = `block_all` (throw `BudgetBlockedError`) or `block_paid_providers` (filter out `paid: true` providers from the fallback chain; throws if nothing is left). If `spending_limits` is absent, no gating happens (v2.1 behavior)
+- **Warnings**: `evaluateWarning()` dedupes per period; gateway sends a `warn` alert via `NotificationService` when remaining crosses `warn_threshold`
+- **Degraded mode**: when the budget is exhausted the gateway replies with a degraded message instead of calling the router
+- **Context override**: when remaining < 20%, the compressor threshold is overridden to 0.6 for the request (reverted after)
+- **Errors**: `BudgetBlockedError` (code `'BUDGET_BLOCKED'`) + `isBudgetBlockedError()` in `src/utils/provider-errors.ts`
+- **Tool access**: the `health` tool exposes `budget` and includes budget state in `status`
+
+Key files: `src/services/token-budget.ts`, `src/db/repositories/token-usage.ts`, `src/agent/llm-router.ts`, `src/gateway.ts`
+
+## Web Channel (v2.2)
+
+The gateway serves a static web UI (`web/`) and exposes a WebSocket on the same HTTP server:
+
+- **Routing**: single `http.Server` + `WebSocketServer({ noServer: true })`; upgrade requests for `/ws` → web client (no auth, **TODO**), any other path → main WS with `gateway_auth_token`
+- **Web client**: push-only via `WebChannel` — registers on connect, receives broadcasts (`{ type: 'notify', event: 'message' }`); the `agent` method responds via the `agent_complete` event, so the frontend uses fire-and-forget `AlfredWS.send`
+- **Config API**: `config_get` (api_key/gateway_auth_token sanitized as `*****`) and `config_update` (deep merge + `writeRaw`; requires `reload`)
+- **Config**: `server.port` (default 18789, `0` for ephemeral/test), `server.host` (default `0.0.0.0`)
+- **Docker**: `web/` copied in both builder and runtime stages; `deploy.sh` post-deploy healthcheck probes port 18789 (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exit 1 with logs on failure)
+
+Key files: `src/gateway.ts`, `src/channels/web.ts`, `web/`, `src/config/loader.ts`
+
+## Default Skills (v2.2)
+
+On first startup Alfred auto-copies new files from `system/skills-custom/` into `workspace/skills/custom/` (copy-if-missing, never overwrites). `SkillLoader.loadSkills()` scans both the skills root and `skillsDir/custom`.
+
+Bundled: `daily-digest`, `weekly-review`, `system-check` — with instructions in Spanish for the day-to-day agent use cases.
+
+Key files: `system/skills-custom/`, `src/index.ts` (`copyDefaultSkills`), `src/agent/skill-loader.ts`
+
+## LLM Provider Agnosticism (v2.2)
+
+Alfred remains 100% agnostic to LLM providers — no code references any specific vendor (e.g. Relio). Provider-related strategies (routing strategy, cache-aware selection, cost-aware ranking) are **documentation-only** (README/AGENTS.md) and are not hardcoded in source. Add provider-specific behavior only through the Provider Factory pattern in `src/agent/providers/`.
 
 ## Auto-Created Configs
 

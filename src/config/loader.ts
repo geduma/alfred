@@ -18,11 +18,20 @@ const ProviderConfigSchema = z.object({
     top_p: z.number().min(0).max(1).optional(),
     timeout_seconds: z.number().positive().optional(),
   }),
+  paid: z.boolean().optional(),
   capabilities: z.object({
     supports_tools: z.boolean().optional(),
     supports_vision: z.boolean().optional(),
     supports_streaming: z.boolean().optional(),
   }).optional(),
+});
+
+const SpendingLimitsConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  daily_token_limit: z.number().positive(),
+  monthly_token_limit: z.number().positive(),
+  warn_threshold: z.number().min(0).max(1).default(0.8),
+  on_limit_reached: z.enum(['block_paid_providers', 'block_all']).default('block_paid_providers'),
 });
 
 const LLMConfigSchema = z.object({
@@ -35,6 +44,7 @@ const LLMConfigSchema = z.object({
     max_delay_ms: z.number().int().min(0).default(15000),
     backoff_factor: z.number().min(1).max(10).default(2),
   }).optional(),
+  spending_limits: SpendingLimitsConfigSchema.optional(),
 });
 
 const ChannelConfigSchema = z.object({
@@ -148,6 +158,11 @@ const HealthMonitorConfigSchema = z.object({
   }).default({}),
 });
 
+const ServerConfigSchema = z.object({
+  port: z.number().int().nonnegative().default(18789),
+  host: z.string().default('0.0.0.0'),
+}).optional();
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
@@ -164,6 +179,7 @@ const AlfredConfigSchema = z.object({
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
   health_monitor: HealthMonitorConfigSchema.optional(),
+  server: ServerConfigSchema,
 });
 
 export class ConfigLoader {
@@ -173,6 +189,14 @@ export class ConfigLoader {
   constructor(configPath: string) {
     this.configPath = configPath;
     this.loadConfigSync();
+  }
+
+  static validate(raw: unknown): AlfredConfig {
+    return AlfredConfigSchema.parse(raw) as AlfredConfig;
+  }
+
+  get configPathValue(): string {
+    return this.configPath;
   }
 
   private loadConfigSync(): AlfredConfig {
@@ -200,7 +224,6 @@ export class ConfigLoader {
   async reload(): Promise<AlfredConfig> {
     const raw = JSON.parse(await fs.promises.readFile(this.configPath, 'utf-8'));
     this.config = AlfredConfigSchema.parse(raw) as AlfredConfig;
-
     this.config.agent.personality_file = resolvePath(this.config.agent.personality_file);
     this.config.database.config.path = resolvePath(this.config.database.config.path);
     if (this.config.logging.config.file_path) {
@@ -213,6 +236,13 @@ export class ConfigLoader {
 
     this.validateProviderChain();
     return this.config;
+  }
+
+  async writeRaw(raw: unknown): Promise<void> {
+    const validated = ConfigLoader.validate(raw);
+    await fs.promises.writeFile(this.configPath, JSON.stringify(raw, null, 2), 'utf-8');
+    this.config = validated;
+    return undefined;
   }
 
   private validateProviderChain(): void {
@@ -295,5 +325,12 @@ export class ConfigLoader {
 
   get healthMonitor() {
     return this.config.health_monitor;
+  }
+
+  get serverConfig(): { port: number; host: string } {
+    return {
+      port: this.config.server?.port ?? 18789,
+      host: this.config.server?.host ?? '0.0.0.0',
+    };
   }
 }

@@ -156,10 +156,10 @@ export class SystemTool implements ToolHandler {
     try {
       if (this.reloadHandler) {
         this.reloadHandler();
-        return { success: true, output: '✅ Configuración recargada (config, providers y tools).' };
+        return { success: true, output: '✅ Configuration reloaded (config, providers and tools).' };
       }
       this.configLoader.reload();
-      return { success: true, output: '✅ Configuración recargada desde disco. Los cambios se aplicarán en la siguiente solicitud al LLM.' };
+      return { success: true, output: '✅ Configuration reloaded from disk. Changes will apply on the next LLM request.' };
     } catch (error: any) {
       return { success: false, output: '', error: `Failed to reload config: ${error.message}` };
     }

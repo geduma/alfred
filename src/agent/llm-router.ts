@@ -1,10 +1,10 @@
-import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig } from '../types/llm';
+import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig, SpendingLimitsConfig, isPaidProvider } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
 import { CircuitBreaker } from '../services/circuit-breaker';
 import { TokenBudgetTracker } from '../services/token-budget';
-import { isThrottleError, isRetryableError, getErrorMessage } from '../utils/provider-errors';
+import { isThrottleError, isRetryableError, getErrorMessage, BudgetBlockedError } from '../utils/provider-errors';
 
 const DEFAULT_RETRY: RetryConfig = {
   max_attempts: 3,
@@ -29,8 +29,25 @@ export class LLMRouter {
   constructor(config: ConfigLoader) {
     this.config = config;
     this.circuitBreaker = new CircuitBreaker();
-    this.budgetTracker = new TokenBudgetTracker();
+    this.budgetTracker = new TokenBudgetTracker(config);
     this.retry = { ...DEFAULT_RETRY, ...config.llmConfig.retry };
+  }
+
+  isPaid(providerName: string): boolean {
+    const provider = this.config.providers[providerName];
+    if (!provider) return false;
+    return isPaidProvider(provider.type, provider.paid);
+  }
+
+  getBudgetTracker(): TokenBudgetTracker {
+    return this.budgetTracker;
+  }
+
+  getCircuitStates(): Array<{ provider: string; open: boolean; remainingMs: number }> {
+    return this.providerChain.map(name => {
+      const state = this.circuitBreaker.getState(name);
+      return { provider: name, open: state.open, remainingMs: state.remainingMs };
+    });
   }
 
   async initialize(): Promise<void> {
@@ -63,12 +80,25 @@ export class LLMRouter {
   }
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
+    const limits = this.config.llmConfig.spending_limits;
+    let budgetBlocked = false;
+    if (limits?.enabled) {
+      const budget = await this.budgetTracker.checkBudget();
+      budgetBlocked = !budget.allowed;
+      if (budgetBlocked && limits.on_limit_reached === 'block_all') {
+        throw new BudgetBlockedError(
+          'The token budget for this period has been exhausted. Alfred is in degraded service mode until the next period. Adjust the limits in alfred.json to continue.'
+        );
+      }
+    }
+
+    const chain = this.buildChain(budgetBlocked, limits);
     const startIndex = this.currentIndex;
     const attempts: Array<{ provider: string; error?: string }> = [];
 
-    for (let i = 0; i < this.providerChain.length; i++) {
-      const idx = (startIndex + i) % this.providerChain.length;
-      const providerName = this.providerChain[idx];
+    for (let i = 0; i < chain.length; i++) {
+      const idx = (startIndex + i) % chain.length;
+      const providerName = chain[idx];
       const provider = this.providers.get(providerName)!;
 
       if (!this.circuitBreaker.isAllowed(providerName)) {
@@ -93,7 +123,7 @@ export class LLMRouter {
           this.currentIndex = 0;
 
           if (response.usage) {
-            this.budgetTracker.trackUsage(response.usage);
+            this.budgetTracker.trackUsage(response.usage, providerName);
           }
 
           return response;
@@ -136,14 +166,27 @@ export class LLMRouter {
       getLogger().warn({ provider: providerName, error: getErrorMessage(lastError) }, 'Provider failed');
       attempts.push({ provider: providerName, error: getErrorMessage(lastError) });
 
-      if (i < this.providerChain.length - 1) {
-        this.currentIndex = (idx + 1) % this.providerChain.length;
+      if (i < chain.length - 1) {
+        this.currentIndex = (idx + 1) % chain.length;
       }
     }
 
     throw new Error(
       `All providers failed. Attempts: ${attempts.map(a => `${a.provider}: ${a.error}`).join(' | ')}`
     );
+  }
+
+  private buildChain(budgetBlocked: boolean, limits?: SpendingLimitsConfig): string[] {
+    if (budgetBlocked && limits?.on_limit_reached === 'block_paid_providers') {
+      const free = this.providerChain.filter(name => !this.isPaid(name));
+      if (free.length === 0) {
+        throw new BudgetBlockedError(
+          'The token limit was reached and no free providers are available. Alfred is in degraded service mode until the next period.'
+        );
+      }
+      return free;
+    }
+    return this.providerChain;
   }
 
   async reinitialize(config?: ConfigLoader): Promise<void> {

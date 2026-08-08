@@ -56,4 +56,15 @@ CREATE TABLE IF NOT EXISTS skills_cache (
   last_loaded DATETIME,
   hash TEXT
 );
+
+CREATE TABLE IF NOT EXISTS token_usage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  tokens_used INTEGER NOT NULL,
+  is_paid INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage_log(date);
 `;

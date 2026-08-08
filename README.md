@@ -63,6 +63,7 @@ npm run dev
 |---|---|
 | **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
+| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. No auth in this phase (see TODO in `src/gateway.ts`); runs on the same HTTP server as the main WS (port from `server.port`, default 18789) |
 
 ## Configuration
 
@@ -106,6 +107,34 @@ The config file paths (`database.path`, `logging.file_path`, `agent.personality_
 ```
 
 On first startup, if the config doesn't exist, it's auto-created from `system/alfred.json.example`. The `gateway_auth_token` is also auto-generated if set to `CHANGE_ME`.
+
+### Spending limits
+
+Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request and checked against daily/monthly caps:
+
+```json
+{
+  "spending_limits": {
+    "enabled": true,
+    "warn_threshold": 0.8,
+    "on_limit_reached": "block_paid_providers",
+    "daily_tokens": 500000,
+    "monthly_tokens": 10000000
+  }
+}
+```
+
+Providers can be marked `"paid": true` so `block_paid_providers` excludes only the paid ones from the fallback chain. When the budget is exhausted the gateway replies with a degraded message, warns you (Telegram/web) at the threshold, and Alfred can report the budget via the `health` tool (`health budget` / `health status`). If remaining usage drops below 20%, context compaction is tightened for that request.
+
+### Web server
+
+```json
+{
+  "server": { "port": 18789, "host": "0.0.0.0" }
+}
+```
+
+Optional; defaults `18789` / `0.0.0.0`. Serves the web UI and the WebSocket channels.
 
 ## Memory System
 
@@ -211,7 +240,7 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 | `web` | Web search (DuckDuckGo) and URL content fetch |
 | `job` | Schedule one-time and recurring reminders |
 | `system` | Health/status/reload delegated to the gateway |
-| `health` | Query health monitor findings and trigger checks |
+| `health` | Health monitor + token budget + circuit states — `status`/`budget`/`findings`/`check`/`configure` |
 | `memory` | Conditional — vector search + snapshots (registered only when the memory system is enabled) |
 
 ## Personality System
@@ -220,11 +249,13 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 - **preferences.md** — Dynamic preferences (language, tone, style). Managed by Alfred via `file_ops` when you request changes.
 - **alfred-rules.md** — Rulebook describing file access permissions, personality protocol, skill implementation protocol, and secrets management protocol. Injected into every system prompt.
 
-Example: _"Respóndeme en español y sé más breve"_ → Alfred adds `language: spanish` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences.
+Example: _"Respond in English and be more concise"_ → Alfred adds `language: english` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences.
 
 ## Skills & Secrets
 
 Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task.
+
+On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — instructions in Spanish) into `/workspace/skills/custom/` without overwriting existing files.
 
 **Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
 
@@ -259,13 +290,14 @@ src/
 ├── services/
 │   ├── context-compressor.ts ← Sliding window + summarization for context management
 │   ├── prompt-compressor.ts  ← Telegraph English rule-based compression
+│   ├── token-budget.ts       ← Token budget + spending limits (daily/monthly, paid gating)
 │   ├── vector-store/         ← LanceDB vector store + agnostic embedder
 │   ├── snapshot.ts           ← Session checkpoints
 │   ├── health-monitor.ts     ← Log scanner + alert generator
 │   └── notification.ts      ← Alert delivery (Telegram)
 ├── tools/                    ← Universal tools (exec, file_ops, web, job, system, health + conditional memory)
-├── channels/                 ← Telegram, CLI
-├── db/                       ← SQLite (embedded schema) + session persistence (with summary field)
+├── channels/                 ← Telegram, CLI, Web (push-only)
+├── db/                       ← SQLite (embedded schema + token_usage_log) + session persistence (with summary field)
 ├── security/                 ← Rate limiter
 └── types/                    ← TypeScript interfaces
 ```
@@ -319,7 +351,7 @@ Files on the `~/.alfred-personal` volume are read from disk on every request —
 echo '{"type":"req","id":"r1","method":"reload","params":{}}' | websocat ws://YOUR_HOST:18789
 
 # Via Alfred's system tool (in any channel)
-# Just say: "Alfred, recarga la configuración"
+# Just say: "Alfred, reload the configuration"
 
 # From inside the container
 docker exec alfred-cli --reload
@@ -360,8 +392,32 @@ Steps performed:
 2. `docker compose build` — rebuilds the image with new code
 3. `docker compose up -d --force-recreate` — replaces the running container
 4. `docker image prune -f` — cleans up old images
+5. Post-deploy healthcheck — probes port 18789 (`nc -z localhost 18789`), waits up to `HEALTH_WAIT_SECONDS` (default 60) for the gateway, and exits 1 with the container logs if it never comes up
 
 > **Tip:** Stash `deploy.sh` in a `~/alfred/` directory alongside the repo, or run it from the project root on your Raspberry Pi after SSH'ing in.
+
+## Recent Improvements (v2.2)
+
+### Spending Control & Cost Awareness
+- **Real spend tracking**: per-request token usage persisted in SQLite (`token_usage_log`, `TokenUsageRepository`) with daily/monthly sums per provider (`ProviderUsageSummary` incl. `is_paid`)
+- **Spending limits**: optional `spending_limits` section (`enabled` default `false`, `warn_threshold` 0.8, `on_limit_reached` default `block_paid_providers`); `BudgetBlockedError` + degraded replies when exhausted. Absent section = v2.1 behavior (disabled)
+- **Paid-provider gating**: `paid: true` on a provider lets `block_paid_providers` exclude paid ones from the fallback chain
+- **Budget alerts**: `warn` notification (Telegram/web) when remaining crosses the threshold; deduped per period
+- **Context override**: remaining < 20% → compaction threshold forced to 0.6 for that request
+- **Health tool budget**: `health status` / `health budget` expose allowance, remaining %, and per-provider usage
+
+### Web Channel
+- **Web UI**: static frontend in `web/` (chat + config editor) served by the gateway HTTP server
+- **WebSocket routing**: `/ws` → web client (no auth yet — explicit TODO), root → main WS with auth token; same port (`server.port`, default 18789)
+- **Config via WS**: `config_get` (secrets sanitized as `*****`) and `config_update` (deep merge + persist, needs reload)
+- **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
+
+### Daily Life Agent
+- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (Spanish) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` now also scans the custom subdir
+
+### Ops & Resilience (no breaking changes)
+- **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
+- **Provider agnosticism kept**: no code references any specific vendor; routing/cost/cache strategies remain documentation-only
 
 ## Recent Improvements (v2.1)
 
@@ -395,7 +451,6 @@ Steps performed:
 | SSRF DNS rebinding | Low risk in Docker, complex to mitigate |
 | No channel auth (beyond ACL) | By design — ACL whitelist is sufficient |
 | exec parseCommand rudimentary | Acceptable for current use cases |
-| No monthly spending limit | Future improvement (needs provider cost APIs) |
 | Hashing embedder (no semantics) | Intentional — zero-dependency, low-power design |
 | Docker image not optimized | Future improvement (multi-stage lite) |
 

@@ -36,7 +36,7 @@ export class PromptBuilder {
     let systemPrompt = `${this.soulMd}\n\n---\n\n${basePrompt}`;
 
     if (userName && userName !== 'unknown') {
-      systemPrompt = `## User Identity\nYour user's name is "${userName}". Always address them as "Señor ${userName}".\n\n---\n\n${systemPrompt}`;
+      systemPrompt = `## User Identity\nYour user's name is "${userName}". Always address them as "Mr. ${userName}".\n\n---\n\n${systemPrompt}`;
     } else {
       systemPrompt = `## User Identity\nYou do not know the user's name yet. Ask for it on the very first message of every new session. When they tell you, save it immediately to preferences.md using the file_ops tool by updating the user_name field.\n\n---\n\n${systemPrompt}`;
     }
