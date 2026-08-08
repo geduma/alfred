@@ -5,7 +5,7 @@ Multi-channel, LLM-agnostic AI assistant with persistent personality, web access
 ## Requirements
 
 - **Docker** with **Compose v2** (`docker compose`, not the legacy `docker-compose` v1)
-- **64-bit Linux (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store only ships `arm64` binaries, so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
+- **64-bit Linux (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store ships prebuilt binaries only for 64-bit platforms (`arm64`/`x86_64`), so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
 - **RAM/swap**: building the image runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).
 - First build takes several minutes (downloads npm packages).
 
@@ -29,7 +29,8 @@ cp system/SOUL.md.example ~/.alfred-personal/config/SOUL.md
 cp system/secrets.env.example ~/.alfred-personal/config/secrets.env
 
 # 4. Edit the configuration with your API keys
-#    Required: LLM provider (api_key, api_url) and Telegram bot_token
+#    Required: LLM provider (api_key, api_url) and at least one channel
+#    (Telegram bot_token, CLI, or Web)
 vim ~/.alfred-personal/config/alfred.json
 
 # 5. Build and start the container
@@ -118,8 +119,8 @@ Optional section — if absent, spending control is disabled (v2.1 behavior unch
     "enabled": true,
     "warn_threshold": 0.8,
     "on_limit_reached": "block_paid_providers",
-    "daily_tokens": 500000,
-    "monthly_tokens": 10000000
+    "daily_token_limit": 500000,
+    "monthly_token_limit": 10000000
   }
 }
 ```
@@ -255,7 +256,7 @@ Example: _"Respond in English and be more concise"_ → Alfred adds `language: e
 
 Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task.
 
-On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — instructions in Spanish) into `/workspace/skills/custom/` without overwriting existing files.
+On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — written in English) into `/workspace/skills/custom/` without overwriting existing files.
 
 **Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
 
@@ -413,7 +414,7 @@ Steps performed:
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
 ### Daily Life Agent
-- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (Spanish) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` now also scans the custom subdir
+- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans both the skills root and the custom subdir
 
 ### Ops & Resilience (no breaking changes)
 - **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
