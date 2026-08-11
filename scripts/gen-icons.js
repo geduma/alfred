@@ -6,20 +6,21 @@ const zlib = require('zlib');
 
 const OUT_DIR = path.join(__dirname, '..', 'web');
 const DESIGN = 32;
-const BG = [18, 22, 29];
-const FG = [79, 140, 255];
+const BG = [21, 24, 31];
+const JACKET = [53, 59, 71];
+const SHIRT = [221, 224, 230];
+const BUTTON = [201, 162, 94];
 
-const LEFT_EAR = [[11, 1], [13.5, 1], [16, 9.5]];
-const RIGHT_EAR = [[16, 9.5], [18.5, 1], [21, 1]];
-const LEFT_WING = [[12, 11], [16, 11], [2, 16], [0.5, 20], [4, 18], [5, 23], [8, 19], [9, 24], [12, 20], [13, 15]];
-const BODY = [[12.5, 13.5], [19.5, 13.5], [18, 20], [14, 20]];
-const TAIL = [[14, 20], [18, 20], [16, 25]];
-const HEAD = { cx: 16, cy: 10.5, r: 4 };
-const EYES = [{ cx: 13, cy: 9.5, r: 1.15 }, { cx: 19, cy: 9.5, r: 1.15 }];
-
-function mirror(pts) {
-  return pts.map(([x, y]) => [DESIGN - x, y]);
-}
+const SHIRT_V = [[0, 0], [32, 0], [16, 32]];
+const PANEL_LEFT = [[0, 4.48], [16, 32], [0, 32]];
+const PANEL_RIGHT = [[32, 4.48], [16, 32], [32, 32]];
+const COLLAR_LEFT = [[10.08, 1.28], [16, 4.8], [10.08, 8.32]];
+const COLLAR_RIGHT = [[21.92, 1.28], [16, 4.8], [21.92, 8.32]];
+const BUTTONS = [
+  { cx: 16, cy: 14.08, r: 1.36 },
+  { cx: 16, cy: 18.56, r: 1.36 },
+  { cx: 16, cy: 23.2, r: 1.36 },
+];
 
 function inCircle(x, y, cx, cy, r) {
   const dx = x - cx;
@@ -40,19 +41,24 @@ function inPolygon(x, y, pts) {
   return inside;
 }
 
-function mask(x, y) {
-  let filled = false;
-  if (inPolygon(x, y, LEFT_EAR) || inPolygon(x, y, RIGHT_EAR)) filled = true;
-  if (inPolygon(x, y, LEFT_WING) || inPolygon(x, y, mirror(LEFT_WING))) filled = true;
-  if (inPolygon(x, y, BODY) || inPolygon(x, y, TAIL)) filled = true;
-  if (inCircle(x, y, HEAD.cx, HEAD.cy, HEAD.r)) filled = true;
-  if (filled) {
-    for (const e of EYES) {
-      if (inCircle(x, y, e.cx, e.cy, e.r)) filled = false;
-    }
-  }
-  return filled;
-}
+const LAYERS = [
+  { name: 'shirt', color: SHIRT, mask: (x, y) => inPolygon(x, y, SHIRT_V) },
+  {
+    name: 'jacket',
+    color: JACKET,
+    mask: (x, y) => inPolygon(x, y, PANEL_LEFT) || inPolygon(x, y, PANEL_RIGHT),
+  },
+  {
+    name: 'collar',
+    color: JACKET,
+    mask: (x, y) => inPolygon(x, y, COLLAR_LEFT) || inPolygon(x, y, COLLAR_RIGHT),
+  },
+  {
+    name: 'buttons',
+    color: BUTTON,
+    mask: (x, y) => BUTTONS.some(b => inCircle(x, y, b.cx, b.cy, b.r)),
+  },
+];
 
 let cachedBbox = null;
 function bbox() {
@@ -63,7 +69,8 @@ function bbox() {
   let maxY = 0;
   for (let y = 0; y <= DESIGN; y += 1 / 8) {
     for (let x = 0; x <= DESIGN; x += 1 / 8) {
-      if (mask(x, y)) {
+      const filled = LAYERS.some(l => l.mask(x, y));
+      if (filled) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -81,6 +88,10 @@ function inRoundedRect(x, y, size, r) {
   const dx = x - lx;
   const dy = y - ly;
   return dx * dx + dy * dy <= r * r;
+}
+
+function blend(base, top, a) {
+  return base.map((c, i) => c * (1 - a) + top[i] * a);
 }
 
 function render(size, opts = {}) {
@@ -108,18 +119,22 @@ function render(size, opts = {}) {
           continue;
         }
       }
-      let cov = 0;
-      for (let sy = 0; sy < SS; sy++) {
-        for (let sx = 0; sx < SS; sx++) {
-          const fx = (px + (sx + 0.5) / SS - dx) / scale;
-          const fy = (py + (sy + 0.5) / SS - dy) / scale;
-          if (mask(fx, fy)) cov++;
+      let cur = BG.slice();
+      for (const layer of LAYERS) {
+        let cov = 0;
+        for (let sy = 0; sy < SS; sy++) {
+          for (let sx = 0; sx < SS; sx++) {
+            const fx = (px + (sx + 0.5) / SS - dx) / scale;
+            const fy = (py + (sy + 0.5) / SS - dy) / scale;
+            if (layer.mask(fx, fy)) cov++;
+          }
         }
+        const a = cov / (SS * SS);
+        if (a > 0) cur = blend(cur, layer.color, a);
       }
-      const a = cov / (SS * SS);
-      buf[o] = Math.round(BG[0] * (1 - a) + FG[0] * a);
-      buf[o + 1] = Math.round(BG[1] * (1 - a) + FG[1] * a);
-      buf[o + 2] = Math.round(BG[2] * (1 - a) + FG[2] * a);
+      buf[o] = Math.round(cur[0]);
+      buf[o + 1] = Math.round(cur[1]);
+      buf[o + 2] = Math.round(cur[2]);
       buf[o + 3] = 255;
     }
   }
@@ -199,13 +214,16 @@ function polyPath(pts) {
   return pts.map((p, i) => (i === 0 ? `M${p[0]} ${p[1]}` : `L${p[0]} ${p[1]}`)).join(' ') + ' Z';
 }
 
+function circlePath(c) {
+  return `M${c.cx - c.r} ${c.cy}a${c.r} ${c.r} 0 1 0 ${2 * c.r} 0a${c.r} ${c.r} 0 1 0 ${-2 * c.r} 0Z`;
+}
+
 function glyphSvg() {
-  const glyphPath =
-    polyPath(LEFT_EAR) + ' ' + polyPath(RIGHT_EAR) + ' ' +
-    polyPath(LEFT_WING) + ' ' + polyPath(mirror(LEFT_WING)) + ' ' +
-    polyPath(BODY) + ' ' + polyPath(TAIL);
-  const eyes = EYES.map(e => `<circle cx="${e.cx}" cy="${e.cy}" r="${e.r}" fill="#12161d"/>`).join('\n  ');
-  return { glyphPath, eyes };
+  const shirt = polyPath(SHIRT_V);
+  const jacket = polyPath(PANEL_LEFT) + ' ' + polyPath(PANEL_RIGHT);
+  const collar = polyPath(COLLAR_LEFT) + ' ' + polyPath(COLLAR_RIGHT);
+  const buttons = BUTTONS.map(circlePath).join(' ');
+  return { shirt, jacket, collar, buttons };
 }
 
 function main() {
@@ -226,21 +244,21 @@ function main() {
   ]);
   fs.writeFileSync(path.join(OUT_DIR, 'favicon.ico'), ico);
 
-  const { glyphPath, eyes } = glyphSvg();
+  const { shirt, jacket, collar, buttons } = glyphSvg();
   const faviconSvg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#12161d"/>
-  <path d="${glyphPath}" fill="#4f8cff"/>
-  ${eyes}
+  <rect width="32" height="32" rx="7" fill="#15181f"/>
+  <path d="${shirt}" fill="#dde0e6"/>
+  <path d="${jacket}" fill="#353b47"/>
+  <path d="${collar}" fill="#353b47"/>
+  ${BUTTONS.map(b => `<circle cx="${b.cx}" cy="${b.cy}" r="${b.r}" fill="#c9a25e"/>`).join('\n  ')}
 </svg>
 `;
   fs.writeFileSync(path.join(OUT_DIR, 'favicon.svg'), faviconSvg);
 
   const pinnedSvg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <path d="${glyphPath}" fill="#000000"/>
-  <circle cx="13" cy="9.5" r="1.15" fill="none"/>
-  <circle cx="19" cy="9.5" r="1.15" fill="none"/>
+  <path d="${shirt} ${jacket} ${collar} ${buttons}" fill="#000000"/>
 </svg>
 `;
   fs.writeFileSync(path.join(OUT_DIR, 'safari-pinned-tab.svg'), pinnedSvg);
@@ -250,8 +268,8 @@ function main() {
     short_name: 'Alfred',
     start_url: '/',
     display: 'standalone',
-    background_color: '#12161d',
-    theme_color: '#12161d',
+    background_color: '#15181f',
+    theme_color: '#15181f',
     icons: [
       { src: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
       { src: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },

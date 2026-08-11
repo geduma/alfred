@@ -3,8 +3,8 @@
   "short_name": "Alfred",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#12161d",
-  "theme_color": "#12161d",
+  "background_color": "#15181f",
+  "theme_color": "#15181f",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
