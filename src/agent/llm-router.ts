@@ -162,6 +162,17 @@ export class LLMRouter {
           getLogger().debug({ provider: providerName, attempt: attempt + 1 }, 'Calling LLM provider');
           const response = await provider.call(callParams);
 
+          getLogger().debug(
+            {
+              trace: 'provider_call',
+              provider: providerName,
+              model: response.model || this.config.providers[providerName]?.model,
+              input_tokens: response.usage?.input_tokens,
+              output_tokens: response.usage?.output_tokens,
+            },
+            'LLM provider call succeeded'
+          );
+
           this.circuitBreaker.recordSuccess(providerName);
           this.currentIndex = 0;
 

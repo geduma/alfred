@@ -36,6 +36,8 @@ export interface LLMResponse {
     input_tokens: number;
     output_tokens: number;
   };
+  model?: string;
+  raw?: unknown;
 }
 
 export interface Tool {

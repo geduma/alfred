@@ -116,6 +116,8 @@ export class AnthropicProvider extends BaseProvider {
         input_tokens: response.usage.input_tokens,
         output_tokens: response.usage.output_tokens,
       } : undefined,
+      model: response.model || this.getModel(),
+      raw: response.content,
     };
   }
 }

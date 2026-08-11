@@ -110,6 +110,8 @@ export class GeminiProvider extends BaseProvider {
         input_tokens: response.usageMetadata.promptTokenCount || 0,
         output_tokens: response.usageMetadata.candidatesTokenCount || 0,
       } : undefined,
+      model: this.getModel(),
+      raw: parts,
     };
   }
 }

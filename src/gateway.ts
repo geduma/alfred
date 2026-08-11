@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
@@ -38,7 +39,9 @@ interface GatewayRequest {
 }
 
 const MAX_SESSIONS = 100;
-const MAX_TOOL_ITERATIONS = 25;
+const MAX_TOOL_ITERATIONS = 12;
+const MAX_HALLUCINATED_ROUNDS = 3;
+const MAX_TRACE_BYTES = 65536;
 const SAVE_DEBOUNCE_MS = 5000;
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_TOOLS = 3;
@@ -173,6 +176,42 @@ export class Gateway {
       this.toolSchemaTokens = estimateTokenCount(JSON.stringify(this.getToolSchemas()));
     }
     return this.toolSchemaTokens;
+  }
+
+  private traceEnabled(): boolean {
+    return this.config.allConfig.agent.trace === true;
+  }
+
+  private writeAgentTrace(entry: Record<string, unknown>): void {
+    if (!this.traceEnabled()) return;
+    try {
+      const dir = WORKSPACE_PATHS.logs();
+      fs.mkdirSync(dir, { recursive: true });
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+      fs.appendFileSync(path.join(dir, 'agent-traces.jsonl'), `${line}\n`, 'utf-8');
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Agent trace write failed');
+    }
+  }
+
+  private serializeToolSchemasForTrace(): { names: string[]; hash: string } {
+    const schemas = this.getToolSchemas().map(t => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema,
+      },
+    }));
+    const hash = createHash('sha256').update(JSON.stringify(schemas)).digest('hex');
+    return { names: schemas.map(s => s.function.name), hash };
+  }
+
+  private truncateForTrace(value: unknown, maxBytes = MAX_TRACE_BYTES): unknown {
+    const raw = JSON.stringify(value);
+    if (raw === undefined) return undefined;
+    if (raw.length <= maxBytes) return value;
+    return { truncated: true, snippet: raw.slice(0, maxBytes) };
   }
 
   private getContextBudget(): number {
@@ -907,6 +946,7 @@ export class Gateway {
     systemPrompt: string,
     contextMessages: Message[],
     ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> },
+    runId: string,
     _onEvent: (event: string, payload: any) => void
   ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
     let finalSystem = systemPrompt;
@@ -915,30 +955,77 @@ export class Gateway {
     let allToolCalls: any[] = [];
     let totalUsage: any = undefined;
     let iteration = 0;
+    let consecutiveBadRounds = 0;
+
+    const source = ingestParams.metadata?.source === 'job' ? 'job' : 'interactive';
+    const toolSchemasForTrace = this.serializeToolSchemasForTrace();
 
     const maxIterations = this.config.allConfig.agent.max_tool_iterations || MAX_TOOL_ITERATIONS;
     while (iteration < maxIterations) {
+      const round = iteration + 1;
+      this.writeAgentTrace({
+        component: 'round_start',
+        runId,
+        round,
+        source,
+        messageCount: messages.length,
+        systemTokens: approximateSystemPromptTokens(finalSystem),
+        toolSchemaHash: toolSchemasForTrace.hash,
+        toolNames: toolSchemasForTrace.names,
+        maxTokens: this.getOutputTokens(),
+      });
+
       const response = await this.callWithAdaptiveRetry(session, messages, finalSystem);
 
-      if (!response.tool_calls || response.tool_calls.length === 0) {
+      const parsedToolCalls = response.tool_calls || [];
+      this.writeAgentTrace({
+        component: 'round_end',
+        runId,
+        round,
+        source,
+        model: response.model,
+        stop_reason: response.stop_reason,
+        usage: response.usage,
+        toolCalls: parsedToolCalls,
+        raw: this.truncateForTrace(response.raw),
+      });
+
+      if (parsedToolCalls.length === 0) {
         finalContent = response.content || '';
         totalUsage = response.usage;
         break;
       }
 
-      allToolCalls = allToolCalls.concat(response.tool_calls);
+      allToolCalls = allToolCalls.concat(parsedToolCalls);
 
       const assistantToolMsg: Message = {
         role: 'assistant',
         content: response.content || '',
-        tool_calls: response.tool_calls,
+        tool_calls: parsedToolCalls,
       };
       session.messages.push(assistantToolMsg);
       await this.ingestMessage(session, assistantToolMsg, ingestParams);
 
+      let roundBad = false;
+
       const executeTool = async (toolCall: any): Promise<void> => {
         const tool = this.tools.find(t => t.tool.name === toolCall.function.name);
         if (!tool) {
+          roundBad = true;
+          getLogger().warn(
+            { runId, round, toolName: toolCall.function.name },
+            'Agent loop: unknown tool name in tool_calls'
+          );
+          this.writeAgentTrace({
+            component: 'suspicious_round',
+            runId,
+            round,
+            source,
+            reason: 'unknown_tool_name',
+            toolName: toolCall.function.name,
+            arguments: toolCall.function.arguments,
+            raw: this.truncateForTrace(response.raw),
+          });
           const errorMsg: Message = { role: 'tool', content: `Tool "${toolCall.function.name}" not found or disabled`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
           return;
@@ -948,6 +1035,11 @@ export class Gateway {
         try {
           args = JSON.parse(toolCall.function.arguments);
         } catch {
+          roundBad = true;
+          getLogger().warn(
+            { runId, round, toolName: toolCall.function.name },
+            'Agent loop: invalid JSON in tool arguments'
+          );
           const errorMsg: Message = { role: 'tool', content: `Invalid JSON in tool arguments: ${toolCall.function.arguments}`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
           return;
@@ -1005,9 +1097,23 @@ export class Gateway {
         }
       };
 
-      for (let i = 0; i < response.tool_calls.length; i += MAX_CONCURRENT_TOOLS) {
-        const batch = response.tool_calls.slice(i, i + MAX_CONCURRENT_TOOLS);
+      for (let i = 0; i < parsedToolCalls.length; i += MAX_CONCURRENT_TOOLS) {
+        const batch = parsedToolCalls.slice(i, i + MAX_CONCURRENT_TOOLS);
         await Promise.all(batch.map(tc => executeToolWithTimeout(tc)));
+      }
+
+      consecutiveBadRounds = roundBad ? consecutiveBadRounds + 1 : 0;
+
+      if (consecutiveBadRounds >= MAX_HALLUCINATED_ROUNDS) {
+        finalContent = source === 'job'
+          ? '⚠️ Límite de iteraciones alcanzado por tool calls inválidos. Revisar manualmente.'
+          : 'Reached the iteration limit due to repeated invalid tool calls. Please review manually.';
+        totalUsage = response.usage;
+        getLogger().warn(
+          { runId, round, consecutiveBadRounds },
+          'Agent loop broken: repeated invalid tool calls'
+        );
+        break;
       }
 
       iteration++;
@@ -1017,7 +1123,10 @@ export class Gateway {
     }
 
     if (iteration >= maxIterations && !finalContent) {
-      finalContent = 'Reached maximum tool call iterations. Please refine your request.';
+      finalContent = source === 'job'
+        ? '⚠️ Límite de iteraciones alcanzado. Revisar manualmente.'
+        : 'Reached maximum tool call iterations. Please refine your request.';
+      getLogger().warn({ runId, iterations: iteration }, 'Agent loop reached max iterations');
     }
 
     return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage };
@@ -1159,6 +1268,7 @@ export class Gateway {
 
       const { content, toolCalls, usage } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
+        runId,
         () => {} // no-op for WebSocket events
       );
 
@@ -1259,6 +1369,7 @@ export class Gateway {
 
       const { content } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
+        runId,
         () => {}
       );
 

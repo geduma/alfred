@@ -49,6 +49,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
         input_tokens: response.usage.prompt_tokens,
         output_tokens: response.usage.completion_tokens,
       } : undefined,
+      model: response.model || this.getModel(),
+      raw: response,
     };
   }
 }

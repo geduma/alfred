@@ -196,6 +196,31 @@ describe('OpenAICompatibleProvider', () => {
       },
     }]);
   });
+
+  test('should expose the real served model and raw response for diagnostics', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    createMock.mockResolvedValue({
+      model: 'actual-model-served-by-gateway',
+      choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
+
+    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }], tools: TOOLS });
+
+    expect(response.model).toBe('actual-model-served-by-gateway');
+    const raw = response.raw as any;
+    expect(raw.model).toBe('actual-model-served-by-gateway');
+    expect(raw.choices[0].message.content).toBe('hi');
+  });
 });
 
 describe('GeminiProvider', () => {

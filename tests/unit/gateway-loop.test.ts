@@ -5,6 +5,7 @@ import { ConfigLoader } from '../../src/config/loader';
 import { Gateway } from '../../src/gateway';
 import { ToolHandler } from '../../src/types/tool';
 import { Message, ToolCall } from '../../src/types/llm';
+import { WORKSPACE_PATHS } from '../../src/utils/workspace';
 
 function buildConfig() {
   return {
@@ -239,6 +240,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'u', metadata: {} },
+      'run_ghost',
       () => {}
     );
 
@@ -249,6 +251,107 @@ describe('Gateway runAgentLoop', () => {
     expect(toolMsg).toBeDefined();
     expect((toolMsg as any).tool_call_id).toBe('call_ghost');
     expect((toolMsg as any).content).toContain('nonexistent_tool');
+  });
+
+  test('should break early on repeated unknown tool names instead of looping to the cap', async () => {
+    const unknownCall = {
+      content: '',
+      tool_calls: [{
+        id: 'call_ghost',
+        type: 'function',
+        function: { name: 'nonexistent_tool', arguments: '{}' },
+      }],
+      stop_reason: 'tool_use',
+    };
+    routerCall
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce({
+        content: 'should not be reached',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+      });
+
+    const session: any = {
+      id: 'session-earlybreak',
+      messages: [{ role: 'user', content: 'do something weird' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      'run_earlybreak',
+      () => {}
+    );
+
+    expect(routerCall).toHaveBeenCalledTimes(3);
+    expect(result.content).toContain('repeated invalid tool calls');
+    expect(session.messages.filter((m: Message) => m.role === 'tool')).toHaveLength(3);
+  });
+
+  test('should write agent traces with model, tool schemas, and raw response for suspicious rounds', async () => {
+    (gateway as any).config.allConfig.agent.trace = true;
+
+    const tracePath = path.join(WORKSPACE_PATHS.logs(), 'agent-traces.jsonl');
+    fs.rmSync(tracePath, { force: true });
+
+    routerCall
+      .mockResolvedValueOnce({
+        content: '',
+        tool_calls: [{
+          id: 'call_ghost',
+          type: 'function',
+          function: { name: 'nonexistent_tool', arguments: '{}' },
+        }],
+        stop_reason: 'tool_use',
+        model: 'probe-model',
+        raw: { choices: [{ message: { content: 'raw probe' } }] },
+      })
+      .mockResolvedValueOnce({
+        content: 'done',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+        model: 'probe-model',
+      });
+
+    const session: any = {
+      id: 'session-trace',
+      messages: [{ role: 'user', content: 'trace me' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      'run_trace_1',
+      () => {}
+    );
+
+    const lines = fs.readFileSync(tracePath, 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+
+    const roundStart = lines.find(l => l.component === 'round_start');
+    expect(roundStart).toBeDefined();
+    expect(roundStart.toolNames).toEqual(['exec']);
+    expect(roundStart.toolSchemaHash).toBeDefined();
+
+    const roundEnd = lines.find(l => l.component === 'round_end');
+    expect(roundEnd).toBeDefined();
+    expect(roundEnd.model).toBe('probe-model');
+
+    const suspicious = lines.filter(l => l.component === 'suspicious_round');
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].runId).toBe('run_trace_1');
+    expect(suspicious[0].toolName).toBe('nonexistent_tool');
+
+    fs.rmSync(tracePath, { force: true });
   });
 
   test('should repair dangling tool_calls when preparing context', async () => {

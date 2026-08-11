@@ -108,6 +108,7 @@ export interface AlfredConfig {
     version: string;
     personality_file: string;
     max_tool_iterations?: number;
+    trace?: boolean;
   };
   llm: LLMConfig;
   providers: Record<string, ProviderConfig>;
