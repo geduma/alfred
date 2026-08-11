@@ -12,6 +12,17 @@
 
 ## Skill Implementation Protocol
 
+**First, determine intent — execute vs. create:**
+- If the request names an existing skill (by name, or matches an entry already
+  listed under `## Available Skills`) and asks to run/execute/use it →
+  **execute that skill's instructions directly. Never create, edit, or
+  regenerate its SKILL.md file as part of fulfilling the request.**
+- Only fall into the create-skill flow below when the request describes new
+  functionality with no matching existing skill.
+
+When the user requests new functionality or integration (via any channel), the
+**default approach** is to implement it as a SKILL.md file using `file_ops`.
+
 Default for new functionality: create `/workspace/skills/custom/{skill-name}.SKILL.md`.
 - Achievable with existing tools (exec, file_ops, web, job, system) → the SKILL.md instructs how to orchestrate them.
 - Not achievable (new binaries/deps/capabilities) → state precisely what's missing and request implementation via code.
@@ -44,6 +55,8 @@ Scope: service credentials for skills only (LLM provider keys live in `alfred.js
 ## Reminder Jobs Protocol
 
 Use the `job` tool — never edit `{workspace}/memory/jobs/*.json` directly — to create (one-time or recurring), list, update, or cancel reminders. `mode: 'reminder'` (default) sends a static notification. `mode: 'agent'` routes the job's message through the agent so it can run a skill proactively.
+
+A job message such as "Run the Daily Digest skill" is an execution request for the named skill — never an instruction to create, edit, or regenerate that skill's SKILL.md file.
 
 Unattended runs (`mode: 'agent'`): only execute skills whose SKILL.md authorizes it (frontmatter `unattended: true`) and perform only their listed "Approved actions". Any action outside the approved list — especially anything irreversible — must be skipped and reported as "⚠️ requires approval" in the reply. This is a prompt-level contract, not a code-level permission gate. Agent runs are throttled by a minimum interval and the token budget; if skipped, notify the user why.
 

@@ -130,6 +130,14 @@ Single file: `workspace/config/alfred.json`
 
 ## Skill Implementation Protocol
 
+**First, determine intent — execute vs. create:**
+- If the request names an existing skill (by name, or matches an entry listed
+  under `## Available Skills`) and asks to run/execute/use it, **execute that
+  skill's instructions directly** — never create, edit, or regenerate its
+  SKILL.md file as part of fulfilling the request.
+- The create-skill flow only applies when the request describes new
+  functionality with no matching existing skill.
+
 When the user requests new functionality via any channel, Alfred's default
 response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/`.
 
@@ -137,6 +145,18 @@ response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/
 - **Tools used**: The skill instructs Alfred how to orchestrate `exec`, `file_ops`, `web`, `job`, and `system` tools
 - **Fallback**: If the functionality requires capabilities beyond these tools, Alfred explains why and requests code implementation
 - **Rule location**: `system/alfred-rules.md` → section "Skill Implementation Protocol"
+- **Reminder/job edge case**: a job message such as "Run the Daily Digest skill"
+  is an *execution* request for the named skill, never an instruction to create,
+  edit, or regenerate its SKILL.md file
+
+> **Deploy status (2026-08-11):** the execute-vs-create wording above was added to
+> `system/alfred-rules.md` and verified against the live dev instance (targeted
+> repro "Run the Daily Digest skill": 0 `file_ops` writes; control case with new
+> functionality: skill-creation flow still fires). Dev is already fixed because
+> the dev process reads `system/alfred-rules.md` on every prompt build
+> (`src/agent/prompt-builder.ts` → `loadRules()`). **Deploy to production is
+> pending**: the Docker image bakes its own copy of the rules, so run `./deploy.sh`
+> once the Docker daemon is available before enabling real `mode: 'agent'` jobs.
 
 Skills directories (all loaded by `SkillLoader.loadSkills()`):
 ```
