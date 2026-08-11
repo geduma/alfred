@@ -100,7 +100,7 @@ Edit `~/.alfred-personal/config/alfred.json`:
 ### v2.2
 ✅ Token spending limits — daily/monthly budgets with paid-provider gating  
 ✅ Daily digest, weekly review, and system check skills  
-✅ Web channel with config editor (live over WebSocket)
+✅ Web channel with chat + live metrics dashboard (auto-refresh over WebSocket)
 
 ### Roadmap
 ❌ Discord/Slack — roadmap (not implemented)  

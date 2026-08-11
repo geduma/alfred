@@ -69,6 +69,7 @@ export class Gateway {
   private lastAgentJobFire: Map<string, number> = new Map();
   private port: number;
   private host: string;
+  private startedAt: number = 0;
   private contextCompressor: ContextCompressor;
   private promptCompressor: PromptCompressor;
   private vectorStore: VectorStoreManager | null = null;
@@ -369,6 +370,7 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
     this.httpServer.listen(this.port, this.host);
 
+    this.startedAt = Date.now();
     this.startJobRunner();
     await this.initServices();
 
@@ -406,6 +408,8 @@ export class Gateway {
         '.json': 'application/json',
         '.png': 'image/png',
         '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.webmanifest': 'application/manifest+json',
       };
       res.writeHead(200, { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' });
       res.end(data);
@@ -895,14 +899,8 @@ export class Gateway {
         case 'tool_list':
           this.handleToolList(ws);
           break;
-        case 'reload':
-          await this.handleReload(ws, req);
-          break;
-        case 'config_get':
-          this.handleConfigGet(ws, req);
-          break;
-        case 'config_update':
-          await this.handleConfigUpdate(ws, req);
+        case 'metrics':
+          await this.handleMetrics(ws, req);
           break;
         default:
           this.sendError(ws, req.id, `Unknown method: ${req.method}`);
@@ -1392,24 +1390,99 @@ export class Gateway {
     }
   }
 
-  private async handleReload(ws: WebSocket, req: GatewayRequest): Promise<void> {
+  private async handleMetrics(ws: WebSocket, req: GatewayRequest): Promise<void> {
     try {
-      const log = getLogger();
+      const budgetTracker = this.llmRouter?.getBudgetTracker?.();
+      const limits = this.config.llmConfig.spending_limits;
 
-      log.info('Hot-reload triggered via WebSocket');
+      let budget: Record<string, unknown> = {
+        enabled: !!limits?.enabled,
+        allowed: true,
+        today: 0,
+        thisMonth: 0,
+        byProvider: {},
+        remainingPercent: 100,
+        dailyRemainingPercent: 100,
+        monthlyRemainingPercent: 100,
+      };
 
-      await this.reload();
+      if (budgetTracker) {
+        try {
+          const check = await budgetTracker.checkBudget();
+          const usage = await budgetTracker.getTokenUsage();
+          budget = {
+            enabled: !!limits?.enabled,
+            allowed: check.allowed,
+            reason: check.reason || undefined,
+            today: usage.today,
+            thisMonth: usage.thisMonth,
+            byProvider: usage.byProvider,
+            remainingPercent: check.remainingPercent,
+            dailyRemainingPercent: check.dailyRemainingPercent,
+            monthlyRemainingPercent: check.monthlyRemainingPercent,
+            dailyLimit: limits?.daily_token_limit || 0,
+            monthlyLimit: limits?.monthly_token_limit || 0,
+          };
+        } catch {
+          // budget read failed; report disabled state
+        }
+      }
+
+      const jobs = await this.jobScheduler.loadAllJobs().catch(() => []);
+      const enabledJobs = jobs.filter(j => j.enabled);
+      const nextDue = enabledJobs
+        .map(j => j.next_fire)
+        .filter((v): v is string => !!v)
+        .sort()[0];
+
+      let skills = 0;
+      try {
+        skills = (await this.skillLoader.loadSkills()).length;
+      } catch {
+        // skills count unavailable
+      }
+
+      let health = { findings: 0, errors: 0, items: [] as unknown[] };
+      if (this.healthMonitor) {
+        try {
+          const findings = await this.healthMonitor.getFindings();
+          health = {
+            findings: findings.length,
+            errors: findings.filter(f => f.severity === 'error').length,
+            items: findings,
+          };
+        } catch {
+          // health findings unavailable
+        }
+      }
+
+      const providerStates = this.llmRouter?.getCircuitStates?.() || [];
 
       this.sendResponse(ws, req.id, {
-        status: 'reloaded',
-        config: true,
-        llmRouter: true,
-        promptBuilder: true,
-        tools: true,
+        metrics: {
+          version: this.config.allConfig.agent.version,
+          uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
+          providers: {
+            primary: this.config.llmConfig.primary_provider,
+            chain: providerStates.map(s => s.provider),
+            states: providerStates,
+          },
+          budget,
+          sessions: { active: this.sessions.size },
+          webClients: this.webChannel?.clientCount ?? 0,
+          jobs: {
+            total: jobs.length,
+            enabled: enabledJobs.length,
+            nextDue: nextDue || null,
+          },
+          skills,
+          tools: this.tools.length,
+          health,
+        },
       });
     } catch (error: any) {
-      getLogger().error({ error: error.message }, 'Hot-reload failed');
-      this.sendError(ws, req.id, `Reload failed: ${error.message}`);
+      getLogger().error({ error: error.message }, 'Metrics collection failed');
+      this.sendError(ws, req.id, `Metrics failed: ${error.message}`);
     }
   }
 
@@ -1421,60 +1494,6 @@ export class Gateway {
     }));
 
     this.sendResponse(ws, 'tool_list', { tools: toolList });
-  }
-
-  private handleConfigGet(ws: WebSocket, req: GatewayRequest): void {
-    const raw = this.config.allConfig;
-    this.sendResponse(ws, req.id, { config: this.sanitizeConfig(raw) });
-  }
-
-  private async handleConfigUpdate(ws: WebSocket, req: GatewayRequest): Promise<void> {
-    const patch = req.params?.config;
-    if (!patch || typeof patch !== 'object') {
-      this.sendError(ws, req.id, 'config object is required');
-      return;
-    }
-
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.config.configPathValue, 'utf-8'));
-      const merged = this.deepMerge(raw, patch);
-      await this.config.writeRaw(merged);
-      this.sendResponse(ws, req.id, {
-        status: 'saved',
-        message: 'Configuration saved. Use "reload" to apply changes.',
-      });
-    } catch (error: any) {
-      getLogger().error({ error: error.message }, 'Config update failed');
-      this.sendError(ws, req.id, `Config update failed: ${error.message}`);
-    }
-  }
-
-  private sanitizeConfig(raw: any): any {
-    const redacted = JSON.parse(JSON.stringify(raw));
-    if (redacted.providers) {
-      for (const name of Object.keys(redacted.providers)) {
-        const config = redacted.providers[name]?.config;
-        if (config?.api_key) {
-          config.api_key = '*****';
-        }
-      }
-    }
-    if (redacted.security?.gateway_auth_token) {
-      redacted.security.gateway_auth_token = '*****';
-    }
-    return redacted;
-  }
-
-  private deepMerge(base: any, patch: any): any {
-    const out = Array.isArray(base) ? [...base] : { ...base };
-    for (const [key, value] of Object.entries(patch)) {
-      if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
-        out[key] = this.deepMerge(base[key], value);
-      } else {
-        out[key] = value;
-      }
-    }
-    return out;
   }
 
   private sendResponse(ws: WebSocket, id: string, payload: unknown): void {

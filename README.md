@@ -416,9 +416,9 @@ Steps performed:
 - **Health tool budget**: `health status` / `health budget` expose allowance, remaining %, and per-provider usage
 
 ### Web Channel
-- **Web UI**: static frontend in `web/` (chat + config editor) served by the gateway HTTP server
+- **Web UI**: static frontend in `web/` (chat + live metrics dashboard) served by the gateway HTTP server
 - **WebSocket routing**: `/ws` → web client (no auth yet — explicit TODO), root → main WS with auth token; same port (`server.port`, default 18789)
-- **Config via WS**: `config_get` (secrets sanitized as `*****`) and `config_update` (deep merge + persist, needs reload)
+- **Metrics via WS**: `metrics` returns runtime state — version/uptime, provider chain + circuit-breaker states, token budget (today/month/per-provider/remaining %), active sessions, web clients, jobs, skills, tools, and health findings
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
 ### Daily Life Agent

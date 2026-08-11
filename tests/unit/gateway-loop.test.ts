@@ -5,6 +5,7 @@ import { ConfigLoader } from '../../src/config/loader';
 import { Gateway } from '../../src/gateway';
 import { ToolHandler } from '../../src/types/tool';
 import { Message, ToolCall } from '../../src/types/llm';
+import { TokenBudgetTracker } from '../../src/services/token-budget';
 import { WORKSPACE_PATHS } from '../../src/utils/workspace';
 
 function buildConfig() {
@@ -570,5 +571,48 @@ describe('Gateway runAgentLoop', () => {
     expect(checkUser).not.toHaveBeenCalled();
     expect(checkChannel).not.toHaveBeenCalled();
     expect(typeof result).toBe('string');
+  });
+
+  test('processMessage should return a degraded message without calling the router when budget is blocked', async () => {
+    const testDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-degraded-'));
+    const configPath2 = path.join(testDir2, 'alfred.json');
+    fs.writeFileSync(
+      configPath2,
+      JSON.stringify({
+        ...buildConfig(),
+        llm: {
+          primary_provider: 'primary',
+          fallback_providers: [],
+          spending_limits: { enabled: true, daily_token_limit: 1000, monthly_token_limit: 10000, warn_threshold: 0.8, on_limit_reached: 'block_all' },
+        },
+      }, null, 2),
+      'utf-8'
+    );
+
+    const config = new ConfigLoader(configPath2);
+    const tracker = new TokenBudgetTracker(config);
+    jest.spyOn(tracker, 'checkBudget').mockResolvedValue({
+      allowed: false,
+      reason: 'daily_limit',
+      remainingPercent: 0,
+      dailyRemainingPercent: 0,
+      monthlyRemainingPercent: 50,
+    });
+
+    const fakeRouter: any = { call: routerCall, getBudgetTracker: () => tracker };
+    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
+    const g = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
+
+    const response = await g.processMessage({
+      channel: 'cli',
+      userId: 'user-1',
+      content: 'hola',
+      sessionId: 'session-1',
+    });
+
+    expect(response).toContain('degraded');
+    expect(routerCall).not.toHaveBeenCalled();
+    fs.rmSync(testDir2, { recursive: true, force: true });
   });
 });

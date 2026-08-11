@@ -334,7 +334,7 @@ The gateway serves a static web UI (`web/`) and exposes a WebSocket on the same 
 
 - **Routing**: single `http.Server` + `WebSocketServer({ noServer: true })`; upgrade requests for `/ws` → web client (no auth, **TODO**), any other path → main WS with `gateway_auth_token`
 - **Web client**: push-only via `WebChannel` — registers on connect, receives broadcasts (`{ type: 'notify', event: 'message' }`); the `agent` method responds via the `agent_complete` event, so the frontend uses fire-and-forget `AlfredWS.send`
-- **Config API**: `config_get` (api_key/gateway_auth_token sanitized as `*****`) and `config_update` (deep merge + `writeRaw`; requires `reload`)
+- **Metrics API**: `metrics` returns runtime state (version/uptime, provider chain + circuit-breaker states, token budget, active sessions, web clients, jobs, skills, tools, health findings); the frontend polls it every 5s
 - **Config**: `server.port` (default 18789, `0` for ephemeral/test), `server.host` (default `0.0.0.0`)
 - **Docker**: `web/` copied in both builder and runtime stages; `deploy.sh` post-deploy healthcheck probes port 18789 (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exit 1 with logs on failure)
 
