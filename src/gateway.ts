@@ -150,7 +150,9 @@ export class Gateway {
     const healthConfig = this.config.healthMonitor;
     if (healthConfig?.enabled) {
       const notifier = new NotificationService(healthConfig, this.channelManager);
-      const logPath = this.config.logging.config.file_path || WORKSPACE_PATHS.alfredLog();
+      const logPath = this.config.logging.config.file_path
+        ? path.join(this.config.logging.config.file_path, 'alfred.log')
+        : WORKSPACE_PATHS.alfredLog();
       this.healthMonitor = new HealthMonitor(healthConfig, notifier, logPath);
     } else {
       this.healthMonitor = null;
