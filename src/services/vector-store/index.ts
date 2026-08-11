@@ -8,6 +8,32 @@ const DEFAULT_TABLE_NAME = 'messages';
 
 type LanceDB = typeof import('@lancedb/lancedb');
 
+export interface SearchOptions {
+  excludeSessionId?: string;
+  excludeMessageIds?: string[];
+}
+
+export interface ScoredRow {
+  row: Record<string, any>;
+  score: number;
+}
+
+export function filterSearchResults(
+  scored: ScoredRow[],
+  topK: number,
+  options?: SearchOptions
+): ScoredRow[] {
+  const excludedMessageIds = new Set(options?.excludeMessageIds || []);
+  const kept = scored
+    .filter(({ row }) => {
+      if (options?.excludeSessionId && row.sessionId === options.excludeSessionId) return false;
+      if (row.messageId && excludedMessageIds.has(row.messageId)) return false;
+      return true;
+    })
+    .sort((a, b) => b.score - a.score);
+  return kept.slice(0, topK);
+}
+
 export class VectorStoreManager {
   private db: any = null;
   private table: any = null;
@@ -117,7 +143,7 @@ export class VectorStoreManager {
     }
   }
 
-  async search(query: string, topK?: number): Promise<SearchResult[]> {
+  async search(query: string, topK?: number, options?: SearchOptions): Promise<SearchResult[]> {
     if (!this.initialized || !this.table) return [];
 
     const k = topK || this.config.search.top_k || 5;
@@ -128,22 +154,21 @@ export class VectorStoreManager {
 
       if (!Array.isArray(results)) return [];
 
-      return results
-        .filter((r: any) => {
-          const score = this.cosineSimilarity(queryVector, this.toNumberArray(r.vector));
-          return score >= (this.config.search.min_score || 0.5);
-        })
-        .slice(0, k)
-        .map((r: any) => ({
-          text: r.text as string,
-          score: this.cosineSimilarity(queryVector, this.toNumberArray(r.vector)),
+      const scored = results
+        .map(r => ({ row: r, score: this.cosineSimilarity(queryVector, this.toNumberArray(r.vector)) }))
+        .filter(x => x.score >= (this.config.search.min_score || 0.5));
+
+      return filterSearchResults(scored, k, options)
+        .map(({ row, score }) => ({
+          text: row.text as string,
+          score,
           metadata: {
-            sessionId: r.sessionId as string,
-            channel: r.channel as string,
-            userId: r.userId as string,
-            timestamp: r.timestamp as string,
-            role: r.role as 'user' | 'assistant' | 'tool',
-            messageId: r.messageId as string,
+            sessionId: row.sessionId as string,
+            channel: row.channel as string,
+            userId: row.userId as string,
+            timestamp: row.timestamp as string,
+            role: row.role as 'user' | 'assistant' | 'tool',
+            messageId: row.messageId as string,
           },
         }));
     } catch (error: any) {

@@ -39,6 +39,27 @@ export class LLMRouter {
     return isPaidProvider(provider.type, provider.paid);
   }
 
+  providerSupportsTools(name: string): boolean {
+    const provider = this.config.providers[name];
+    return provider?.capabilities?.supports_tools !== false;
+  }
+
+  messagesContainToolArtifacts(messages: LLMCallParams['messages']): boolean {
+    return messages.some(m => m.role === 'tool' || (m.tool_calls !== undefined && m.tool_calls.length > 0));
+  }
+
+  stripToolArtifacts(messages: LLMCallParams['messages']): LLMCallParams['messages'] {
+    return messages.flatMap(m => {
+      if (m.role === 'tool') {
+        return [];
+      }
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        return [{ role: m.role, content: m.content }];
+      }
+      return [m];
+    });
+  }
+
   getBudgetTracker(): TokenBudgetTracker {
     return this.budgetTracker;
   }
@@ -96,6 +117,11 @@ export class LLMRouter {
     const startIndex = this.currentIndex;
     const attempts: Array<{ provider: string; error?: string }> = [];
 
+    if (Array.isArray(params.tools) && params.tools.length === 0 && this.messagesContainToolArtifacts(params.messages)) {
+      getLogger().warn({}, 'Call has no tools but messages contain tool artifacts; stripping artifacts');
+      params = { ...params, messages: this.stripToolArtifacts(params.messages) };
+    }
+
     for (let i = 0; i < chain.length; i++) {
       const idx = (startIndex + i) % chain.length;
       const providerName = chain[idx];
@@ -111,13 +137,30 @@ export class LLMRouter {
         continue;
       }
 
+      if (!this.providerSupportsTools(providerName)) {
+        if (this.messagesContainToolArtifacts(params.messages)) {
+          getLogger().warn(
+            { provider: providerName },
+            'Provider does not support tools but payload contains tool artifacts; skipping provider'
+          );
+          attempts.push({ provider: providerName, error: 'Provider lacks tool support and payload contains tool artifacts' });
+          continue;
+        }
+        getLogger().warn(
+          { provider: providerName },
+          'Provider does not support tools; omitting tools for this call'
+        );
+      }
+
+      const callParams = this.providerSupportsTools(providerName) ? params : { ...params, tools: undefined };
+
       let lastError: unknown;
       let exhausted = false;
 
       for (let attempt = 0; attempt < this.retry.max_attempts; attempt++) {
         try {
           getLogger().debug({ provider: providerName, attempt: attempt + 1 }, 'Calling LLM provider');
-          const response = await provider.call(params);
+          const response = await provider.call(callParams);
 
           this.circuitBreaker.recordSuccess(providerName);
           this.currentIndex = 0;

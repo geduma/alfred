@@ -27,6 +27,7 @@ export interface Job {
   next_fire: string | null;
   last_fired: string | null;
   enabled: boolean;
+  mode?: 'reminder' | 'agent';
 }
 
 export interface JobSchedule {
@@ -61,6 +62,7 @@ export class JobSchedulerTool implements ToolHandler {
         cron_day_of_week: { type: 'array', items: { type: 'number' }, description: 'Days of week (0=Sun, 1=Mon, ..., 6=Sat)' },
         cron_day_of_month: { type: 'array', items: { type: 'number' }, description: 'Days of month (1-31)' },
         human: { type: 'string', description: 'Human readable description of the schedule' },
+        mode: { type: 'string', enum: ['reminder', 'agent'], description: 'reminder (default) delivers a static notification; agent routes the message through the agent, which can run skills' },
         channel: { type: 'string', description: 'Specific channel to notify (default: all active channels)' },
         enabled: { type: 'boolean', description: 'Enable or disable a job' },
       },
@@ -116,6 +118,7 @@ export class JobSchedulerTool implements ToolHandler {
       next_fire: this.computeNextFire(schedule),
       last_fired: null,
       enabled: true,
+      mode: params.mode === 'agent' ? 'agent' : 'reminder',
     };
 
     this.saveJob(job);
@@ -175,6 +178,10 @@ export class JobSchedulerTool implements ToolHandler {
     if (params.channel) {
       job.notification_channels = [params.channel as string];
       updates.push('notification channel');
+    }
+    if (params.mode === 'reminder' || params.mode === 'agent') {
+      job.mode = params.mode;
+      updates.push('mode');
     }
 
     this.saveJob(job);
@@ -343,7 +350,7 @@ export class JobSchedulerTool implements ToolHandler {
     JOB_FILE_CACHE.clear();
   }
 
-  async fireDueJobs(channelManager: any): Promise<void> {
+  async fireDueJobs(channelManager: any, onJobFire?: (job: Job) => Promise<void>): Promise<void> {
     const now = Date.now();
     const jobs = await this.loadAllJobs();
 
@@ -352,14 +359,10 @@ export class JobSchedulerTool implements ToolHandler {
 
       const fireTime = new Date(job.next_fire).getTime();
       if (fireTime <= now) {
-        getLogger().info({ jobId: job.id, message: job.message }, 'Firing job');
+        getLogger().info({ jobId: job.id, message: job.message, mode: job.mode || 'reminder' }, 'Firing job');
 
-        try {
-          await this.deliver(job, channelManager);
-        } catch (error: any) {
-          getLogger().error({ jobId: job.id, error: error.message }, 'Job delivery failed');
-        }
-
+        // Advance the schedule BEFORE firing so a slow agent run (or a long delivery)
+        // cannot cause a double-fire on the next poll.
         if (job.schedule.type === 'once') {
           await this.deleteJobFile(job.id);
           JOB_FILE_CACHE.delete(job.id);
@@ -367,6 +370,21 @@ export class JobSchedulerTool implements ToolHandler {
           job.last_fired = new Date().toISOString();
           job.next_fire = this.computeNextFire(job.schedule);
           this.saveJob(job);
+        }
+
+        try {
+          if (job.mode === 'agent') {
+            if (onJobFire) {
+              await onJobFire(job);
+            } else {
+              getLogger().warn({ jobId: job.id }, 'Agent-mode job fired without an onJobFire handler; delivering as reminder');
+              await this.deliver(job, channelManager);
+            }
+          } else {
+            await this.deliver(job, channelManager);
+          }
+        } catch (error: any) {
+          getLogger().error({ jobId: job.id, error: error.message }, 'Job delivery failed');
         }
       }
     }));

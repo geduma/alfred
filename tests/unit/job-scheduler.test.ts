@@ -92,4 +92,108 @@ describe('JobSchedulerTool', () => {
     expect(sent[0][1]).toBe('1155903655');
     expect(sent[0][3]).toEqual({ chat_id: 777 });
   });
+
+  test('should persist agent mode on create and update', async () => {
+    const created = await tool.execute({
+      action: 'create',
+      message: 'Digest',
+      cron_hour: 7,
+      cron_minute: 30,
+      mode: 'agent',
+      __context: { channel: 'telegram', userId: 'u1' },
+    });
+    expect(created.success).toBe(true);
+
+    let jobs = await (tool as any).loadAllJobs() as Job[];
+    let job = jobs.find((j: Job) => j.message === 'Digest');
+    expect(job!.mode).toBe('agent');
+
+    const idMatch = created.output.match(/ID: (job_\w+)/);
+    await tool.execute({ action: 'update', job_id: idMatch![1], mode: 'reminder' });
+    jobs = await (tool as any).loadAllJobs() as Job[];
+    job = jobs.find((j: Job) => j.message === 'Digest');
+    expect(job!.mode).toBe('reminder');
+  });
+
+  test('should default mode to reminder when not specified', async () => {
+    await tool.execute({ action: 'create', message: 'Plain', delay_minutes: 5 });
+    const jobs = await (tool as any).loadAllJobs() as Job[];
+    expect(jobs.find((j: Job) => j.message === 'Plain')!.mode).toBe('reminder');
+  });
+
+  test('should route agent-mode jobs through onJobFire instead of sendMessage', async () => {
+    await tool.execute({
+      action: 'create',
+      message: 'Run the System Check skill',
+      delay_minutes: 5,
+      mode: 'agent',
+      __context: { channel: 'telegram', userId: 'u1', chat_id: 999 },
+    });
+
+    const jobs = await (tool as any).loadAllJobs() as Job[];
+    const job = jobs.find((j: Job) => j.message === 'Run the System Check skill');
+    job!.next_fire = new Date(Date.now() - 1000).toISOString();
+
+    const channelManager = { sendMessage: jest.fn() };
+    const onJobFire = jest.fn();
+
+    await tool.fireDueJobs(channelManager, onJobFire);
+
+    expect(onJobFire).toHaveBeenCalledTimes(1);
+    expect(onJobFire.mock.calls[0][0]).toMatchObject({ mode: 'agent', message: 'Run the System Check skill' });
+    expect(channelManager.sendMessage).not.toHaveBeenCalled();
+  });
+
+  test('should fall back to reminder delivery when agent job has no onJobFire handler', async () => {
+    await tool.execute({
+      action: 'create',
+      message: 'Orphan agent job',
+      delay_minutes: 5,
+      mode: 'agent',
+      __context: { channel: 'telegram', userId: 'u1', chat_id: 1 },
+    });
+
+    const jobs = await (tool as any).loadAllJobs() as Job[];
+    const job = jobs.find((j: Job) => j.message === 'Orphan agent job');
+    job!.next_fire = new Date(Date.now() - 1000).toISOString();
+
+    const sent: string[] = [];
+    const channelManager = {
+      sendMessage: async (_ch: string, _userId: string, message: string) => {
+        sent.push(message);
+      },
+    };
+
+    await tool.fireDueJobs(channelManager);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Orphan agent job');
+  });
+
+  test('should advance schedule before firing an agent job to avoid double fire', async () => {
+    await tool.execute({
+      action: 'create',
+      message: 'Once agent',
+      delay_minutes: 5,
+      mode: 'agent',
+      __context: { channel: 'telegram', userId: 'u1' },
+    });
+
+    const jobs = await (tool as any).loadAllJobs() as Job[];
+    const job = jobs.find((j: Job) => j.message === 'Once agent');
+    job!.next_fire = new Date(Date.now() - 1000).toISOString();
+
+    let duringCallback = false;
+    const channelManager = { sendMessage: jest.fn() };
+    const onJobFire = jest.fn(async () => {
+      duringCallback = true;
+      const remaining = await (tool as any).loadAllJobs() as Job[];
+      expect(remaining.find((j: Job) => j.message === 'Once agent')).toBeUndefined();
+    });
+
+    await tool.fireDueJobs(channelManager, onJobFire);
+
+    expect(onJobFire).toHaveBeenCalledTimes(1);
+    expect(duringCallback).toBe(true);
+  });
 });

@@ -138,14 +138,16 @@ response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/
 - **Fallback**: If the functionality requires capabilities beyond these tools, Alfred explains why and requests code implementation
 - **Rule location**: `system/alfred-rules.md` → section "Skill Implementation Protocol"
 
-Skills directories:
+Skills directories (all loaded by `SkillLoader.loadSkills()`):
 ```
 /workspace/skills/
-├── custom/    ← User-requested custom skills
+├── custom/    ← User-requested custom skills (highest precedence)
+├── (root)     ← Skills at the skills root
 ├── system/    ← System-level skills
 ├── web/       ← Web-oriented skills
 └── files/     ← File-oriented skills
 ```
+Duplicate names resolve by precedence: custom > root > system > web > files. The 30s watcher invalidates the whole cache, so files added to any of these dirs are picked up without a restart.
 
 ## Secrets Management
 
@@ -167,10 +169,15 @@ Alfred must never output secret values in responses or log them. The `exec` tool
 
 - Reminders stored as JSON in `workspace/memory/jobs/{id}.json`
 - Supports: one-time (`delay_minutes`), daily, weekly (`day_of_week`), monthly (`day_of_month`)
-- Recurring jobs auto-compute next fire time
+- Recurring jobs auto-compute next fire time; the schedule advances **before** firing so slow agent runs never double-fire
 - JobRunner in gateway checks every 30 seconds
 - Notifications sent to the originating channel (or all channels if not specified)
 - User can list, update, and cancel any job
+- **`mode: 'agent'`**: routes the job's message through the agent (via `processMessage`) so a skill can run proactively. Uses a dedicated session (`{channel}_{user}_jobs`), bypasses the rate limiter, and is gated by:
+  - `AGENT_JOB_MIN_INTERVAL_MS` (30 min) per job, and
+  - the token budget (`checkBudget()`): skipped if exhausted or under 10% remaining
+  - Skips log `skip_reason: 'min_interval' | 'budget'` and notify the channel; the job simply waits for its next scheduled fire (no retry). If no handler is wired, an agent-mode job falls back to a static reminder.
+  - **Unattended contract**: only skills with `unattended: true` in frontmatter may run; only their listed "Approved actions" are allowed; anything else is skipped and reported as "requires approval". Prompt-level contract, not a code-level permission gate.
 
 ## Session Persistence
 
@@ -335,7 +342,7 @@ Key files: `src/gateway.ts`, `src/channels/web.ts`, `web/`, `src/config/loader.t
 
 ## Default Skills (v2.2)
 
-On first startup Alfred auto-copies new files from `system/skills-custom/` into `workspace/skills/custom/` (copy-if-missing, never overwrites). `SkillLoader.loadSkills()` scans both the skills root and `skillsDir/custom`.
+On first startup Alfred auto-copies new files from `system/skills-custom/` into `workspace/skills/custom/` (copy-if-missing, never overwrites). `SkillLoader.loadSkills()` scans the skills root, `skillsDir/custom`, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files).
 
 Bundled: `daily-digest`, `weekly-review`, `system-check` — with instructions in Spanish for the day-to-day agent use cases.
 
@@ -344,6 +351,11 @@ Key files: `system/skills-custom/`, `src/index.ts` (`copyDefaultSkills`), `src/a
 ## LLM Provider Agnosticism (v2.2)
 
 Alfred remains 100% agnostic to LLM providers — no code references any specific vendor (e.g. Relio). Provider-related strategies (routing strategy, cache-aware selection, cost-aware ranking) are **documentation-only** (README/AGENTS.md) and are not hardcoded in source. Add provider-specific behavior only through the Provider Factory pattern in `src/agent/providers/`.
+
+### Tool payload invariants (`src/agent/llm-router.ts`)
+
+- Provider config may declare `capabilities.supports_tools: false`. The router then omits `tools` from the payload; if the message history contains `tool` results or `assistant.tool_calls`, that provider is **skipped** (never sent a malformed artifact-bearing payload) and the chain fails over.
+- If a caller passes an **empty `tools: []`** (the gateway's 413 fallback "retry without tools") while the history still contains tool artifacts, the router **strips the artifacts** (drops `tool`-role messages and `tool_calls` from assistant messages) before calling. This mirrors the same invariant from the other direction: no tools ⇒ no artifacts.
 
 ## Auto-Created Configs
 

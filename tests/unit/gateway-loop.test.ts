@@ -372,4 +372,100 @@ describe('Gateway runAgentLoop', () => {
 
     expect(routerCall).toHaveBeenCalledTimes(1);
   });
+
+  describe('agent-mode job firing', () => {
+    let processSpy: jest.SpyInstance;
+
+    const allowBudget = () => {
+      (gateway as any).llmRouter.getBudgetTracker = () => ({
+        checkBudget: async () => ({ allowed: true, remainingPercent: 100 }),
+      });
+    };
+
+    const makeJob = (overrides: any = {}) => ({
+      id: 'job_digest',
+      message: 'Run the Daily Digest skill',
+      mode: 'agent' as const,
+      created_by: { channel: 'telegram', user_id: 'u1', chat_id: 42 },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      allowBudget();
+      processSpy = jest.spyOn(gateway, 'processMessage').mockResolvedValue('Good morning ☀️');
+    });
+
+    afterEach(() => {
+      processSpy.mockRestore();
+      (gateway as any).lastAgentJobFire.clear();
+    });
+
+    test('should route an agent job through processMessage with a dedicated session and send the reply to the channel', async () => {
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).toHaveBeenCalledTimes(1);
+      expect(processSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
+        channel: 'telegram',
+        userId: 'u1',
+        content: 'Run the Daily Digest skill',
+        sessionId: 'telegram_u1_jobs',
+        metadata: { source: 'job', jobId: 'job_digest' },
+      }));
+
+      expect((gateway as any).channelManager.sendMessage)
+        .toHaveBeenCalledWith('telegram', 'u1', 'Good morning ☀️', { chat_id: 42 });
+    });
+
+    test('should skip an agent job when the min interval has not elapsed', async () => {
+      (gateway as any).lastAgentJobFire.set('job_digest', Date.now());
+
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).toHaveBeenCalled();
+      const msg = (gateway as any).channelManager.sendMessage.mock.calls[0];
+      expect(msg[0]).toBe('telegram');
+      expect(String(msg[2])).toContain('Skipped');
+    });
+
+    test('should skip an agent job when the token budget is exhausted', async () => {
+      (gateway as any).llmRouter.getBudgetTracker = () => ({
+        checkBudget: async () => ({ allowed: false, reason: 'daily_limit', remainingPercent: 0 }),
+      });
+
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).toHaveBeenCalled();
+    });
+
+    test('should record the fire time after a successful pass', async () => {
+      await (gateway as any).handleAgentJobFire(makeJob());
+      expect((gateway as any).lastAgentJobFire.get('job_digest')).toBeDefined();
+    });
+  });
+
+  test('should skip rate limiting for job-triggered messages', async () => {
+    const checkUser = jest.spyOn((gateway as any).rateLimiter, 'checkUser');
+    const checkChannel = jest.spyOn((gateway as any).rateLimiter, 'checkChannel');
+
+    (gateway as any).sessions.set('telegram_u1_jobs', {
+      id: 'telegram_u1_jobs',
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const result = await (gateway as any).processMessage({
+      channel: 'telegram',
+      userId: 'u1',
+      content: 'Run the System Check skill',
+      sessionId: 'telegram_u1_jobs',
+      metadata: { source: 'job', jobId: 'job_x' },
+    });
+
+    expect(checkUser).not.toHaveBeenCalled();
+    expect(checkChannel).not.toHaveBeenCalled();
+    expect(typeof result).toBe('string');
+  });
 });

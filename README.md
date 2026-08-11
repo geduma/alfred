@@ -239,7 +239,7 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 | `exec` | Execute shell commands (allowlist/denylist enforced) |
 | `file_ops` | Read/write/edit/list files within permitted paths |
 | `web` | Web search (DuckDuckGo) and URL content fetch |
-| `job` | Schedule one-time and recurring reminders |
+| `job` | Schedule one-time and recurring reminders; `mode: 'agent'` runs the message through the agent (can execute skills proactively) |
 | `system` | Health/status/reload delegated to the gateway |
 | `health` | Health monitor + token budget + circuit states — `status`/`budget`/`findings`/`check`/`configure` |
 | `memory` | Conditional — vector search + snapshots (registered only when the memory system is enabled) |
@@ -254,9 +254,15 @@ Example: _"Respond in English and be more concise"_ → Alfred adds `language: e
 
 ## Skills & Secrets
 
-Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task.
+Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task. `SkillLoader` also scans `/workspace/skills/system/`, `/workspace/skills/web/`, and `/workspace/skills/files/`; duplicate names resolve with precedence **custom > root > system > web > files**.
 
 On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — written in English) into `/workspace/skills/custom/` without overwriting existing files.
+
+### Proactive skills via agent-mode jobs
+
+A job with `mode: 'agent'` routes its message through the agent when it fires, so a skill can actually run without you being present (e.g. a daily digest every morning). Each firing is a full LLM run and consumes tokens; the bundled skills carry `unattended: true` in their frontmatter and may only perform their listed "Approved actions" during unattended runs — anything else is skipped and reported as "requires approval". This is a **prompt-level contract, not a hard code-level permission gate**.
+
+**Cost warning:** without `spending_limits` configured (opt-in in `alfred.json`), the only brake against a misconfigured proactive job is the minimum interval between agent firings (`AGENT_JOB_MIN_INTERVAL_MS`, 30 minutes). Configure `spending_limits` if you want a hard cap on spend; otherwise `mode: 'agent'` jobs rely on the interval alone.
 
 **Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
 
@@ -280,6 +286,8 @@ Switch providers by editing `alfred.json`:
 ```
 
 Supported: OpenAI-compatible (Ollama, RunPod, LocalAI), Anthropic Claude, OpenAI, Google Gemini. Automatic fallback if the primary provider fails.
+
+Per-provider `capabilities.supports_tools` (default `true`): when `false`, the router omits the tools payload for that provider (saves tokens). If the request history still contains `tool_calls`/`tool` results, the provider is skipped and the chain fails over — it is never sent a malformed tool-bearing payload.
 
 ## Architecture
 
@@ -414,7 +422,7 @@ Steps performed:
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
 ### Daily Life Agent
-- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans both the skills root and the custom subdir
+- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans the skills root, the custom subdir, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files); `job mode:'agent'` lets scheduled jobs run skills proactively (unattended, min-interval + budget guards)
 
 ### Ops & Resilience (no breaking changes)
 - **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
