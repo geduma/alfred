@@ -1,18 +1,36 @@
-import { Bot, Context } from 'grammy';
+import { Bot, Context, InputFile } from 'grammy';
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
 import { getLogger } from '../utils/logger';
+import { VoiceService } from '../services/voice';
+import { VoiceConfig } from '../types/config';
+import { WORKSPACE_PATHS } from '../utils/workspace';
+
+const VOICE_REPLY_MARKER = '[AUDIO]';
+const MAX_CAPTION_LENGTH = 1024;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 export class TelegramChannel implements Channel {
   private bot: Bot;
   private channelManager: ChannelManager;
   private allowList: string[];
+  private token: string;
+  private voiceConfig: VoiceConfig | null = null;
+  private voiceService: VoiceService | null = null;
 
   constructor(channelManager: ChannelManager, config: Record<string, unknown>) {
     this.channelManager = channelManager;
     this.allowList = (config as any).permissions?.allow_from || [];
-    const token = (config as any).config?.bot_token as string;
-    this.bot = new Bot(token);
+    this.token = (config as any).config?.bot_token as string;
+    this.voiceConfig = config.voice as VoiceConfig | null;
+    if (this.voiceConfig?.enabled) {
+      this.voiceService = new VoiceService(this.voiceConfig);
+    }
+    this.bot = new Bot(this.token);
   }
 
   async start(): Promise<void> {
@@ -26,19 +44,63 @@ export class TelegramChannel implements Channel {
         return;
       }
 
+      const chatId = ctx.chat?.id;
+      if (!chatId) return;
+
+      let text = ctx.message.text || '';
+      let inputType = 'text';
+      let detectedLanguage: string | undefined;
+
+      if (!text && this.voiceService && (ctx.message.voice || ctx.message.audio)) {
+        const fileId = ctx.message.voice?.file_id || ctx.message.audio?.file_id;
+        if (fileId) {
+          const ext = ctx.message.audio?.file_name?.split('.').pop()
+            || (ctx.message.voice ? 'ogg' : 'm4a');
+          const tempPath = path.join(
+            WORKSPACE_PATHS.files(), 'audio', 'incoming', `${ctx.message.message_id}.${ext}`
+          );
+
+          try {
+            const file = await ctx.api.getFile(fileId);
+            if (!file.file_path) throw new Error('Telegram file path missing');
+            const downloadUrl = `https://api.telegram.org/file/bot${this.token}/${file.file_path}`;
+            const response = await axios.get(downloadUrl, {
+              responseType: 'arraybuffer',
+              timeout: DOWNLOAD_TIMEOUT_MS,
+              maxContentLength: MAX_DOWNLOAD_BYTES,
+            });
+
+            await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+            await fs.promises.writeFile(tempPath, Buffer.from(response.data));
+
+            const transcript = await this.voiceService.transcribe(tempPath);
+            text = transcript.text;
+            detectedLanguage = transcript.language;
+            inputType = 'voice';
+          } catch (error: any) {
+            getLogger().error({ error: error.message, userId }, 'Voice message processing failed');
+            await ctx.reply("No pude entender el audio.").catch(() => {});
+            return;
+          } finally {
+            await fs.promises.unlink(tempPath).catch(() => {});
+          }
+        }
+      }
+
+      if (!text) return;
+
       const msg: ChannelMessage = {
         channel: 'telegram',
         userId,
         userName: ctx.from.username || ctx.from.first_name,
-        content: ctx.message.text || '',
+        content: text,
         sessionId: `telegram_${userId}`,
-        metadata: { chat_id: ctx.chat?.id },
+        metadata: {
+          chat_id: chatId,
+          input_type: inputType,
+          ...(detectedLanguage ? { speaches_language: detectedLanguage } : {}),
+        },
       };
-
-      if (!msg.content) return;
-
-      const chatId = ctx.chat?.id;
-      if (!chatId) return;
 
       ctx.api.sendChatAction(chatId, 'typing').catch(() => {});
 
@@ -51,7 +113,20 @@ export class TelegramChannel implements Channel {
         clearInterval(typingInterval);
 
         if (response) {
-          await this.sendMessage(userId, response, { chat_id: chatId });
+          const { text: replyText, synthesizeVoice } = await this.shouldSynthesizeVoice(response);
+          if (synthesizeVoice && this.voiceService) {
+            try {
+              const audio = await this.voiceService.synthesize(replyText);
+              await this.bot.api.sendAudio(chatId, new InputFile(audio, 'alfred.wav'), {
+                caption: replyText.slice(0, MAX_CAPTION_LENGTH),
+              });
+            } catch (error: any) {
+              getLogger().error({ error: error.message, userId }, 'Voice reply synthesis failed, falling back to text');
+              await this.sendMessage(userId, replyText, { chat_id: chatId });
+            }
+          } else {
+            await this.sendMessage(userId, replyText, { chat_id: chatId });
+          }
         } else {
           getLogger().warn({ userId }, 'Empty response from handler');
           await ctx.reply("I'm sorry, I didn't get a response. Could you repeat that?");
@@ -83,4 +158,40 @@ export class TelegramChannel implements Channel {
   async stop(): Promise<void> {
     await this.bot.stop();
   }
+
+  private async shouldSynthesizeVoice(response: string): Promise<{ text: string; synthesizeVoice: boolean }> {
+    if (!this.voiceService || !this.voiceConfig) {
+      return { text: response, synthesizeVoice: false };
+    }
+
+    const markerMatch = response.match(/\n?\[AUDIO\]\s*$/);
+    if (markerMatch && this.voiceService.isExposedToModel()) {
+      return {
+        text: response.slice(0, response.length - markerMatch[0].length),
+        synthesizeVoice: true,
+      };
+    }
+
+    const voiceReplies = await this.readPreference('voice_replies');
+    if (voiceReplies === 'always') {
+      return { text: response, synthesizeVoice: true };
+    }
+
+    return { text: response, synthesizeVoice: false };
+  }
+
+  private async readPreference(key: string): Promise<string | null> {
+    try {
+      const raw = await fs.promises.readFile(WORKSPACE_PATHS.preferences(), 'utf-8');
+      for (const line of raw.split('\n')) {
+        const match = line.match(new RegExp(`^${key}:\\s*(.+)$`));
+        if (match) return match[1].trim();
+      }
+    } catch {
+      // preferences file missing, treat as unset
+    }
+    return null;
+  }
 }
+
+export { VOICE_REPLY_MARKER };

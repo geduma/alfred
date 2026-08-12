@@ -213,6 +213,24 @@
       }
     }
   },
+  "voice": {
+    "enabled": false,
+    "timeout_seconds": 60,
+    "provider": {
+      "api_url": "http://speaches.home/v1",
+      "api_key": ""
+    },
+    "stt": {
+      "model": "Systran/faster-whisper-base",
+      "language": "auto"
+    },
+    "tts": {
+      "model": "speaches-ai/piper-es_MX-ald-medium",
+      "voice": "ald",
+      "response_format": "wav",
+      "expose_to_model": false
+    }
+  },
   "server": {
     "port": 18789,
     "host": "0.0.0.0"

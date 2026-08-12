@@ -130,4 +130,36 @@ describe('ConfigLoader', () => {
 
     expect(() => new ConfigLoader(configPath)).toThrow();
   });
+
+  test('should load optional voice config with per-direction providers', () => {
+    const cfg = buildConfig();
+    (cfg as any).voice = {
+      enabled: true,
+      timeout_seconds: 60,
+      provider: { api_url: 'http://speaches.home/v1', api_key: '' },
+      stt: {
+        provider: { api_url: 'https://api.groq.com/openai/v1', api_key: 'groq-key' },
+        model: 'whisper-large-v3-turbo',
+        language: 'auto',
+      },
+      tts: {
+        model: 'speaches-ai/piper-es_MX-ald-medium',
+        voice: 'ald',
+        response_format: 'wav',
+        expose_to_model: true,
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.voiceConfig).toBeDefined();
+    expect(loader.voiceConfig?.enabled).toBe(true);
+    expect(loader.voiceConfig?.stt?.provider?.api_url).toBe('https://api.groq.com/openai/v1');
+    expect(loader.voiceConfig?.tts?.expose_to_model).toBe(true);
+  });
+
+  test('should default voice to disabled when absent', () => {
+    const loader = new ConfigLoader(configPath);
+    expect(loader.voiceConfig).toBeUndefined();
+  });
 });
