@@ -162,4 +162,63 @@ describe('ConfigLoader', () => {
     const loader = new ConfigLoader(configPath);
     expect(loader.voiceConfig).toBeUndefined();
   });
+
+  test('should apply default streaming timeouts when llm.streaming is absent', () => {
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 120,
+      idle_timeout_seconds: 60,
+      max_total_time_seconds: null,
+    });
+  });
+
+  test('should accept a centralized llm.streaming configuration', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = {
+      initial_response_timeout_seconds: 240,
+      idle_timeout_seconds: 90,
+      max_total_time_seconds: 900,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 240,
+      idle_timeout_seconds: 90,
+      max_total_time_seconds: 900,
+    });
+  });
+
+  test('should merge partial llm.streaming with defaults', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = { initial_response_timeout_seconds: 300 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 300,
+      idle_timeout_seconds: 60,
+      max_total_time_seconds: null,
+    });
+  });
+
+  test('should reject invalid llm.streaming values', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = { initial_response_timeout_seconds: -5 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    expect(() => new ConfigLoader(configPath)).toThrow();
+  });
+
+  test('should ignore legacy per-provider streaming timeout fields', () => {
+    const cfg = buildConfig();
+    (cfg.providers.primary.config as any).stream_idle_timeout_seconds = 10;
+    (cfg.providers.primary.config as any).max_total_time_seconds = 20;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    const provider = loader.providers.primary;
+    expect((provider.config as any).stream_idle_timeout_seconds).toBeUndefined();
+    expect((provider.config as any).max_total_time_seconds).toBeUndefined();
+  });
 });

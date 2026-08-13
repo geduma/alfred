@@ -17,8 +17,6 @@ const ProviderConfigSchema = z.object({
     max_context_tokens: z.number().positive().optional(),
     top_p: z.number().min(0).max(1).optional(),
     timeout_seconds: z.number().positive().optional(),
-    stream_idle_timeout_seconds: z.number().positive().optional(),
-    max_total_time_seconds: z.number().positive().optional(),
   }),
   paid: z.boolean().optional(),
   capabilities: z.object({
@@ -36,6 +34,12 @@ const SpendingLimitsConfigSchema = z.object({
   on_limit_reached: z.enum(['block_paid_providers', 'block_all']).default('block_paid_providers'),
 });
 
+const StreamingConfigSchema = z.object({
+  initial_response_timeout_seconds: z.number().positive().default(120),
+  idle_timeout_seconds: z.number().positive().default(60),
+  max_total_time_seconds: z.number().positive().nullish().default(null),
+}).default({});
+
 const LLMConfigSchema = z.object({
   primary_provider: z.string().min(1),
   fallback_providers: z.array(z.string()),
@@ -47,6 +51,7 @@ const LLMConfigSchema = z.object({
     backoff_factor: z.number().min(1).max(10).default(2),
   }).optional(),
   spending_limits: SpendingLimitsConfigSchema.optional(),
+  streaming: StreamingConfigSchema,
 });
 
 const ChannelConfigSchema = z.object({

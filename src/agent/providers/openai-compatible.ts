@@ -1,5 +1,5 @@
 import { BaseProvider } from './base';
-import { LLMCallParams, LLMResponse, LLMStreamEvent } from '../../types/llm';
+import { LLMCallParams, LLMResponse, LLMStreamEvent, LLMStreamingConfig } from '../../types/llm';
 import OpenAI from 'openai';
 
 const STREAM_OPTIONS_UNSUPPORTED_PATTERN = /(unrecognized|unknown|unexpected|invalid).*(stream_options|parameter)|stream_options.*(not supported|unsupported|unknown)/i;
@@ -7,8 +7,8 @@ const STREAM_OPTIONS_UNSUPPORTED_PATTERN = /(unrecognized|unknown|unexpected|inv
 export class OpenAICompatibleProvider extends BaseProvider {
   private client: any = null;
 
-  constructor(config: any) {
-    super(config);
+  constructor(config: any, streaming?: LLMStreamingConfig) {
+    super(config, streaming);
     this.client = new OpenAI({
       baseURL: this.getApiUrl(),
       apiKey: this.config.config.api_key,
@@ -75,6 +75,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
         stream: true,
         stream_options: { include_usage: true },
         signal,
+        timeout: this.getStreamTransportTimeoutMs(),
       });
     } catch (error: any) {
       if (isStreamOptionsUnsupported(error)) {
@@ -82,6 +83,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
           ...base,
           stream: true,
           signal,
+          timeout: this.getStreamTransportTimeoutMs(),
         });
       } else {
         throw error;

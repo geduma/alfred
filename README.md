@@ -109,6 +109,32 @@ The config file paths (`database.path`, `logging.file_path`, `agent.personality_
 
 On first startup, if the config doesn't exist, it's auto-created from `system/alfred.json.example`. The `gateway_auth_token` is also auto-generated if set to `CHANGE_ME`.
 
+### Streaming timeouts
+
+Optional `llm.streaming` section — controls how long Alfred waits for slow or stalled LLM responses. It applies to **all providers** (provider-agnostic) and only affects streaming calls. All values are in **seconds**:
+
+```json
+{
+  "llm": {
+    "streaming": {
+      "initial_response_timeout_seconds": 120,
+      "idle_timeout_seconds": 60,
+      "max_total_time_seconds": null
+    }
+  }
+}
+```
+
+| Setting | Default | Unit | Purpose |
+|---|---|---|---|
+| `initial_response_timeout_seconds` | `120` | s | Max time waiting for the **first content** event (time-to-first-token). Covers slow local models (Ollama, cold GPU, first-token latency). Only a real `text_delta`/`tool_call_delta` disarms it. |
+| `idle_timeout_seconds` | `60` | s | Max time without activity after the stream starts producing content. Detects a generation that stalled mid-stream. Transport heartbeats keep it alive but are **not** treated as model content. |
+| `max_total_time_seconds` | `null` (unlimited) | s | Absolute ceiling for the whole stream. Wins over the other two regardless of progress. If set, it also caps the underlying HTTP client timeout. |
+
+Interaction: `initial` covers the window until the first token; `idle` governs gaps afterwards; `total` is the hard ceiling. A timeout that fires **before any content** is retried/failed over normally. A timeout that fires **after content** is never auto-retried (no duplicated text or tool calls) — Alfred surfaces an interruption error instead.
+
+`config.timeout_seconds` on each provider is separate and means the **HTTP transport timeout for non-streaming** requests only; it no longer limits the first streaming token. Set the streaming limits here instead.
+
 ### Spending limits
 
 Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request and checked against daily/monthly caps:

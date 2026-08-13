@@ -10,6 +10,11 @@
     "primary_provider": "ollama-runpod",
     "fallback_providers": ["ollama-local", "anthropic"],
     "model_selection": "automatic",
+    "streaming": {
+      "initial_response_timeout_seconds": 120,
+      "idle_timeout_seconds": 60,
+      "max_total_time_seconds": null
+    },
     "spending_limits": {
       "enabled": true,
       "daily_token_limit": 500000,

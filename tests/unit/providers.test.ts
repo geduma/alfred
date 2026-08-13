@@ -110,6 +110,32 @@ describe('AnthropicProvider', () => {
     expect(response.stop_reason).toBe('tool_use');
     expect(JSON.parse(response.tool_calls![0].function.arguments)).toEqual({ command: 'ls' });
   });
+
+  test('should pass the stream transport timeout on streaming requests', async () => {
+    jest.doMock('@anthropic-ai/sdk', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        messages: { create: createMock },
+      })),
+    }));
+
+    createMock.mockReturnValue(makeStream(
+      { type: 'message_start', message: { usage: { input_tokens: 1, output_tokens: 0 } } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    ));
+
+    const { AnthropicProvider } = require('../../src/agent/providers/anthropic');
+    const provider = new AnthropicProvider(
+      { type: 'anthropic', ...PROVIDER_CONFIG },
+      { initial_response_timeout_seconds: 200, idle_timeout_seconds: 100 }
+    );
+
+    await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
+    const sent = createMock.mock.calls[0][0];
+    expect(sent.stream).toBe(true);
+    expect(sent.timeout).toBe(300000);
+  });
 });
 
 describe('OpenAICompatibleProvider', () => {
@@ -296,6 +322,60 @@ describe('OpenAICompatibleProvider', () => {
     expect(deltas).toEqual(['Hel', 'lo']);
     expect(response.content).toBe('Hello');
   });
+
+  test('should pass the stream transport timeout on streaming requests (defaults)', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    createMock.mockReturnValue(makeStream(
+      { model: 'm', choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ));
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
+
+    await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
+    const sent = createMock.mock.calls[0][0];
+    expect(sent.stream).toBe(true);
+    expect(sent.timeout).toBe(180000);
+  });
+
+  test('should pass the stream transport timeout on both stream_options attempts', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    const streamOptionsError = new Error('Unrecognized request argument supplied: stream_options');
+    (streamOptionsError as any).status = 400;
+    createMock
+      .mockRejectedValueOnce(streamOptionsError)
+      .mockReturnValueOnce(makeStream(
+        { model: 'm', choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
+        { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+      ));
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider(
+      { type: 'openai-compatible', ...PROVIDER_CONFIG },
+      { initial_response_timeout_seconds: 200, idle_timeout_seconds: 100 }
+    );
+
+    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('ok');
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const first = createMock.mock.calls[0][0];
+    const second = createMock.mock.calls[1][0];
+    expect(first.timeout).toBe(300000);
+    expect(second.timeout).toBe(300000);
+  });
 });
 
 describe('GeminiProvider', () => {
@@ -378,5 +458,26 @@ describe('GeminiProvider', () => {
     const functionResponse = request.contents.find((c: any) => c.role === 'user' && c.parts[0]?.functionResponse);
     expect(functionResponse.parts[0].functionResponse.name).toBe('exec');
     expect(functionResponse.parts[0].functionResponse.response.result).toBe('file1 file2');
+  });
+
+  test('should accept the centralized streaming config and still stream', async () => {
+    mockSdk();
+    mockStream(
+      [{ candidates: [{ content: { parts: [{ text: 'streamed' }] }, finishReason: 'STOP' }] }],
+      {
+        candidates: [{ content: { parts: [{ text: 'streamed' }] } }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+        functionCalls: () => [],
+      }
+    );
+
+    const { GeminiProvider } = require('../../src/agent/providers/gemini');
+    const provider = new GeminiProvider(
+      { type: 'gemini', ...PROVIDER_CONFIG },
+      { initial_response_timeout_seconds: 200, idle_timeout_seconds: 100 }
+    );
+
+    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('streamed');
   });
 });

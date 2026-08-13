@@ -1,5 +1,5 @@
 import { BaseProvider } from './base';
-import { LLMCallParams, LLMResponse, LLMStreamEvent, ToolCall } from '../../types/llm';
+import { LLMCallParams, LLMResponse, LLMStreamEvent, ToolCall, LLMStreamingConfig } from '../../types/llm';
 import Anthropic from '@anthropic-ai/sdk';
 
 interface ToolResultBlock {
@@ -11,8 +11,8 @@ interface ToolResultBlock {
 export class AnthropicProvider extends BaseProvider {
   private client: any = null;
 
-  constructor(config: any) {
-    super(config);
+  constructor(config: any, streaming?: LLMStreamingConfig) {
+    super(config, streaming);
     this.client = new Anthropic({
       apiKey: this.config.config.api_key,
       baseURL: this.getApiUrl(),
@@ -142,6 +142,7 @@ export class AnthropicProvider extends BaseProvider {
         : {}),
       stream: true,
       signal,
+      timeout: this.getStreamTransportTimeoutMs(),
     });
 
     const toolStates = new Map<number, { id?: string; name?: string; arguments?: string }>();

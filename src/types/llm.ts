@@ -4,7 +4,8 @@ export type LLMStreamEvent =
   | { type: 'tool_call_complete'; toolCall: ToolCall }
   | { type: 'usage'; input_tokens: number; output_tokens: number }
   | { type: 'finish'; stop_reason: 'end_turn' | 'tool_use' | 'max_tokens'; model?: string }
-  | { type: 'error'; error: unknown };
+  | { type: 'error'; error: unknown }
+  | { type: 'heartbeat' };
 
 export interface LLMProvider {
   call(params: LLMCallParams): Promise<LLMResponse>;
@@ -74,8 +75,6 @@ export interface ProviderConfig {
     max_context_tokens?: number;
     top_p?: number;
     timeout_seconds?: number;
-    stream_idle_timeout_seconds?: number;
-    max_total_time_seconds?: number;
   };
   paid?: boolean;
   capabilities?: {
@@ -107,10 +106,17 @@ export interface SpendingLimitsConfig {
   on_limit_reached: LimitReachedPolicy;
 }
 
+export interface LLMStreamingConfig {
+  initial_response_timeout_seconds?: number;
+  idle_timeout_seconds?: number;
+  max_total_time_seconds?: number | null;
+}
+
 export interface LLMConfig {
   primary_provider: string;
   fallback_providers: string[];
   model_selection?: 'automatic' | 'manual';
   retry?: RetryConfig;
   spending_limits?: SpendingLimitsConfig;
+  streaming?: LLMStreamingConfig;
 }

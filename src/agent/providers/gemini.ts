@@ -1,12 +1,12 @@
 import { BaseProvider } from './base';
-import { LLMCallParams, LLMResponse, LLMStreamEvent, ToolCall, Message } from '../../types/llm';
+import { LLMCallParams, LLMResponse, LLMStreamEvent, ToolCall, Message, LLMStreamingConfig } from '../../types/llm';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export class GeminiProvider extends BaseProvider {
   private client: any = null;
 
-  constructor(config: any) {
-    super(config);
+  constructor(config: any, streaming?: LLMStreamingConfig) {
+    super(config, streaming);
     this.client = new GoogleGenerativeAI(this.config.config.api_key);
   }
 

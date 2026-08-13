@@ -28,6 +28,23 @@ export class LLMStreamInterruptedError extends Error {
   }
 }
 
+export class LLMStreamAbortedError extends Error {
+  readonly code = 'LLM_STREAM_ABORTED';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'LLMStreamAbortedError';
+  }
+}
+
+function isContentEvent(event: LLMStreamEvent): boolean {
+  return event.type === 'text_delta' || event.type === 'tool_call_delta';
+}
+
+function isActivityEvent(event: LLMStreamEvent): boolean {
+  return isContentEvent(event) || event.type === 'usage' || event.type === 'heartbeat';
+}
+
 interface ToolCallState {
   id?: string;
   name?: string;
@@ -50,7 +67,7 @@ export async function accumulateStream(
   const collected: LLMStreamEvent[] = [];
 
   let timeoutKind: StreamTimeoutKind | null = null;
-  let firstEvent = false;
+  let contentStarted = false;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   const clearIdle = (): void => {
@@ -101,11 +118,15 @@ export async function accumulateStream(
 
   try {
     for await (const event of events) {
-      if (!firstEvent) {
-        firstEvent = true;
-        clearTimeout(initialTimer);
+      if (isContentEvent(event)) {
+        if (!contentStarted) {
+          contentStarted = true;
+          clearTimeout(initialTimer);
+        }
+        armIdle();
+      } else if (isActivityEvent(event) && contentStarted) {
+        armIdle();
       }
-      armIdle();
 
       switch (event.type) {
         case 'text_delta':
@@ -130,6 +151,8 @@ export async function accumulateStream(
           break;
         case 'error':
           throw event.error instanceof Error ? event.error : new Error(String(event.error ?? 'LLM stream error'));
+        case 'heartbeat':
+          break;
       }
 
       emit(event);
@@ -140,7 +163,7 @@ export async function accumulateStream(
     }
 
     if (controller.signal.aborted) {
-      throw timeoutError(timeoutKind ?? 'idle', timeouts);
+      throw abortedError();
     }
 
     clearTimeout(initialTimer);
@@ -170,7 +193,7 @@ export async function accumulateStream(
       throw timeoutError(timeoutKind, timeouts);
     }
     if (isAbortError(error) && controller.signal.aborted) {
-      throw timeoutError('idle', timeouts);
+      throw abortedError();
     }
 
     emit({ type: 'error', error });
@@ -194,5 +217,11 @@ function timeoutError(kind: StreamTimeoutKind, timeouts: StreamTimeoutConfig): L
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === 'AbortError' || error.name === 'APIUserAbortError');
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'APIUserAbortError';
+}
+
+function abortedError(): LLMStreamAbortedError {
+  return new LLMStreamAbortedError('LLM stream aborted before completion.');
 }

@@ -248,6 +248,71 @@ describe('LLMRouter circuit breaker behavior', () => {
     expect(fakeProvider.call).toHaveBeenCalledTimes(2);
   });
 
+  test('should retry when the initial timeout fires before any content', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn()
+        .mockRejectedValueOnce({ code: 'LLM_STREAM_TIMEOUT', kind: 'initial', message: 'Request timed out waiting for the first response from the provider after 120s.' })
+        .mockResolvedValueOnce({ content: 'ok', stop_reason: 'end_turn' }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('ok');
+    expect(fakeProvider.call).toHaveBeenCalledTimes(2);
+  });
+
+  test('should NOT retry when a timeout fires after content was delivered', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn().mockImplementation(async (params: any) => {
+        params.onEvent?.({ type: 'text_delta', text: 'partial ' });
+        throw { code: 'LLM_STREAM_TIMEOUT', kind: 'idle', message: 'Request timed out: no data received from the provider for 60s.' };
+      }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toMatchObject({ code: 'LLM_STREAM_INTERRUPTED' });
+    expect(fakeProvider.call).toHaveBeenCalledTimes(1);
+  });
+
+  test('should pass the centralized streaming config to every provider', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn().mockResolvedValue({ content: 'ok', stop_reason: 'end_turn' }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = {
+      initial_response_timeout_seconds: 240,
+      idle_timeout_seconds: 90,
+      max_total_time_seconds: 900,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'auto' }),
+      { initial_response_timeout_seconds: 240, idle_timeout_seconds: 90, max_total_time_seconds: 900 }
+    );
+  });
+
   describe('per-provider tool support', () => {
     test('should omit tools when provider has supports_tools=false and no tool artifacts in payload', async () => {
       const fakeProvider = {
