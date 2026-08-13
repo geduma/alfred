@@ -1,6 +1,6 @@
 ---
 name: voice-notes
-description: Voice notes (STT) and spoken replies (TTS) through any OpenAI-compatible audio API
+description: Voice notes (STT) and spoken replies (TTS) through any OpenAI-compatible audio API. When the user requests an audio or voice reply, answer normally and end the reply with a final line containing exactly [AUDIO] — no extra text after it.
 tools: exec, file_ops
 metadata:
   requires:
