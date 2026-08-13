@@ -17,8 +17,8 @@ speaks HTTP following the OpenAI convention, so it is agnostic to both provider 
 
 - **Input (STT):** a Telegram voice note is downloaded, transcribed, and the text enters
   Alfred's normal pipeline.
-- **Output (TTS):** if `voice_replies: always` (or the user explicitly asks for audio), the
-  reply is synthesized and sent as audio + text.
+- **Output (TTS):** if `reply_mode: voice` in `preferences.md` (or the user explicitly asks
+  for audio), the reply is synthesized and sent as audio + text.
 
 The automatic STT/TTS implementation is **code-driven** (the `VoiceService`), not orchestrated
 via tools. This skill covers on-demand behavior, configuration, and manual verification.
@@ -26,7 +26,7 @@ via tools. This skill covers on-demand behavior, configuration, and manual verif
 ## When to use
 
 - Automatic: the user sends a voice note → it is transcribed on its own. No model action required.
-- Automatic: `voice_replies: always` in `preferences.md` → always reply with audio + text.
+- Automatic: `reply_mode: voice` in `preferences.md` → always reply with audio + text.
 - **On demand:** the user asks for an audio reply ("send it to me as audio", "reply by voice").
   The model must signal this with the `[AUDIO]` marker (see protocol below).
 
@@ -34,7 +34,8 @@ via tools. This skill covers on-demand behavior, configuration, and manual verif
 
 ### On-demand protocol — `[AUDIO]` marker
 
-Only when `voice.tts.expose_to_model` is `true` in `alfred.json`:
+Works at any time, regardless of `reply_mode`, when `voice.tts.expose_to_model` is `true` in
+`alfred.json`:
 
 1. The user explicitly asks for an audio reply.
 2. At the end of your reply, add a final line containing exactly `[AUDIO]`.
@@ -93,7 +94,7 @@ its base URL: `GET <VOICE_BASE_URL>/models`.
 Output preference in `preferences.md`:
 
 ```
-voice_replies: never        # or "always"
+reply_mode: txt        # txt (default) | voice — voice = always reply with audio + text
 ```
 
 ### Manual verification (exec + curl)

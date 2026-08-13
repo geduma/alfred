@@ -172,8 +172,8 @@ export class TelegramChannel implements Channel {
       };
     }
 
-    const voiceReplies = await this.readPreference('voice_replies');
-    if (voiceReplies === 'always') {
+    const replyMode = await this.readPreference('reply_mode');
+    if (replyMode === 'voice') {
       return { text: response, synthesizeVoice: true };
     }
 
