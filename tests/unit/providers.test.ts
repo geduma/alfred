@@ -23,6 +23,14 @@ const PROVIDER_CONFIG = {
   config: { api_url: 'http://example.com/v1', api_key: 'k' },
 };
 
+function makeStream(...events: any[]): any {
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const event of events) yield event;
+    },
+  };
+}
+
 describe('AnthropicProvider', () => {
   const createMock = jest.fn();
 
@@ -39,11 +47,14 @@ describe('AnthropicProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      content: [{ type: 'text', text: 'done' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 10, output_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
+      { type: 'message_stop' },
+    ));
 
     const { AnthropicProvider } = require('../../src/agent/providers/anthropic');
     const provider = new AnthropicProvider({ type: 'anthropic', ...PROVIDER_CONFIG });
@@ -51,7 +62,9 @@ describe('AnthropicProvider', () => {
     const response = await provider.call({ messages: HISTORY, tools: TOOLS });
 
     expect(response.content).toBe('done');
+    expect(response.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
     const sent = createMock.mock.calls[0][0];
+    expect(sent.stream).toBe(true);
     expect(sent.messages[0]).toEqual({ role: 'user', content: 'list files' });
 
     expect(sent.tools[0]).toEqual({
@@ -78,13 +91,14 @@ describe('AnthropicProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      content: [
-        { type: 'tool_use', id: 'tu_1', name: 'exec', input: { command: 'ls' } },
-      ],
-      stop_reason: 'tool_use',
-      usage: { input_tokens: 10, output_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_1', name: 'exec', input: {} } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"command":"ls"}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+      { type: 'message_stop' },
+    ));
 
     const { AnthropicProvider } = require('../../src/agent/providers/anthropic');
     const provider = new AnthropicProvider({ type: 'anthropic', ...PROVIDER_CONFIG });
@@ -114,10 +128,11 @@ describe('OpenAICompatibleProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { model: 'm', choices: [{ delta: { content: 'done' }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { model: 'm', usage: { prompt_tokens: 10, completion_tokens: 5 } },
+    ));
 
     const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
     const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
@@ -125,6 +140,8 @@ describe('OpenAICompatibleProvider', () => {
     await provider.call({ messages: HISTORY, tools: TOOLS });
 
     const sent = createMock.mock.calls[0][0];
+    expect(sent.stream).toBe(true);
+    expect(sent.stream_options).toEqual({ include_usage: true });
     const toolMsg = sent.messages.find((m: any) => m.role === 'tool');
     expect(toolMsg).toBeDefined();
     expect(toolMsg.tool_call_id).toBe('call_1');
@@ -151,13 +168,11 @@ describe('OpenAICompatibleProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      choices: [{
-        message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } }] },
-        finish_reason: 'tool_calls',
-      }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { model: 'm', choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'exec', arguments: '' } }] }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"command":"ls"}' } }] }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ));
 
     const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
     const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
@@ -166,6 +181,37 @@ describe('OpenAICompatibleProvider', () => {
 
     expect(response.stop_reason).toBe('tool_use');
     expect(response.tool_calls).toHaveLength(1);
+    expect(response.tool_calls![0].function.arguments).toBe('{"command":"ls"}');
+  });
+
+  test('should retry once without stream_options when the server rejects it', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    const streamOptionsError = new Error('Unrecognized request argument supplied: stream_options');
+    (streamOptionsError as any).status = 400;
+    createMock
+      .mockRejectedValueOnce(streamOptionsError)
+      .mockReturnValueOnce(makeStream(
+        { model: 'm', choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
+        { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+      ));
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
+
+    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('ok');
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const first = createMock.mock.calls[0][0];
+    const second = createMock.mock.calls[1][0];
+    expect(first.stream_options).toBeDefined();
+    expect(second.stream_options).toBeUndefined();
+    expect(second.stream).toBe(true);
   });
 
   test('should convert internal tools into OpenAI tool format', async () => {
@@ -176,10 +222,10 @@ describe('OpenAICompatibleProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { model: 'm', choices: [{ delta: { content: 'done' }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ));
 
     const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
     const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
@@ -197,7 +243,7 @@ describe('OpenAICompatibleProvider', () => {
     }]);
   });
 
-  test('should expose the real served model and raw response for diagnostics', async () => {
+  test('should expose the served model and raw stream events for diagnostics', async () => {
     jest.doMock('openai', () => ({
       __esModule: true,
       default: jest.fn().mockImplementation(() => ({
@@ -205,30 +251,61 @@ describe('OpenAICompatibleProvider', () => {
       })),
     }));
 
-    createMock.mockResolvedValue({
-      model: 'actual-model-served-by-gateway',
-      choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-    });
+    createMock.mockReturnValue(makeStream(
+      { model: 'actual-model-served-by-gateway', choices: [{ delta: { content: 'hi' }, finish_reason: null }] },
+      { model: 'actual-model-served-by-gateway', choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ));
 
     const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
     const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
 
-    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }], tools: TOOLS });
+    const response = await provider.call({ messages: [{ role: 'user', content: 'hi' }] });
 
     expect(response.model).toBe('actual-model-served-by-gateway');
-    const raw = response.raw as any;
-    expect(raw.model).toBe('actual-model-served-by-gateway');
-    expect(raw.choices[0].message.content).toBe('hi');
+    expect(response.content).toBe('hi');
+    const raw = response.raw as any[];
+    expect(Array.isArray(raw)).toBe(true);
+    expect(raw.some(e => e.type === 'text_delta' && e.text === 'hi')).toBe(true);
+  });
+
+  test('should emit text_delta events progressively via onEvent', async () => {
+    jest.doMock('openai', () => ({
+      __esModule: true,
+      default: jest.fn().mockImplementation(() => ({
+        chat: { completions: { create: createMock } },
+      })),
+    }));
+
+    createMock.mockReturnValue(makeStream(
+      { model: 'm', choices: [{ delta: { content: 'Hel' }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: { content: 'lo' }, finish_reason: null }] },
+      { model: 'm', choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ));
+
+    const { OpenAICompatibleProvider } = require('../../src/agent/providers/openai-compatible');
+    const provider = new OpenAICompatibleProvider({ type: 'openai-compatible', ...PROVIDER_CONFIG });
+
+    const deltas: string[] = [];
+    const response = await provider.call({
+      messages: [{ role: 'user', content: 'hi' }],
+      onEvent: (event) => {
+        if (event.type === 'text_delta') deltas.push(event.text);
+      },
+    });
+
+    expect(deltas).toEqual(['Hel', 'lo']);
+    expect(response.content).toBe('Hello');
   });
 });
 
 describe('GeminiProvider', () => {
   const generateContentMock = jest.fn();
+  const generateContentStreamMock = jest.fn();
 
   beforeEach(() => {
     jest.resetModules();
     generateContentMock.mockReset();
+    generateContentStreamMock.mockReset();
   });
 
   function mockSdk(): void {
@@ -236,21 +313,31 @@ describe('GeminiProvider', () => {
       GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
         getGenerativeModel: jest.fn().mockReturnValue({
           generateContent: generateContentMock,
+          generateContentStream: generateContentStreamMock,
         }),
       })),
     }));
   }
 
-  test('should send functionCall parts and parse tool_calls from response', async () => {
-    mockSdk();
-    generateContentMock.mockResolvedValue({
-      response: {
-        candidates: [{
-          content: { parts: [{ functionCall: { name: 'exec', args: { command: 'ls' } } }] },
-        }],
-        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+  function mockStream(chunks: any[], finalResponse: any): void {
+    generateContentStreamMock.mockResolvedValue({
+      async *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) yield chunk;
       },
+      response: Promise.resolve(finalResponse),
     });
+  }
+
+  test('should send functionCall parts and parse tool_calls from streamed response', async () => {
+    mockSdk();
+    mockStream(
+      [{ candidates: [{ content: { parts: [{ text: '' }] }, finishReason: 'STOP' }] }],
+      {
+        candidates: [{ content: { parts: [{ functionCall: { name: 'exec', args: { command: 'ls' } } }] } }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+        functionCalls: () => [{ name: 'exec', args: { command: 'ls' } }],
+      }
+    );
 
     const { GeminiProvider } = require('../../src/agent/providers/gemini');
     const provider = new GeminiProvider({ type: 'gemini', ...PROVIDER_CONFIG });
@@ -260,27 +347,31 @@ describe('GeminiProvider', () => {
     expect(response.tool_calls).toHaveLength(1);
     expect(response.tool_calls![0].function.name).toBe('exec');
     expect(response.stop_reason).toBe('tool_use');
+    expect(JSON.parse(response.tool_calls![0].function.arguments)).toEqual({ command: 'ls' });
 
-    const request = generateContentMock.mock.calls[0][0];
+    const request = generateContentStreamMock.mock.calls[0][0];
     expect(request.tools[0].functionDeclarations[0].name).toBe('exec');
     expect(request.contents[0].role).toBe('user');
   });
 
   test('should map tool results to functionResponse parts using the matching function name', async () => {
     mockSdk();
-    generateContentMock.mockResolvedValue({
-      response: {
+    mockStream(
+      [{ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }],
+      {
         candidates: [{ content: { parts: [{ text: 'ok' }] } }],
         usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
-      },
-    });
+        functionCalls: () => [],
+      }
+    );
 
     const { GeminiProvider } = require('../../src/agent/providers/gemini');
     const provider = new GeminiProvider({ type: 'gemini', ...PROVIDER_CONFIG });
 
-    await provider.call({ messages: HISTORY, tools: TOOLS });
+    const response = await provider.call({ messages: HISTORY, tools: TOOLS });
+    expect(response.content).toBe('ok');
 
-    const request = generateContentMock.mock.calls[0][0];
+    const request = generateContentStreamMock.mock.calls[0][0];
     const modelMsg = request.contents.find((c: any) => c.role === 'model');
     expect(modelMsg.parts[0]).toMatchObject({ functionCall: { name: 'exec' } });
 

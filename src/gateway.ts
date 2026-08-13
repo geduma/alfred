@@ -13,7 +13,7 @@ import { ToolHandler } from './types/tool';
 import { createTools } from './tools/index';
 import { SessionStore, StoredSession } from './db/session-store';
 import { JobSchedulerTool, Job } from './tools/job-scheduler';
-import { Message, LLMResponse } from './types/llm';
+import { Message, LLMResponse, LLMStreamEvent } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
@@ -947,7 +947,8 @@ export class Gateway {
     contextMessages: Message[],
     ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> },
     runId: string,
-    _onEvent: (event: string, payload: any) => void
+    _onEvent: (event: string, payload: any) => void,
+    onLLMEvent?: (event: LLMStreamEvent) => void
   ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
     let finalSystem = systemPrompt;
     let messages = contextMessages;
@@ -975,7 +976,7 @@ export class Gateway {
         maxTokens: this.getOutputTokens(),
       });
 
-      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem);
+      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem, onLLMEvent);
 
       const parsedToolCalls = response.tool_calls || [];
       this.writeAgentTrace({
@@ -1135,7 +1136,8 @@ export class Gateway {
   private async callWithAdaptiveRetry(
     session: StoredSession,
     messages: Message[],
-    system: string
+    system: string,
+    onEvent?: (event: LLMStreamEvent) => void
   ): Promise<LLMResponse> {
     let attempt = 0;
     let callMessages = messages;
@@ -1149,6 +1151,7 @@ export class Gateway {
           system: callSystem,
           tools,
           max_tokens: this.getOutputTokens(),
+          onEvent,
         });
       } catch (error: any) {
         if (!isThrottleError(error.message)) throw error;
@@ -1269,7 +1272,12 @@ export class Gateway {
       const { content, toolCalls, usage } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
         runId,
-        () => {} // no-op for WebSocket events
+        () => {}, // no-op for WebSocket events
+        (event) => {
+          if (event.type === 'text_delta') {
+            this.sendEvent(ws, 'agent_delta', { runId, text: event.text });
+          }
+        }
       );
 
       const assistantMsg: Message = { role: 'assistant', content };

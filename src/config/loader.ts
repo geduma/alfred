@@ -17,6 +17,8 @@ const ProviderConfigSchema = z.object({
     max_context_tokens: z.number().positive().optional(),
     top_p: z.number().min(0).max(1).optional(),
     timeout_seconds: z.number().positive().optional(),
+    stream_idle_timeout_seconds: z.number().positive().optional(),
+    max_total_time_seconds: z.number().positive().optional(),
   }),
   paid: z.boolean().optional(),
   capabilities: z.object({

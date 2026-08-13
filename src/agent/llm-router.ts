@@ -1,10 +1,11 @@
-import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig, SpendingLimitsConfig, isPaidProvider } from '../types/llm';
+import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig, SpendingLimitsConfig, isPaidProvider, LLMStreamEvent } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
 import { CircuitBreaker } from '../services/circuit-breaker';
 import { TokenBudgetTracker } from '../services/token-budget';
 import { isThrottleError, isRetryableError, getErrorMessage, BudgetBlockedError } from '../utils/provider-errors';
+import { LLMStreamInterruptedError } from './providers/stream-utils';
 
 const DEFAULT_RETRY: RetryConfig = {
   max_attempts: 3,
@@ -158,9 +159,18 @@ export class LLMRouter {
       let exhausted = false;
 
       for (let attempt = 0; attempt < this.retry.max_attempts; attempt++) {
+        let delivered = false;
+        const onEvent: (event: LLMStreamEvent) => void = (event) => {
+          if (event.type === 'text_delta' || event.type === 'tool_call_delta') {
+            delivered = true;
+          }
+          callParams.onEvent?.(event);
+        };
+        const attemptParams: LLMCallParams = { ...callParams, onEvent };
+
         try {
           getLogger().debug({ provider: providerName, attempt: attempt + 1 }, 'Calling LLM provider');
-          const response = await provider.call(callParams);
+          const response = await provider.call(attemptParams);
 
           getLogger().debug(
             {
@@ -182,6 +192,11 @@ export class LLMRouter {
 
           return response;
         } catch (error: any) {
+          if (delivered) {
+            throw new LLMStreamInterruptedError(
+              `Provider ${providerName} failed mid-stream after delivering content: ${getErrorMessage(error)}`
+            );
+          }
           lastError = error;
           const message = getErrorMessage(error);
           const retryable = isRetryableError(error);

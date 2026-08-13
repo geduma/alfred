@@ -1,3 +1,11 @@
+export type LLMStreamEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call_delta'; index: number; id?: string; name?: string; arguments?: string }
+  | { type: 'tool_call_complete'; toolCall: ToolCall }
+  | { type: 'usage'; input_tokens: number; output_tokens: number }
+  | { type: 'finish'; stop_reason: 'end_turn' | 'tool_use' | 'max_tokens'; model?: string }
+  | { type: 'error'; error: unknown };
+
 export interface LLMProvider {
   call(params: LLMCallParams): Promise<LLMResponse>;
   validateConfig(): Promise<boolean>;
@@ -10,6 +18,7 @@ export interface LLMCallParams {
   max_tokens?: number;
   top_p?: number;
   system?: string;
+  onEvent?: (event: LLMStreamEvent) => void;
 }
 
 export interface Message {
@@ -65,6 +74,8 @@ export interface ProviderConfig {
     max_context_tokens?: number;
     top_p?: number;
     timeout_seconds?: number;
+    stream_idle_timeout_seconds?: number;
+    max_total_time_seconds?: number;
   };
   paid?: boolean;
   capabilities?: {

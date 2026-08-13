@@ -196,6 +196,58 @@ describe('LLMRouter circuit breaker behavior', () => {
     expect(fallback.call).toHaveBeenCalledTimes(1);
   });
 
+  test('should NOT retry or fail over once content has been delivered mid-stream', async () => {
+    const primary = {
+      validateConfig: async () => true,
+      call: jest.fn().mockImplementation(async (params: any) => {
+        params.onEvent?.({ type: 'text_delta', text: 'partial ' });
+        throw new Error('stream interrupted after content');
+      }),
+    };
+    const fallback = {
+      validateConfig: async () => true,
+      call: jest.fn().mockResolvedValue({ content: 'fallback', stop_reason: 'end_turn' }),
+    };
+    createProvider.mockImplementation(async (config: any) => {
+      return config.model === 'auto' ? primary : fallback;
+    });
+
+    const cfg = buildConfig();
+    cfg.llm.fallback_providers = ['fallback'];
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toMatchObject({ code: 'LLM_STREAM_INTERRUPTED' });
+    expect(primary.call).toHaveBeenCalledTimes(1);
+    expect(fallback.call).not.toHaveBeenCalled();
+  });
+
+  test('should still retry before any content has been delivered', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn()
+        .mockRejectedValueOnce(new Error('socket hang up'))
+        .mockImplementationOnce(async (params: any) => {
+          params.onEvent?.({ type: 'text_delta', text: 'ok' });
+          return { content: 'ok', stop_reason: 'end_turn' };
+        }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+
+    const response = await router.call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.content).toBe('ok');
+    expect(fakeProvider.call).toHaveBeenCalledTimes(2);
+  });
+
   describe('per-provider tool support', () => {
     test('should omit tools when provider has supports_tools=false and no tool artifacts in payload', async () => {
       const fakeProvider = {
