@@ -1,6 +1,6 @@
 ---
 name: voice-notes
-description: Notas de voz (STT) y respuestas habladas (TTS) vía proveedores compatibles con la API de audio de OpenAI
+description: Voice notes (STT) and spoken replies (TTS) through any OpenAI-compatible audio API
 tools: exec, file_ops
 metadata:
   requires:
@@ -10,125 +10,146 @@ metadata:
 
 ## Overview
 
-Alfred integra voz mediante **cualquier servicio compatible con la API de audio de OpenAI**
-(`POST /v1/audio/transcriptions` para STT, `POST /v1/audio/speech` para TTS). El servicio
-concreto (Speaches, Groq, OpenAI, un proxy local, etc.) se configura en `alfred.json`,
-sección `voice`. Alfred solo habla HTTP con la convención OpenAI, así que es agnóstico al
-proveedor y al canal.
+Alfred integrates voice through **any service compatible with the OpenAI audio API**
+(`POST /v1/audio/transcriptions` for STT, `POST /v1/audio/speech` for TTS). The concrete
+provider (self-hosted or cloud) is configured in `alfred.json`, section `voice`. Alfred only
+speaks HTTP following the OpenAI convention, so it is agnostic to both provider and channel.
 
-- **Entrada (STT):** una nota de voz de Telegram se descarga, se transcribe y el texto entra
-  al pipeline normal de Alfred.
-- **Salida (TTS):** si `voice_replies: always` (o el usuario pide audio explícitamente),
-  la respuesta se sintetiza y se envía como audio + texto.
+- **Input (STT):** a Telegram voice note is downloaded, transcribed, and the text enters
+  Alfred's normal pipeline.
+- **Output (TTS):** if `voice_replies: always` (or the user explicitly asks for audio), the
+  reply is synthesized and sent as audio + text.
 
-La implementación STT/TTS automática es **code-driven** (servicio `VoiceService`), no se
-orquesta vía tools. Esta skill cubre el comportamiento bajo demanda, la configuración y la
-verificación manual.
+The automatic STT/TTS implementation is **code-driven** (the `VoiceService`), not orchestrated
+via tools. This skill covers on-demand behavior, configuration, and manual verification.
 
 ## When to use
 
-- Automático: el usuario envía una nota de voz → se transcribe sola. No requiere acción del modelo.
-- Automático: `voice_replies: always` en `preferences.md` → responde siempre con audio + texto.
-- **Bajo demanda:** el usuario pide la respuesta en audio ("mándamelo en audio", "contéstame por voz").
-  Ahí el modelo debe señalarlo con el marcador `[AUDIO]` (ver protocolo abajo).
+- Automatic: the user sends a voice note → it is transcribed on its own. No model action required.
+- Automatic: `voice_replies: always` in `preferences.md` → always reply with audio + text.
+- **On demand:** the user asks for an audio reply ("send it to me as audio", "reply by voice").
+  The model must signal this with the `[AUDIO]` marker (see protocol below).
 
 ## How to use
 
-### Protocolo bajo demanda — marcador `[AUDIO]`
+### On-demand protocol — `[AUDIO]` marker
 
-Solo cuando `voice.tts.expose_to_model` está en `true` en `alfred.json`:
+Only when `voice.tts.expose_to_model` is `true` in `alfred.json`:
 
-1. El usuario pide explícitamente una respuesta en audio.
-2. Al final de tu respuesta, añade una línea final que contenga exactamente `[AUDIO]`.
-3. El canal Telegram detecta el marcador, lo elimina del texto, sintetiza el resto y envía
-   **audio + texto**.
-4. No uses `[AUDIO]` si no se pide voz, ni en canales que no lo soporten (CLI/web).
+1. The user explicitly asks for an audio reply.
+2. At the end of your reply, add a final line containing exactly `[AUDIO]`.
+3. The Telegram channel detects the marker, removes it from the text, synthesizes the rest,
+   and sends **audio + text**.
+4. Do not use `[AUDIO]` unless voice is requested, nor in channels that do not support it
+   (CLI/web).
 
-Ejemplo de respuesta con audio:
+Example reply with audio:
 
 ```
-Claro, aquí tienes el resumen del día: dos recordatorios vencidos y el sistema sano.
+Sure, here's your summary for the day: two overdue reminders and the system is healthy.
 [AUDIO]
 ```
 
-### Configuración — `alfred.json`
+### Where to find the voice provider URL
 
-Cualquier proveedor OpenAI-compatible. `api_key` es opcional (se envía como Bearer solo si
-no está vacía). `stt.provider` y `tts.provider` tienen prioridad sobre `voice.provider`,
-permitiendo STT y TTS de proveedores distintos.
+**Do not assume any provider URL.** The base URL and API key live in the Alfred configuration:
+
+- Config file: `alfred.json` under the workspace `config/` directory
+  (e.g. `/workspace/config/alfred.json` inside Docker).
+- Keys:
+  - `voice.provider.api_url` — default base URL (all paths below are appended to it).
+  - `voice.stt.provider.api_url` — overrides the base URL for transcription only.
+  - `voice.tts.provider.api_url` — overrides the base URL for synthesis only.
+  - `voice.provider.api_key` (and the per-STT/TTS overrides) — optional, sent as `Bearer`
+    only when non-empty.
+
+Read the actual values from `alfred.json` (e.g. with `cat` via `exec`) before calling any
+endpoint. Provider-specific values such as model names and voice identifiers are also read
+from `alfred.json` (`voice.stt.model`, `voice.tts.model`, `voice.tts.voice`) or discovered
+from the provider itself.
+
+### Configuration — `alfred.json`
+
+Any OpenAI-compatible provider. `stt.provider` and `tts.provider` take precedence over
+`voice.provider`, allowing STT and TTS to use different providers. Replace the placeholders
+below with values from the configured provider; the URL must be copied from the actual config,
+not invented.
 
 ```json
 {
   "voice": {
     "enabled": true,
     "timeout_seconds": 60,
-    "provider": { "api_url": "http://speaches.home/v1", "api_key": "" },
-    "stt": { "model": "Systran/faster-whisper-base", "language": "auto" },
-    "tts": { "model": "speaches-ai/piper-es_MX-ald-medium", "voice": "ald", "response_format": "wav", "expose_to_model": true }
+    "provider": { "api_url": "<VOICE_BASE_URL>", "api_key": "" },
+    "stt": { "model": "<STT_MODEL>", "language": "auto" },
+    "tts": { "model": "<TTS_MODEL>", "voice": "<TTS_VOICE>", "response_format": "wav", "expose_to_model": true }
   }
 }
 ```
 
-Ejemplos de proveedores (solo cambian `api_url`/`api_key`/modelos):
+Model and voice identifiers are provider-specific; list them from the provider once you know
+its base URL: `GET <VOICE_BASE_URL>/models`.
 
-| Proveedor | STT (modelo) | TTS (modelo/voz) |
-| --- | --- | --- |
-| Speaches (homelab) | `Systran/faster-whisper-base` | `speaches-ai/piper-es_MX-ald-medium` / `ald` |
-| OpenAI | `whisper-1` | `tts-1` / `alloy` |
-| Groq | `whisper-large-v3-turbo` | `playai-tts` / voz del modelo |
-
-Preferencia de salida en `preferences.md`:
+Output preference in `preferences.md`:
 
 ```
-voice_replies: never        # o "always"
+voice_replies: never        # or "always"
 ```
 
-### Verificación manual (exec + curl)
+### Manual verification (exec + curl)
 
-Comprobar que el proveedor responde:
+1. Read the real base URL from `alfred.json` → `voice.provider.api_url` (or the STT/TTS
+   overrides), e.g.:
 
-```bash
-curl -s http://speaches.home/health
-```
+   ```bash
+   cat /workspace/config/alfred.json
+   ```
 
-Listar modelos (OpenAI-compatible, con Bearer si hay key):
+2. Export it as `VOICE_API_URL` and verify the provider responds:
 
-```bash
-curl -s http://speaches.home/v1/models
-```
+   ```bash
+   VOICE_API_URL="<base_url_from_config>"
+   curl -s "${VOICE_API_URL}/health"
+   ```
 
-STT manual (OpenAI-compatible):
+3. List models (OpenAI-compatible, with Bearer if there is a key):
 
-```bash
-curl -s http://speaches.home/v1/audio/transcriptions \
-  -F "file=@/workspace/files/prueba.ogg" \
-  -F "model=Systran/faster-whisper-base"
-```
+   ```bash
+   curl -s "${VOICE_API_URL}/models"
+   ```
 
-TTS manual:
+4. Manual STT (OpenAI-compatible):
 
-```bash
-curl -s http://speaches.home/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{"model":"speaches-ai/piper-es_MX-ald-medium","voice":"ald","input":"Hola señor"}' \
-  -o /workspace/files/prueba.wav
-```
+   ```bash
+   curl -s "${VOICE_API_URL}/audio/transcriptions" \
+     -F "file=@/workspace/files/sample.ogg" \
+     -F "model=<stt_model_from_config>"
+   ```
 
-> Nota: `exec` solo permite los patrones de `tools.exec.allowed_patterns` (debe incluir
-> `curl`). Evita `jq` si no está en la lista; parsea el JSON a mano.
+5. Manual TTS:
+
+   ```bash
+   curl -s "${VOICE_API_URL}/audio/speech" \
+     -H "Content-Type: application/json" \
+     -d '{"model":"<tts_model_from_config>","voice":"<tts_voice_from_config>","input":"Hello there"}' \
+     -o /workspace/files/sample.wav
+   ```
+
+> Note: `exec` only allows the patterns in `tools.exec.allowed_patterns` (must include
+> `curl`). Avoid `jq` unless it is in the list; parse the JSON by hand.
 
 ## Error handling
 
-- **Servicio no disponible o timeout:** Alfred degrada a texto (responde sin audio) y lo
-  registra en el log. No bloquear la conversación por fallo de voz.
-- **Audio inválido:** la transcripción falla → Alfred responde "No pude entender el audio."
-  sin pasar por el pipeline.
-- **`[AUDIO]` ignorado:** si `expose_to_model` es `false`, el marcador se ignora y se
-  responde solo en texto.
+- **Service unavailable or timeout:** Alfred degrades to text (replies without audio) and logs
+  it. Do not block the conversation because of a voice failure.
+- **Invalid audio:** transcription fails → Alfred replies "I could not understand the audio."
+  without going through the pipeline.
+- **`[AUDIO]` ignored:** if `expose_to_model` is `false`, the marker is ignored and the reply
+  is text-only.
 
-## Resumen
+## Summary
 
-La complejidad (modelos, hardware, API del proveedor) queda aislada en el servicio de audio.
-Alfred solo envía/recibe HTTP según la convención OpenAI y orquesta el pipeline. La skill
-aporta el protocolo bajo demanda (`[AUDIO]`), la configuración multi-proveedor y la
-verificación manual.
+The complexity (models, hardware, provider API) is isolated in the audio service. Alfred only
+sends/receives HTTP following the OpenAI convention and orchestrates the pipeline. This skill
+provides the on-demand protocol (`[AUDIO]`), the multi-provider configuration, and manual
+verification, always reading the actual provider URL from `alfred.json`.
