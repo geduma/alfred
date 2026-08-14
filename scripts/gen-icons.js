@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const OUT_DIR = path.join(__dirname, '..', 'web');
+const OUT_DIR = path.join(__dirname, '..', 'web', 'img');
 const DESIGN = 32;
 const BG = [21, 24, 31];
 const JACKET = [53, 59, 71];
@@ -271,8 +271,8 @@ function main() {
     background_color: '#15181f',
     theme_color: '#15181f',
     icons: [
-      { src: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+      { src: '/img/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/img/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
   };
   fs.writeFileSync(path.join(OUT_DIR, 'site.webmanifest'), JSON.stringify(manifest, null, 2) + '\n');

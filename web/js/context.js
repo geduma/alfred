@@ -1,13 +1,25 @@
-/* Right panel: last query, RAG/session state, jobs, and editable preferences. */
+/* Right panel: last query, RAG/session state, jobs, and read-only preferences. */
 (function () {
   const grid = document.getElementById('context-grid');
   const bus = window.AlfredBus;
 
-  function card(title, nodes) {
+  const ICONS = {
+    search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+    layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  };
+
+  function icon(name) {
+    return '<svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+  }
+
+  function card(title, iconName, nodes) {
     const el = document.createElement('div');
     el.className = 'card';
     const h = document.createElement('h3');
-    h.textContent = title;
+    h.innerHTML = icon(iconName) + '<span>' + title + '</span>';
     el.appendChild(h);
     nodes.forEach((node) => el.appendChild(node));
     return el;
@@ -78,7 +90,7 @@
       nodes.push(row('Latency', fmtLatency(lastQuery.latency_ms)));
       nodes.push(row('At', fmtDateTime(lastQuery.at)));
     }
-    return card('🔍 Last Query', nodes);
+    return card('Last Query', 'search', nodes);
   }
 
   function ragCard() {
@@ -90,14 +102,14 @@
       nodes.push(badge('ACTIVE', 'ok'));
       nodes.push(empty('Memory retrieval enabled.'));
     }
-    return card('🧠 RAG Memory', nodes);
+    return card('RAG Memory', 'database', nodes);
   }
 
   function sessionCard() {
     const nodes = [];
     nodes.push(row('Snapshots', snapshots.enabled ? 'Enabled' : 'Disabled', snapshots.enabled ? badge('ON', 'ok') : badge('OFF', 'muted')));
     nodes.push(empty('Session compression is managed automatically by Alfred.'));
-    return card('📦 Session', nodes);
+    return card('Session', 'layers', nodes);
   }
 
   function jobsCard() {
@@ -105,84 +117,55 @@
       row('Jobs', fmtNum(jobs.enabled) + ' / ' + fmtNum(jobs.total)),
       row('Next due', jobs.nextDue ? fmtDateTime(jobs.nextDue) : '—'),
     ];
-    return card('📋 Jobs', nodes);
+    return card('Jobs', 'clock', nodes);
   }
 
-  /* ── Preferences (built once) ── */
+  /* ── Preferences (read-only, built once) ── */
   const PREF_FIELDS = [
-    { key: 'language', label: 'Language', options: ['english', 'spanish', 'auto'] },
-    { key: 'tone', label: 'Tone', options: ['professional', 'casual', 'friendly'] },
-    { key: 'formality', label: 'Formality', options: ['formal', 'informal'] },
-    { key: 'verbosity', label: 'Verbosity', options: ['concise', 'normal', 'detailed'] },
-    { key: 'voice_replies', label: 'Voice replies', options: ['never', 'always', 'on_request'] },
+    { key: 'language', label: 'Language', default: 'auto' },
+    { key: 'tone', label: 'Tone', default: 'professional' },
+    { key: 'formality', label: 'Formality', default: 'formal' },
+    { key: 'verbosity', label: 'Verbosity', default: 'normal' },
+    { key: 'voice_replies', label: 'Voice replies', default: 'never' },
   ];
 
   let prefs = {};
   let prefCardEl = null;
-  let prefSelects = {};
-  let prefToast = null;
+  let prefValues = {};
 
   function buildPreferencesCard() {
     const nodes = PREF_FIELDS.map((f) => {
-      const wrap = document.createElement('div');
-      wrap.className = 'select-row';
-      const label = document.createElement('span');
-      label.textContent = f.label;
-      const select = document.createElement('select');
-      f.options.forEach((opt) => {
-        const o = document.createElement('option');
-        o.value = opt;
-        o.textContent = opt;
-        select.appendChild(o);
-      });
-      select.addEventListener('change', () => setPreference(f.key, select.value));
-      wrap.appendChild(label);
-      wrap.appendChild(select);
-      prefSelects[f.key] = select;
-      return wrap;
+      const el = row(f.label, '—');
+      prefValues[f.key] = el.querySelector('.v');
+      return el;
     });
-
-    prefToast = document.createElement('div');
-    prefToast.className = 'pref-toast';
-    nodes.push(prefToast);
-    return card('⚙️ Preferences', nodes);
+    nodes.push(empty('Preferences are managed in preferences.md.'));
+    return card('Preferences', 'sliders', nodes);
   }
 
-  function applyPrefs() {
+  function applyPrefValues() {
     PREF_FIELDS.forEach((f) => {
-      const select = prefSelects[f.key];
-      if (!select) return;
+      const el = prefValues[f.key];
+      if (!el) return;
       const current = prefs[f.key];
-      if (current && Array.from(select.options).every((o) => o.value !== current)) {
-        const o = document.createElement('option');
-        o.value = current;
-        o.textContent = current;
-        select.appendChild(o);
+      el.innerHTML = '';
+      const value = document.createElement('span');
+      value.textContent = current || f.default;
+      el.appendChild(value);
+      if (!current) {
+        const hint = document.createElement('span');
+        hint.className = 'default-hint';
+        hint.textContent = '(default)';
+        el.appendChild(hint);
       }
-      select.value = current && Array.from(select.options).some((o) => o.value === current)
-        ? current
-        : f.options[0];
     });
-  }
-
-  async function setPreference(key, value) {
-    try {
-      await AlfredWS.request('preference_set', { key, value });
-      prefs[key] = value;
-      if (prefToast) {
-        prefToast.textContent = '✓ ' + key + ' updated';
-        setTimeout(() => { if (prefToast) prefToast.textContent = ''; }, 2000);
-      }
-    } catch (err) {
-      if (prefToast) prefToast.textContent = '✗ ' + (err.message || 'failed');
-    }
   }
 
   async function loadPreferences() {
     try {
       const res = await AlfredWS.request('preferences', {});
       prefs = (res.preferences || {});
-      applyPrefs();
+      applyPrefValues();
     } catch {
       // preferences unavailable
     }
@@ -194,7 +177,7 @@
     if (!prefCardEl) {
       prefCardEl = buildPreferencesCard();
     }
-    applyPrefs();
+    applyPrefValues();
     grid.appendChild(prefCardEl);
   }
 

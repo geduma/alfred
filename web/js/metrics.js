@@ -12,20 +12,37 @@
     statusEl.className = 'metrics-status ' + (kind || '');
   }
 
-  function card(title, nodes) {
+  const ICONS = {
+    activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    'bar-chart': '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    tool: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+    heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+    folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  };
+
+  function icon(name) {
+    return '<svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+  }
+
+  function card(title, iconName, nodes) {
     const el = document.createElement('div');
     el.className = 'card';
     const h = document.createElement('h3');
-    h.textContent = title;
+    h.innerHTML = icon(iconName) + '<span>' + title + '</span>';
     el.appendChild(h);
     nodes.forEach((node) => el.appendChild(node));
     return el;
   }
 
-  function value(text, cls) {
+  function check() {
+    return '<svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+  }
+
+  function value(html, cls) {
     const el = document.createElement('div');
     el.className = 'value' + (cls ? ' ' + cls : '');
-    el.textContent = text;
+    el.innerHTML = html;
     return el;
   }
 
@@ -89,13 +106,13 @@
 
   function statusCard(m) {
     const nodes = [
-      value('✓ Ready', m.webClients > 0 ? '' : ''),
+      value(check() + 'Ready', m.webClients > 0 ? '' : ''),
       sub(m.webClients > 0 ? m.webClients + ' client(s) online' : 'No web clients connected'),
       row('Uptime', fmtTime(m.uptimeSec)),
       row('Model', m.activeModel || '—'),
       row('Latency', fmtLatency(m.latencyMs ?? m.avgLatencyMs)),
     ];
-    return card('● Alfred Status', nodes);
+    return card('Alfred Status', 'activity', nodes);
   }
 
   function budgetCard(m) {
@@ -124,7 +141,7 @@
       nodes.push(row(name, fmtNum(byProvider[name].tokens) + ' tok'));
     });
     nodes.push(allowed ? badge('OK', 'ok') : badge('BLOCKED', 'err'));
-    return card('📊 Tokens', nodes);
+    return card('Tokens', 'bar-chart', nodes);
   }
 
   function providerCard(m) {
@@ -164,7 +181,7 @@
       nodes.push(row('Primary', chain[0]));
       if (chain.length > 1) nodes.push(row('Fallbacks', chain.slice(1).join(', ')));
     }
-    return card('🔗 Providers', nodes);
+    return card('Providers', 'link', nodes);
   }
 
   function skillsCard(m) {
@@ -182,7 +199,7 @@
       });
       nodes.push(wrap);
     }
-    return card('⚙️ Skills', nodes);
+    return card('Skills', 'tool', nodes);
   }
 
   function healthCard(m) {
@@ -197,7 +214,7 @@
       nodes.push(row(f.category || 'finding', f.count + 'x', badge(f.severity || 'warn', f.severity === 'error' ? 'err' : 'warn')));
     });
     nodes.push(errors > 0 ? badge(errors + ' error(s)', 'err') : (total > 0 ? badge('warn', 'warn') : badge('clear', 'ok')));
-    return card('🏥 Health', nodes);
+    return card('Health', 'heart', nodes);
   }
 
   function workspaceCard(m) {
@@ -208,7 +225,7 @@
       row('Sessions', fmtNum(w.sessionsTotal)),
       row('Web clients', fmtNum(m.webClients)),
     ];
-    return card('📁 Workspace', nodes);
+    return card('Workspace', 'folder', nodes);
   }
 
   function render(m) {
