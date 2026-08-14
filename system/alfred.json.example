@@ -233,7 +233,7 @@
       "model": "speaches-ai/piper-es_MX-ald-medium",
       "voice": "ald",
       "response_format": "wav",
-      "expose_to_model": false
+      "expose_to_model": true
     }
   },
   "server": {

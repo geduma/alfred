@@ -1107,7 +1107,7 @@ export class Gateway {
 
       if (consecutiveBadRounds >= MAX_HALLUCINATED_ROUNDS) {
         finalContent = source === 'job'
-          ? '⚠️ Límite de iteraciones alcanzado por tool calls inválidos. Revisar manualmente.'
+          ? '⚠️ Iteration limit reached due to invalid tool calls. Review manually.'
           : 'Reached the iteration limit due to repeated invalid tool calls. Please review manually.';
         totalUsage = response.usage;
         getLogger().warn(
@@ -1125,7 +1125,7 @@ export class Gateway {
 
     if (iteration >= maxIterations && !finalContent) {
       finalContent = source === 'job'
-        ? '⚠️ Límite de iteraciones alcanzado. Revisar manualmente.'
+        ? '⚠️ Iteration limit reached. Review manually.'
         : 'Reached maximum tool call iterations. Please refine your request.';
       getLogger().warn({ runId, iterations: iteration }, 'Agent loop reached max iterations');
     }

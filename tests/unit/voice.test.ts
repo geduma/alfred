@@ -36,13 +36,13 @@ describe('VoiceService', () => {
   });
 
   test('transcribe posts multipart form and parses JSON response', async () => {
-    (mockedAxios.post as jest.Mock).mockResolvedValue({ data: { text: 'Hola señor', language: 'es' } });
+    (mockedAxios.post as jest.Mock).mockResolvedValue({ data: { text: 'Hello there', language: 'en' } });
 
     const service = new VoiceService(baseConfig as any);
     const result = await service.transcribe(audioPath);
 
-    expect(result.text).toBe('Hola señor');
-    expect(result.language).toBe('es');
+    expect(result.text).toBe('Hello there');
+    expect(result.language).toBe('en');
     expect(mockedAxios.post).toHaveBeenCalledWith(
       'http://speaches.home/v1/audio/transcriptions',
       expect.any(FormData),
@@ -118,7 +118,7 @@ describe('VoiceService', () => {
     (mockedAxios.post as jest.Mock).mockResolvedValue({ data: audio });
 
     const service = new VoiceService(baseConfig as any);
-    const result = await service.synthesize('Hola señor');
+    const result = await service.synthesize('Hello there');
 
     expect(Buffer.isBuffer(result)).toBe(true);
     expect(mockedAxios.post).toHaveBeenCalledWith(
@@ -126,7 +126,7 @@ describe('VoiceService', () => {
       {
         model: 'speaches-ai/piper-es_MX-ald-medium',
         voice: 'ald',
-        input: 'Hola señor',
+        input: 'Hello there',
         response_format: 'wav',
       },
       expect.objectContaining({ responseType: 'arraybuffer', headers: {} })
@@ -141,11 +141,11 @@ describe('VoiceService', () => {
       tts: { model: 'tts-1', voice: 'alloy', expose_to_model: false },
     } as any;
     const service = new VoiceService(config);
-    await service.synthesize('Hola');
+    await service.synthesize('Hello');
 
     expect(mockedAxios.post).toHaveBeenCalledWith(
       'http://speaches.home/v1/audio/speech',
-      { model: 'tts-1', voice: 'alloy', input: 'Hola' },
+      { model: 'tts-1', voice: 'alloy', input: 'Hello' },
       expect.anything()
     );
   });
@@ -154,7 +154,7 @@ describe('VoiceService', () => {
     (mockedAxios.post as jest.Mock).mockRejectedValue(new Error('timeout'));
 
     const service = new VoiceService(baseConfig as any);
-    await expect(service.synthesize('Hola')).rejects.toThrow('Synthesis failed');
+    await expect(service.synthesize('Hello')).rejects.toThrow('Synthesis failed');
   });
 
   test('exposes enabled and expose_to_model flags', () => {

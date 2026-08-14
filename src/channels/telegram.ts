@@ -79,7 +79,7 @@ export class TelegramChannel implements Channel {
             inputType = 'voice';
           } catch (error: any) {
             getLogger().error({ error: error.message, userId }, 'Voice message processing failed');
-            await ctx.reply("No pude entender el audio.").catch(() => {});
+            await ctx.reply("I could not understand the audio.").catch(() => {});
             return;
           } finally {
             await fs.promises.unlink(tempPath).catch(() => {});
@@ -113,7 +113,7 @@ export class TelegramChannel implements Channel {
         clearInterval(typingInterval);
 
         if (response) {
-          const { text: replyText, synthesizeVoice } = await this.shouldSynthesizeVoice(response);
+          const { text: replyText, synthesizeVoice } = this.shouldSynthesizeVoice(response);
           if (synthesizeVoice && this.voiceService) {
             try {
               const audio = await this.voiceService.synthesize(replyText);
@@ -159,38 +159,22 @@ export class TelegramChannel implements Channel {
     await this.bot.stop();
   }
 
-  private async shouldSynthesizeVoice(response: string): Promise<{ text: string; synthesizeVoice: boolean }> {
-    if (!this.voiceService || !this.voiceConfig) {
-      return { text: response, synthesizeVoice: false };
-    }
-
+  private shouldSynthesizeVoice(response: string): { text: string; synthesizeVoice: boolean } {
     const markerMatch = response.match(/\n?\[AUDIO\]\s*$/);
+    let text = response;
+    if (markerMatch) {
+      text = response.slice(0, response.length - markerMatch[0].length).trimEnd();
+    }
+
+    if (!this.voiceService || !this.voiceConfig) {
+      return { text, synthesizeVoice: false };
+    }
+
     if (markerMatch && this.voiceService.isExposedToModel()) {
-      return {
-        text: response.slice(0, response.length - markerMatch[0].length),
-        synthesizeVoice: true,
-      };
+      return { text, synthesizeVoice: true };
     }
 
-    const replyMode = await this.readPreference('reply_mode');
-    if (replyMode === 'voice') {
-      return { text: response, synthesizeVoice: true };
-    }
-
-    return { text: response, synthesizeVoice: false };
-  }
-
-  private async readPreference(key: string): Promise<string | null> {
-    try {
-      const raw = await fs.promises.readFile(WORKSPACE_PATHS.preferences(), 'utf-8');
-      for (const line of raw.split('\n')) {
-        const match = line.match(new RegExp(`^${key}:\\s*(.+)$`));
-        if (match) return match[1].trim();
-      }
-    } catch {
-      // preferences file missing, treat as unset
-    }
-    return null;
+    return { text, synthesizeVoice: false };
   }
 }
 

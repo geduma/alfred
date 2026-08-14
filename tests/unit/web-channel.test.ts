@@ -30,12 +30,12 @@ describe('WebChannel', () => {
     channel.addClient(ws1);
     channel.addClient(ws2);
 
-    await channel.sendMessage('web-user', 'hola desde alfred', { event: 'digest' });
+    await channel.sendMessage('web-user', 'hello from alfred', { event: 'digest' });
 
     const expected = JSON.stringify({
       type: 'notify',
       event: 'message',
-      payload: { userId: 'web-user', message: 'hola desde alfred', event: 'digest' },
+      payload: { userId: 'web-user', message: 'hello from alfred', event: 'digest' },
     });
     expect(ws1.send).toHaveBeenCalledWith(expected);
     expect(ws2.send).toHaveBeenCalledWith(expected);
@@ -43,7 +43,7 @@ describe('WebChannel', () => {
 
   test('should not broadcast when there are no clients', async () => {
     const channel = new WebChannel();
-    await channel.sendMessage('web-user', 'hola');
+    await channel.sendMessage('web-user', 'hello');
     // no throw expected
   });
 
@@ -55,7 +55,7 @@ describe('WebChannel', () => {
     channel.addClient(open);
     channel.addClient(closed);
 
-    await channel.sendMessage('web-user', 'mensaje');
+    await channel.sendMessage('web-user', 'message');
 
     expect(open.send).toHaveBeenCalledTimes(1);
     expect(closed.send).not.toHaveBeenCalled();

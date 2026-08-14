@@ -607,7 +607,7 @@ describe('Gateway runAgentLoop', () => {
     const response = await g.processMessage({
       channel: 'cli',
       userId: 'user-1',
-      content: 'hola',
+      content: 'hello',
       sessionId: 'session-1',
     });
 

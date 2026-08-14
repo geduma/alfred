@@ -17,8 +17,8 @@ speaks HTTP following the OpenAI convention, so it is agnostic to both provider 
 
 - **Input (STT):** a Telegram voice note is downloaded, transcribed, and the text enters
   Alfred's normal pipeline.
-- **Output (TTS):** if `reply_mode: voice` in `preferences.md` (or the user explicitly asks
-  for audio), the reply is synthesized and sent as audio + text.
+- **Output (TTS):** on demand only — when the user explicitly asks for an audio reply, the
+  reply is synthesized and sent as audio + text. Requires `voice.tts.expose_to_model: true`.
 
 The automatic STT/TTS implementation is **code-driven** (the `VoiceService`), not orchestrated
 via tools. This skill covers on-demand behavior, configuration, and manual verification.
@@ -26,7 +26,6 @@ via tools. This skill covers on-demand behavior, configuration, and manual verif
 ## When to use
 
 - Automatic: the user sends a voice note → it is transcribed on its own. No model action required.
-- Automatic: `reply_mode: voice` in `preferences.md` → always reply with audio + text.
 - **On demand:** the user asks for an audio reply ("send it to me as audio", "reply by voice").
   The model must signal this with the `[AUDIO]` marker (see protocol below).
 
@@ -34,8 +33,8 @@ via tools. This skill covers on-demand behavior, configuration, and manual verif
 
 ### On-demand protocol — `[AUDIO]` marker
 
-Works at any time, regardless of `reply_mode`, when `voice.tts.expose_to_model` is `true` in
-`alfred.json`:
+Works when `voice.tts.expose_to_model` is `true` in `alfred.json`. Audio is produced only on
+demand; by default replies are plain text:
 
 1. The user explicitly asks for an audio reply.
 2. At the end of your reply, add a final line containing exactly `[AUDIO]`.
@@ -90,12 +89,6 @@ not invented.
 
 Model and voice identifiers are provider-specific; list them from the provider once you know
 its base URL: `GET <VOICE_BASE_URL>/models`.
-
-Output preference in `preferences.md`:
-
-```
-reply_mode: txt        # txt (default) | voice — voice = always reply with audio + text
-```
 
 ### Manual verification (exec + curl)
 
