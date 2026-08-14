@@ -3,49 +3,83 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Alfred — Panel</title>
+  <title>Alfred — Control Center</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest">
-  <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#4f8cff">
-  <meta name="theme-color" content="#12161d">
+  <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#00ffff">
+  <meta name="theme-color" content="#0a0e27">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <h1>Alfred <span class="subtitle">— Control panel</span></h1>
-    <div class="connection">
-      <span id="conn-dot" class="dot offline"></span>
-      <span id="conn-label">Disconnected</span>
+    <div class="brand">
+      <h1>ALFRED</h1>
+      <span class="subtitle">— J.A.R.V.I.S. Control Center</span>
+    </div>
+    <div class="top-stats">
+      <span id="hdr-model" class="stat" title="Active model">MODEL <em id="hdr-model-v">—</em></span>
+      <span id="hdr-latency" class="stat" title="Latency">LAT <em id="hdr-latency-v">—</em></span>
+      <span id="hdr-uptime" class="stat" title="Uptime">UP <em id="hdr-uptime-v">—</em></span>
+      <div class="connection">
+        <span id="conn-dot" class="dot offline"></span>
+        <span id="conn-label">Disconnected</span>
+      </div>
     </div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="metrics">Metrics</button>
+  <div id="conn-banner" class="conn-banner hidden">⊘ Disconnected. Reconecting…</div>
+
+  <nav class="mobile-tabs" aria-label="Panels">
+    <button class="mtab" data-panel="left">Telemetry</button>
+    <button class="mtab active" data-panel="center">Chat</button>
+    <button class="mtab" data-panel="right">Context</button>
   </nav>
 
-  <main>
-    <section id="tab-chat" class="tab-panel active">
+  <main class="grid">
+    <aside id="panel-left" class="col-left" aria-label="Telemetry">
+      <div id="metrics-status" class="metrics-status">Waiting for data…</div>
+      <div id="metrics-grid" class="metrics-grid"></div>
+    </aside>
+
+    <section id="panel-center" class="col-center" aria-label="Chat">
       <div id="messages" class="messages" aria-live="polite"></div>
-      <form id="chat-form" class="chat-form" autocomplete="off">
-        <input id="chat-input" type="text" placeholder="Type your message..." autofocus>
-        <button type="submit">Send</button>
-      </form>
+      <div id="input-bar" class="input-bar">
+        <div id="rec-indicator" class="rec-indicator hidden">
+          <span class="rec-dot"></span>
+          <span id="rec-timer">0:00</span>
+          <span class="rec-label">REC</span>
+        </div>
+        <div id="attachments" class="attachments"></div>
+        <div class="input-row">
+          <button id="btn-mic" class="icon-btn" title="Record voice" aria-label="Record voice">🎙️</button>
+          <button id="btn-attach" class="icon-btn" title="Attach file" aria-label="Attach file">📎</button>
+          <input type="file" id="file-input" hidden
+                 accept=".png,.jpg,.jpeg,.gif,.pdf,.wav,.ogg,.mp3,.m4a,.webm,.txt,.md,.csv,.json,.log">
+          <button id="btn-camera" class="icon-btn mobile-only" title="Camera" aria-label="Camera">📷</button>
+          <textarea id="chat-input" rows="1" placeholder="Tell Alfred..." maxlength="3000"></textarea>
+          <button id="btn-send" class="send-btn" disabled aria-label="Send">🚀</button>
+        </div>
+        <div class="input-status">
+          <span id="input-status-text">Status: Ready</span>
+          <span id="char-count">0/3000</span>
+        </div>
+      </div>
     </section>
 
-    <section id="tab-metrics" class="tab-panel">
-      <div class="metrics-header">
-        <p id="metrics-status" class="metrics-status">Waiting for data…</p>
-      </div>
-      <div id="metrics-grid" class="metrics-grid"></div>
-    </section>
+    <aside id="panel-right" class="col-right" aria-label="Context">
+      <div id="context-grid" class="context-grid"></div>
+    </aside>
   </main>
 
   <script src="js/ws-client.js"></script>
-  <script src="js/tabs.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/chat.js"></script>
   <script src="js/metrics.js"></script>
+  <script src="js/context.js"></script>
+  <script src="js/audio-recorder.js"></script>
+  <script src="js/file-uploader.js"></script>
+  <script src="js/input-bar.js"></script>
 </body>
 </html>

@@ -29,6 +29,7 @@ import { MessageRepository } from './db/repositories/messages';
 import { CommandRepository } from './db/repositories/commands';
 import { isDatabaseInitialized } from './db/index';
 import { SystemTool } from './tools/system';
+import { VoiceService } from './services/voice';
 import { WORKSPACE_PATHS } from './utils/workspace';
 
 interface GatewayRequest {
@@ -49,6 +50,37 @@ const MAX_ADAPTIVE_ATTEMPTS = 3;
 const MIN_OUTPUT_TOKENS = 512;
 const AGENT_JOB_MIN_INTERVAL_MS = 30 * 60 * 1000;
 const AGENT_JOB_MIN_REMAINING_PERCENT = 10;
+const MAX_WEB_AUDIO_BYTES = 50 * 1024 * 1024;
+const MAX_WEB_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_TEXT_PREFIX_BYTES = 8192;
+const LATENCY_WINDOW = 50;
+const WEB_AUDIO_MARKER = '[AUDIO]';
+const PREFERENCE_KEYS = new Set(['language', 'tone', 'formality', 'verbosity', 'user_name', 'voice_replies']);
+const AUDIO_EXTS = new Set(['wav', 'ogg', 'mp3', 'm4a', 'webm', 'oga', 'opus']);
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
+const TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'xml', 'html']);
+
+function sanitizeFileName(name: string): string {
+  const base = path.basename(name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+  return base.slice(0, 120) || 'file';
+}
+
+function mimeToExt(mime?: string): string {
+  if (!mime) return '';
+  const map: Record<string, string> = {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/opus': 'opus',
+    'audio/wav': 'wav',
+    'audio/wave': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/mpeg': 'mp3',
+    'audio/mp4': 'm4a',
+    'audio/x-m4a': 'm4a',
+    'audio/aac': 'aac',
+  };
+  return map[mime.toLowerCase()] || '';
+}
 
 export class Gateway {
   private wss: WebSocketServer | null = null;
@@ -84,6 +116,17 @@ export class Gateway {
   private wsSessions: Map<WebSocket, string> = new Map();
   private connectionLimits: Map<string, { count: number; resetAt: number }> = new Map();
   private pendingSaves: Map<string, NodeJS.Timeout> = new Map();
+  private voiceService: VoiceService | null = null;
+  private lastLatencyMs: number | null = null;
+  private latencies: number[] = [];
+  private lastQuery: {
+    content?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    model?: string;
+    latency_ms?: number;
+    at?: string;
+  } | null = null;
 
   constructor(
     config: ConfigLoader,
@@ -111,6 +154,11 @@ export class Gateway {
     this.refreshProviderBudgets();
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
     this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
+
+    const voiceConfig = config.allConfig.voice;
+    if (voiceConfig?.enabled) {
+      this.voiceService = new VoiceService(voiceConfig);
+    }
 
     this.buildServices();
   }
@@ -896,6 +944,18 @@ export class Gateway {
         case 'agent':
           await this.handleAgentRequest(ws, req);
           break;
+        case 'agent_audio':
+          await this.handleAgentAudio(ws, req);
+          break;
+        case 'agent_file':
+          await this.handleAgentFile(ws, req);
+          break;
+        case 'preferences':
+          this.handlePreferences(ws, req);
+          break;
+        case 'preference_set':
+          await this.handlePreferenceSet(ws, req);
+          break;
         case 'tool_list':
           this.handleToolList(ws);
           break;
@@ -949,12 +1009,13 @@ export class Gateway {
     runId: string,
     _onEvent: (event: string, payload: any) => void,
     onLLMEvent?: (event: LLMStreamEvent) => void
-  ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
+  ): Promise<{ content: string; toolCalls: any[]; usage: any; model?: string }> {
     let finalSystem = systemPrompt;
     let messages = contextMessages;
     let finalContent = '';
     let allToolCalls: any[] = [];
     let totalUsage: any = undefined;
+    let finalModel: string | undefined;
     let iteration = 0;
     let consecutiveBadRounds = 0;
 
@@ -994,6 +1055,7 @@ export class Gateway {
       if (parsedToolCalls.length === 0) {
         finalContent = response.content || '';
         totalUsage = response.usage;
+        finalModel = response.model;
         break;
       }
 
@@ -1130,7 +1192,7 @@ export class Gateway {
       getLogger().warn({ runId, iterations: iteration }, 'Agent loop reached max iterations');
     }
 
-    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage };
+    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage, model: finalModel };
   }
 
   private async callWithAdaptiveRetry(
@@ -1196,9 +1258,200 @@ export class Gateway {
   }
 
   private async handleAgentRequest(ws: WebSocket, req: GatewayRequest): Promise<void> {
-    const { message, sessionId } = req.params as { message: string; sessionId: string };
+    const { message, sessionId } = req.params as { message?: string; sessionId?: string };
+    await this.runWebAgent(ws, req, { text: message || '', sessionId });
+  }
 
-    if (!message) {
+  private async handleAgentAudio(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const { blob_base64, mime, sessionId } = req.params as {
+      blob_base64?: string;
+      mime?: string;
+      duration_ms?: number;
+      sessionId?: string;
+    };
+
+    if (!this.voiceService) {
+      this.sendError(ws, req.id, 'Voice input is not enabled on this Alfred instance');
+      return;
+    }
+    if (!blob_base64 || typeof blob_base64 !== 'string') {
+      this.sendError(ws, req.id, 'Audio blob is required');
+      return;
+    }
+
+    const buffer = this.decodeBase64(blob_base64);
+    if (!buffer || buffer.length === 0) {
+      this.sendError(ws, req.id, 'Audio blob could not be decoded');
+      return;
+    }
+    if (buffer.length > MAX_WEB_AUDIO_BYTES) {
+      this.sendError(ws, req.id, 'Audio is too large');
+      return;
+    }
+
+    const ext = mimeToExt(mime) || 'webm';
+    const tempPath = path.join(
+      WORKSPACE_PATHS.files(), 'audio', 'incoming',
+      `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+    );
+
+    try {
+      await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+      await fs.promises.writeFile(tempPath, buffer);
+
+      const transcript = await this.voiceService.transcribe(tempPath);
+      if (!transcript.text || !transcript.text.trim()) {
+        this.sendError(ws, req.id, 'I could not understand the audio.');
+        return;
+      }
+
+      this.sendEvent(ws, 'transcript', {
+        text: transcript.text,
+        language: transcript.language || 'auto',
+        final: true,
+      });
+
+      await this.runWebAgent(ws, req, {
+        text: transcript.text,
+        sessionId,
+        inputType: 'voice',
+      });
+    } catch (error: any) {
+      getLogger().error({ error: error.message }, 'Web audio transcription failed');
+      this.sendError(ws, req.id, `Transcription failed: ${error.message}`);
+    } finally {
+      await fs.promises.unlink(tempPath).catch(() => {});
+    }
+  }
+
+  private async handleAgentFile(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const { blob_base64, name, mime, sessionId } = req.params as {
+      blob_base64?: string;
+      name?: string;
+      mime?: string;
+      sessionId?: string;
+    };
+
+    if (!blob_base64 || typeof blob_base64 !== 'string') {
+      this.sendError(ws, req.id, 'File blob is required');
+      return;
+    }
+
+    const buffer = this.decodeBase64(blob_base64);
+    if (!buffer || buffer.length === 0) {
+      this.sendError(ws, req.id, 'File blob could not be decoded');
+      return;
+    }
+    if (buffer.length > MAX_WEB_FILE_BYTES) {
+      this.sendError(ws, req.id, 'File is too large');
+      return;
+    }
+
+    const safeName = sanitizeFileName(name || 'file');
+    const ext = path.extname(safeName).toLowerCase().replace('.', '');
+    const mimeType = mime || 'application/octet-stream';
+    const savedPath = path.join(WORKSPACE_PATHS.files(), 'incoming', `${Date.now()}_${safeName}`);
+
+    try {
+      await fs.promises.mkdir(path.dirname(savedPath), { recursive: true });
+      await fs.promises.writeFile(savedPath, buffer);
+
+      if (AUDIO_EXTS.has(ext)) {
+        if (!this.voiceService) {
+          this.sendError(ws, req.id, 'Voice input is not enabled on this Alfred instance');
+          return;
+        }
+        const transcript = await this.voiceService.transcribe(savedPath);
+        if (!transcript.text || !transcript.text.trim()) {
+          this.sendError(ws, req.id, 'I could not understand the audio.');
+          return;
+        }
+        this.sendEvent(ws, 'transcript', {
+          text: transcript.text,
+          language: transcript.language || 'auto',
+          final: true,
+        });
+        await this.runWebAgent(ws, req, { text: transcript.text, sessionId, inputType: 'voice', fileName: safeName });
+        return;
+      }
+
+      if (IMAGE_EXTS.has(ext)) {
+        const primary = this.config.llmConfig.primary_provider;
+        const supportsVision = this.config.allConfig.providers[primary]?.capabilities?.supports_vision === true;
+        if (!supportsVision) {
+          this.sendEvent(ws, 'agent_complete', {
+            runId: `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            content: `❌ Image attachments are not supported by the current model (${primary}).`,
+            toolCalls: [],
+            usage: undefined,
+            degraded: true,
+            error: true,
+          });
+          return;
+        }
+        await this.runWebAgent(ws, req, {
+          text: `[Image attachment: ${safeName}] The user uploaded an image and expects an analysis.`,
+          sessionId,
+          inputType: 'image',
+          fileName: safeName,
+        });
+        return;
+      }
+
+      if (TEXT_EXTS.has(ext)) {
+        const fileText = buffer.toString('utf-8').slice(0, MAX_TEXT_PREFIX_BYTES);
+        await this.runWebAgent(ws, req, {
+          text: fileText
+            ? `[File attachment: ${safeName}]\n\n${fileText}`
+            : `[File attachment: ${safeName}] The file could not be read as text.`,
+          sessionId,
+          inputType: 'file',
+          fileName: safeName,
+        });
+        return;
+      }
+
+      await this.runWebAgent(ws, req, {
+        text: `[File attachment: ${safeName}] (${mimeType}) The file has been saved. Use the file_ops tool to read it if needed.`,
+        sessionId,
+        inputType: 'file',
+        fileName: safeName,
+      });
+    } catch (error: any) {
+      getLogger().error({ error: error.message }, 'Web file upload failed');
+      this.sendError(ws, req.id, `File upload failed: ${error.message}`);
+    }
+  }
+
+  private decodeBase64(data: string): Buffer | null {
+    try {
+      return Buffer.from(data, 'base64');
+    } catch {
+      return null;
+    }
+  }
+
+  private trackLatency(ms: number): void {
+    this.lastLatencyMs = ms;
+    this.latencies.push(ms);
+    if (this.latencies.length > LATENCY_WINDOW) {
+      this.latencies.shift();
+    }
+  }
+
+  private avgLatencyMs(): number | null {
+    if (this.latencies.length === 0) return null;
+    return Math.round(this.latencies.reduce((a, b) => a + b, 0) / this.latencies.length);
+  }
+
+  private async runWebAgent(
+    ws: WebSocket,
+    req: GatewayRequest,
+    opts: { text: string; sessionId?: string; inputType?: string; fileName?: string }
+  ): Promise<void> {
+    const { text, sessionId } = opts;
+
+    if (!text) {
       this.sendError(ws, req.id, 'Message is required');
       return;
     }
@@ -1236,12 +1489,19 @@ export class Gateway {
     });
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const ingestParams = { channel: 'ws', userId: sessionKey };
+    const ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> } = {
+      channel: 'ws',
+      userId: sessionKey,
+      metadata: {
+        input_type: opts.inputType || 'text',
+        ...(opts.fileName ? { file_name: opts.fileName } : {}),
+      },
+    };
 
     const degraded = await this.checkDegraded();
     if (degraded.active) {
       const content = this.buildDegradedMessage(degraded.reason);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', message);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', text);
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
       this.sendEvent(ws, 'agent_complete', {
         runId,
@@ -1254,9 +1514,9 @@ export class Gateway {
     }
 
     try {
-      const userMsg: Message = { role: 'user', content: message };
+      const userMsg: Message = { role: 'user', content: text };
       session.messages.push(userMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', message);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', text);
       const [systemPrompt, skillsContext] = await Promise.all([
         this.promptBuilder.buildSystemPrompt(),
         this.loadSkillsContext(),
@@ -1266,10 +1526,11 @@ export class Gateway {
         ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
         : systemPrompt;
 
-      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, message);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, text);
       await this.ingestMessage(session, userMsg, ingestParams);
 
-      const { content, toolCalls, usage } = await this.runAgentLoop(
+      const startedAt = Date.now();
+      const { content, toolCalls, usage, model } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
         runId,
         () => {}, // no-op for WebSocket events
@@ -1279,10 +1540,22 @@ export class Gateway {
           }
         }
       );
+      const latencyMs = Date.now() - startedAt;
+      this.trackLatency(latencyMs);
+      this.lastQuery = {
+        content: text,
+        input_tokens: usage?.input_tokens,
+        output_tokens: usage?.output_tokens,
+        model: model || this.config.llmConfig.primary_provider,
+        latency_ms: latencyMs,
+        at: new Date().toISOString(),
+      };
 
-      const assistantMsg: Message = { role: 'assistant', content };
+      const finalContent = await this.maybeSynthesizeWebVoice(ws, content);
+
+      const assistantMsg: Message = { role: 'assistant', content: finalContent };
       session.messages.push(assistantMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', finalContent);
       await this.ingestMessage(session, assistantMsg, ingestParams);
       await this.checkAutoSnapshot(session);
       this.debounceSave(session);
@@ -1290,9 +1563,10 @@ export class Gateway {
 
       this.sendEvent(ws, 'agent_complete', {
         runId,
-        content,
+        content: finalContent,
         toolCalls,
         usage,
+        latency_ms: latencyMs,
       });
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Agent request failed');
@@ -1310,6 +1584,105 @@ export class Gateway {
         }
       } catch { /* connection may be closed */ }
     }
+  }
+
+  private async maybeSynthesizeWebVoice(ws: WebSocket, content: string): Promise<string> {
+    if (!(ws as any).webClient || !this.voiceService) return content;
+    const tts = this.config.allConfig.voice?.tts;
+    if (!tts?.expose_to_model) return content;
+
+    const escaped = WEB_AUDIO_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const markerMatch = content.match(new RegExp(`\\n?${escaped}\\s*$`));
+    if (!markerMatch) return content;
+    const text = content.slice(0, content.length - markerMatch[0].length).trimEnd();
+    if (!text) return content;
+
+    try {
+      const audio = await this.voiceService.synthesize(text);
+      this.sendEvent(ws, 'agent_audio', { base64: audio.toString('base64'), mime: 'audio/wav', text });
+      return text;
+    } catch (error: any) {
+      getLogger().error({ error: error.message }, 'Web voice reply synthesis failed, falling back to text');
+      return text;
+    }
+  }
+
+  private handlePreferences(ws: WebSocket, req: GatewayRequest): void {
+    try {
+      this.sendResponse(ws, req.id, { preferences: this.readPreferences() });
+    } catch (error: any) {
+      this.sendError(ws, req.id, `Preferences read failed: ${error.message}`);
+    }
+  }
+
+  private async handlePreferenceSet(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const { key, value } = req.params as { key?: string; value?: string };
+    if (!key || typeof value !== 'string') {
+      this.sendError(ws, req.id, 'Both key and value are required');
+      return;
+    }
+    const normalizedKey = key.toLowerCase();
+    if (!PREFERENCE_KEYS.has(normalizedKey)) {
+      this.sendError(ws, req.id, `Unknown preference key: ${key}`);
+      return;
+    }
+    try {
+      this.writePreference(normalizedKey, value.trim());
+      this.sendResponse(ws, req.id, { ok: true, key: normalizedKey, value: value.trim() });
+    } catch (error: any) {
+      this.sendError(ws, req.id, `Preference update failed: ${error.message}`);
+    }
+  }
+
+  private readPreferences(): Record<string, string> {
+    const prefs: Record<string, string> = {};
+    try {
+      const raw = fs.readFileSync(WORKSPACE_PATHS.preferences(), 'utf-8');
+      let inDynamic = false;
+      for (const line of raw.split('\n')) {
+        if (/^#+\s*Dynamic Preferences\s*$/i.test(line)) {
+          inDynamic = true;
+          continue;
+        }
+        if (!inDynamic) continue;
+        if (/^#+/.test(line)) break;
+        const m = line.match(/^([a-z_]+):\s*(.*)$/i);
+        if (m) prefs[m[1].toLowerCase()] = m[2].trim();
+      }
+    } catch {
+      // preferences file missing — return empty map
+    }
+    return prefs;
+  }
+
+  private writePreference(key: string, value: string): void {
+    const filePath = WORKSPACE_PATHS.preferences();
+    const header = '## Dynamic Preferences';
+    let raw = '';
+    try {
+      raw = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      // file missing — will create it
+    }
+
+    let content = raw.trimEnd();
+    const hasHeader = /^#+\s*Dynamic Preferences\s*$/m.test(content);
+    if (!hasHeader) {
+      content = content ? `${content}\n\n${header}\n` : `${header}\n`;
+    }
+
+    const keyRe = new RegExp(`^(${key}:).*$`, 'm');
+    if (keyRe.test(content)) {
+      content = content.replace(keyRe, `${key}: ${value}`);
+    } else {
+      const headerMatch = content.match(/^#+\s*Dynamic Preferences\s*$/m);
+      const insertAt = headerMatch ? (headerMatch.index || 0) + headerMatch[0].length : 0;
+      content = `${content.slice(0, insertAt)}\n${key}: ${value}${content.slice(insertAt)}`;
+    }
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
+    getLogger().info({ key }, 'Web preference updated');
   }
 
   async processMessage(params: {
@@ -1444,8 +1817,11 @@ export class Gateway {
         .sort()[0];
 
       let skills = 0;
+      let skillNames: string[] = [];
       try {
-        skills = (await this.skillLoader.loadSkills()).length;
+        const loaded = await this.skillLoader.loadSkills();
+        skills = loaded.length;
+        skillNames = loaded.map(s => s.name).sort();
       } catch {
         // skills count unavailable
       }
@@ -1465,11 +1841,16 @@ export class Gateway {
       }
 
       const providerStates = this.llmRouter?.getCircuitStates?.() || [];
+      const workspace = await this.collectWorkspaceStats();
 
       this.sendResponse(ws, req.id, {
         metrics: {
           version: this.config.allConfig.agent.version,
           uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
+          latencyMs: this.lastLatencyMs,
+          avgLatencyMs: this.avgLatencyMs(),
+          activeModel: this.lastQuery?.model || this.config.llmConfig.primary_provider,
+          lastQuery: this.lastQuery,
           providers: {
             primary: this.config.llmConfig.primary_provider,
             chain: providerStates.map(s => s.provider),
@@ -1484,14 +1865,53 @@ export class Gateway {
             nextDue: nextDue || null,
           },
           skills,
+          skillNames,
           tools: this.tools.length,
           health,
+          workspace,
+          rag: { enabled: !!this.vectorStore },
+          snapshots: { enabled: !!this.snapshotManager },
         },
       });
     } catch (error: any) {
       getLogger().error({ error: error.message }, 'Metrics collection failed');
       this.sendError(ws, req.id, `Metrics failed: ${error.message}`);
     }
+  }
+
+  private async collectWorkspaceStats(): Promise<{ filesSizeMb: number; dbSizeMb: number; sessionsTotal: number }> {
+    let filesSizeMb = 0;
+    let dbSizeMb = 0;
+    try {
+      filesSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.files());
+    } catch {
+      // files dir unavailable
+    }
+    try {
+      dbSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.db());
+    } catch {
+      // db dir unavailable
+    }
+    return { filesSizeMb, dbSizeMb, sessionsTotal: this.sessions.size };
+  }
+
+  private async dirSizeMb(dir: string): Promise<number> {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    let total = 0;
+    for (const entry of entries) {
+      const fp = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        total += await this.dirSizeMb(fp);
+      } else if (entry.isFile()) {
+        try {
+          const stat = await fs.promises.stat(fp);
+          total += stat.size;
+        } catch {
+          // unreadable file, ignore
+        }
+      }
+    }
+    return Math.round(total / (1024 * 1024));
   }
 
   private handleToolList(ws: WebSocket): void {
