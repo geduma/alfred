@@ -3,7 +3,8 @@ FROM node:22-alpine AS builder
 WORKDIR /build
 
 COPY package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 
 COPY src ./src
 COPY tsconfig.json ./
@@ -19,7 +20,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --no-audit --no-fund
 
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/

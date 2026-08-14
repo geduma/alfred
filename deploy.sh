@@ -45,7 +45,10 @@ else
   echo "⚠️  Not a git repository, skipping git pull"
 fi
 
-# 2. Rebuild Docker image (no cache for fresh deps)
+# 2. Rebuild Docker image.
+#    Uses BuildKit layer cache + npm download cache (--mount=type=cache in the
+#    Dockerfile), so rebuilds are fast unless package-lock.json or source change.
+export DOCKER_BUILDKIT=1
 echo ""
 echo "🐳 Rebuilding Docker image..."
 docker compose -f "$COMPOSE_FILE" build
