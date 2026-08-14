@@ -3,49 +3,86 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Alfred — Panel</title>
-  <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-  <link rel="manifest" href="/site.webmanifest">
-  <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#4f8cff">
-  <meta name="theme-color" content="#12161d">
+  <title>Alfred — Control Center</title>
+  <link rel="icon" href="/img/favicon.ico" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+  <link rel="manifest" href="/img/site.webmanifest">
+  <link rel="mask-icon" href="/img/safari-pinned-tab.svg" color="#2dd4a7">
+  <meta name="theme-color" content="#15181f">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <h1>Alfred <span class="subtitle">— Control panel</span></h1>
-    <div class="connection">
-      <span id="conn-dot" class="dot offline"></span>
-      <span id="conn-label">Disconnected</span>
+    <div class="brand">
+      <h1>ALFRED</h1>
+      <span class="subtitle">— Control Center</span>
+    </div>
+    <div class="top-stats">
+      <span id="hdr-model" class="stat" title="Active model">MODEL <em id="hdr-model-v">—</em></span>
+      <span id="hdr-latency" class="stat" title="Latency">LAT <em id="hdr-latency-v">—</em></span>
+      <span id="hdr-uptime" class="stat" title="Uptime">UP <em id="hdr-uptime-v">—</em></span>
+      <div class="connection">
+        <span id="conn-dot" class="dot offline"></span>
+        <span id="conn-label">Disconnected</span>
+      </div>
     </div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="metrics">Metrics</button>
+  <div id="conn-banner" class="conn-banner hidden">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>Disconnected. Reconnecting…</span>
+  </div>
+
+  <nav class="mobile-tabs" aria-label="Panels">
+    <button class="mtab" data-panel="left">Telemetry</button>
+    <button class="mtab active" data-panel="center">Chat</button>
+    <button class="mtab" data-panel="right">Context</button>
   </nav>
 
-  <main>
-    <section id="tab-chat" class="tab-panel active">
+  <main class="grid">
+    <aside id="panel-left" class="col-left" aria-label="Telemetry">
+      <div id="metrics-status" class="metrics-status">Waiting for data…</div>
+      <div id="metrics-grid" class="metrics-grid"></div>
+    </aside>
+
+    <section id="panel-center" class="col-center mobile-open" aria-label="Chat">
       <div id="messages" class="messages" aria-live="polite"></div>
-      <form id="chat-form" class="chat-form" autocomplete="off">
-        <input id="chat-input" type="text" placeholder="Type your message..." autofocus>
-        <button type="submit">Send</button>
-      </form>
+      <div id="input-bar" class="input-bar">
+        <div id="rec-indicator" class="rec-indicator hidden">
+          <span class="rec-dot"></span>
+          <span id="rec-timer">0:00</span>
+          <span class="rec-label">REC</span>
+        </div>
+        <div id="attachments" class="attachments"></div>
+        <div class="input-row">
+          <button id="btn-mic" class="icon-btn" title="Record voice" aria-label="Record voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+          <button id="btn-attach" class="icon-btn" title="Attach file" aria-label="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+          <input type="file" id="file-input" hidden
+                 accept=".png,.jpg,.jpeg,.gif,.pdf,.wav,.ogg,.mp3,.m4a,.webm,.txt,.md,.csv,.json,.log">
+          <button id="btn-camera" class="icon-btn mobile-only" title="Camera" aria-label="Camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+          <textarea id="chat-input" rows="1" placeholder="Tell Alfred..." maxlength="3000"></textarea>
+          <button id="btn-send" class="send-btn" disabled aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+        </div>
+        <div class="input-status">
+          <span id="input-status-text">Status: Ready</span>
+          <span id="char-count">0/3000</span>
+        </div>
+      </div>
     </section>
 
-    <section id="tab-metrics" class="tab-panel">
-      <div class="metrics-header">
-        <p id="metrics-status" class="metrics-status">Waiting for data…</p>
-      </div>
-      <div id="metrics-grid" class="metrics-grid"></div>
-    </section>
+    <aside id="panel-right" class="col-right" aria-label="Context">
+      <div id="context-grid" class="context-grid"></div>
+    </aside>
   </main>
 
   <script src="js/ws-client.js"></script>
-  <script src="js/tabs.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/chat.js"></script>
   <script src="js/metrics.js"></script>
+  <script src="js/context.js"></script>
+  <script src="js/audio-recorder.js"></script>
+  <script src="js/file-uploader.js"></script>
+  <script src="js/input-bar.js"></script>
 </body>
 </html>

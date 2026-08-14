@@ -99,7 +99,13 @@
     "web": {
       "enabled": true,
       "type": "web",
-      "config": {}
+      "config": {},
+      "permissions": {
+        "allow_from": [
+          "127.0.0.1",
+          "192.168.1.0/24"
+        ]
+      }
     }
   },
   "tools": {

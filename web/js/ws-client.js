@@ -4,7 +4,6 @@
   let idCounter = 1;
   const pending = new Map();
   const listeners = {};
-
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     return `${proto}://${location.host}/ws`;
@@ -100,6 +99,10 @@
     pending.clear();
   }
 
+  function isConnected() {
+    return !!ws && ws.readyState === WebSocket.OPEN;
+  }
+
   connect();
-  global.AlfredWS = { request, send, on };
+  global.AlfredWS = { request, send, on, isConnected };
 })(window);

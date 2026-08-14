@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile } from 'grammy';
+import { Bot, Context, InputFile, GrammyError } from 'grammy';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
@@ -138,9 +138,28 @@ export class TelegramChannel implements Channel {
       }
     });
 
+    this.bot.catch((err) => {
+      if (err.error instanceof GrammyError) {
+        getLogger().error(
+          { error: err.error.description, code: err.error.error_code },
+          'Telegram polling error (non-fatal, channel degraded)'
+        );
+      } else {
+        getLogger().error(
+          { error: err.error instanceof Error ? err.error.message : err.message },
+          'Telegram polling error (non-fatal, channel degraded)'
+        );
+      }
+    });
+
     this.bot.start({
       onStart: () => getLogger().info('Telegram bot started'),
       drop_pending_updates: true,
+    }).catch((error: any) => {
+      getLogger().error(
+        { error: error?.message || error },
+        'Telegram bot failed to start (non-fatal, channel degraded)'
+      );
     });
 
     getLogger().info('Telegram channel initialized');
