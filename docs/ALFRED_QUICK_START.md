@@ -21,31 +21,27 @@
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourusername/alfred-personal.git
-cd alfred-personal
+git clone https://github.com/geduma/alfred.git
+cd alfred
 
-# 2. Create workspace
-mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,jobs,vectors,snapshots}}
+# 2. Deploy (single command)
+#    deploy.sh creates the workspace (~/.alfred) and fixes its permissions,
+#    pulls, builds, starts the container, and health-checks the gateway.
+./deploy.sh
 
-# 3. Copy templates (edit with your API keys + Telegram token)
-cp system/alfred.json.example ~/.alfred-personal/config/alfred.json
-cp system/SOUL.md.example ~/.alfred-personal/config/SOUL.md
-cp system/secrets.env.example ~/.alfred-personal/config/secrets.env
-vim ~/.alfred-personal/config/alfred.json
+# 3. Edit the auto-created config with your API keys + Telegram token
+vim ~/.alfred/config/alfred.json
 
-# 4. Build and run (Docker Compose v2)
-docker compose -f docker/docker-compose.yml build
-docker compose -f docker/docker-compose.yml up -d
-
-# 5. Check logs
-docker compose -f docker/docker-compose.yml logs -f alfred
+# 4. Apply the config and chat
+docker compose -f docker/docker-compose.yml restart alfred
+docker attach alfred-agent
 ```
 
 ---
 
 ## MINIMUM CONFIGURATION
 
-Edit `~/.alfred-personal/config/alfred.json`:
+Edit `~/.alfred/config/alfred.json`:
 
 ```json
 {
@@ -149,7 +145,7 @@ Edit `/workspace/config/SOUL.md` to change it.
 ## IMPORTANT FILES
 
 ```
-~/.alfred-personal/
+~/.alfred/
 ├── config/
 │   ├── alfred.json        ← Main configuration
 │   ├── SOUL.md            ← Alfred's personality
@@ -178,10 +174,10 @@ docker compose -f docker/docker-compose.yml ps
 docker stats alfred
 
 # Connect to the DB
-sqlite3 ~/.alfred-personal/db/alfred.db
+sqlite3 ~/.alfred/db/alfred.db
 
 # Verify configuration
-cat ~/.alfred-personal/config/alfred.json | jq
+cat ~/.alfred/config/alfred.json | jq
 ```
 
 ### Automatic Health Monitor

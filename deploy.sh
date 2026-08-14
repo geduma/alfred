@@ -1,11 +1,39 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 COMPOSE_FILE="docker/docker-compose.yml"
+WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/.alfred}"
+ALFRED_UID="${ALFRED_UID:-1000}"
 
 echo "╔═══════════════════════════════════════════╗"
 echo "║     Alfred — Deploy Script                ║"
 echo "╚═══════════════════════════════════════════╝"
+
+# 0. Ensure the workspace directory exists and is writable by the container's
+#    `node` user (UID $ALFRED_UID), so Docker can read/write the bind mount.
+echo ""
+echo "📁 Ensuring workspace directory..."
+mkdir -p "$WORKSPACE_DIR"
+
+if stat -c %u "$WORKSPACE_DIR" >/dev/null 2>&1; then
+  DIR_UID="$(stat -c %u "$WORKSPACE_DIR")"
+else
+  DIR_UID="$(stat -f %u "$WORKSPACE_DIR")"
+fi
+
+if [ "$DIR_UID" != "$ALFRED_UID" ]; then
+  echo "   Setting ownership of $WORKSPACE_DIR to ${ALFRED_UID}:${ALFRED_UID}..."
+  if [ "$(id -u)" -eq 0 ]; then
+    chown -R "$ALFRED_UID:$ALFRED_UID" "$WORKSPACE_DIR"
+  else
+    sudo chown -R "$ALFRED_UID:$ALFRED_UID" "$WORKSPACE_DIR"
+  fi
+fi
+
+if ! grep -qF "~/.alfred:" "$COMPOSE_FILE" && ! grep -qF "$WORKSPACE_DIR:" "$COMPOSE_FILE"; then
+  echo "⚠️  $WORKSPACE_DIR does not match the bind mount in $COMPOSE_FILE."
+  echo "   Update the volume there or set WORKSPACE_DIR to the same path."
+fi
 
 # 1. Pull latest code
 if [ -d .git ]; then
