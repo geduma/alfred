@@ -1,5 +1,5 @@
 {
-  "name": "alfred-personal",
+  "name": "alfred",
   "version": "2.2.0",
   "description": "Personal AI Agent - Multi-channel, LLM-agnostic, with SOUL.md",
   "main": "dist/index.js",
@@ -57,6 +57,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/alfred-personal.git"
+    "url": "https://github.com/geduma/alfred.git"
   }
 }

@@ -13,41 +13,36 @@ Multi-channel, LLM-agnostic AI assistant with persistent personality, web access
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
-cd alfred-personal
+git clone https://github.com/geduma/alfred.git
+cd alfred
 
-# 2. Create the workspace directory on your host
-#    This will be mounted into the container at /workspace
-#    (skills/ dirs are auto-created on first startup if missing)
-mkdir -p ~/.alfred-personal/{config,files,db,logs,memory/{personality,sessions,jobs,vectors,snapshots}}
+# 2. Deploy with a single command
+#    ./deploy.sh: creates the workspace directory (~/.alfred) and fixes its
+#    permissions, pulls the latest code, builds the image, starts the container,
+#    and health-checks the gateway. Requires Docker Compose v2; the first build
+#    takes several minutes.
+./deploy.sh
 
-# 3. Copy configuration templates to the workspace
-#    (On first run without these files, Alfred creates them automatically,
-#     but pre-copying lets you configure before starting)
-cp system/alfred.json.example ~/.alfred-personal/config/alfred.json
-cp system/SOUL.md.example ~/.alfred-personal/config/SOUL.md
-cp system/secrets.env.example ~/.alfred-personal/config/secrets.env
-
-# 4. Edit the configuration with your API keys
+# 3. Edit the auto-created configuration with your API keys
+#    Alfred creates ~/.alfred/config/alfred.json from a template on first boot.
 #    Required: LLM provider (api_key, api_url) and at least one channel
 #    (Telegram bot_token, CLI, or Web)
-vim ~/.alfred-personal/config/alfred.json
+vim ~/.alfred/config/alfred.json
 
-# 5. Build and start the container
-docker compose -f docker/docker-compose.yml build
-docker compose -f docker/docker-compose.yml up -d
+# 4. Apply the changes (no rebuild needed)
+docker compose -f docker/docker-compose.yml restart alfred
+#    or trigger a hot-reload: "Alfred, reload the configuration"
 
-# 6. Check the logs to verify startup
-docker compose -f docker/docker-compose.yml logs -f alfred
-
-# 7. Access the interactive CLI channel
+# 5. Access the interactive CLI channel
 docker attach alfred-agent
 
-# 8. Send a test message from Telegram or type in the CLI
+# 6. Send a test message from Telegram or type in the CLI
 #    Alfred will respond using the configured LLM
 ```
 
-> **Permission note:** the container runs as the `node` user (UID 1000). On Raspberry Pi OS the default user is also UID 1000, so `~/.alfred-personal` works out of the box. If your user has a different UID, run `sudo chown -R 1000:1000 ~/.alfred-personal` after creating the directory.
+> **Workspace location:** Alfred keeps its **data** in `~/.alfred` on the host, mounted into the container as `/workspace`. This is *separate* from the cloned repo (`~/alfred`), so updating the code never touches your data. The full folder tree (`config`, `files`, `db`, `logs`, `memory/*`, `skills/*`) and the config templates are auto-created by Alfred on first startup.
+
+> **Permission note:** the container runs as the `node` user (UID 1000). `deploy.sh` creates `~/.alfred` if missing and chowns it to UID 1000 automatically (a no-op when your user is already UID 1000, the default on Raspberry Pi OS). If your user has a different UID, `sudo` will prompt once during `./deploy.sh`.
 
 ### Development Mode (without Docker)
 
@@ -68,7 +63,7 @@ npm run dev
 
 ## Configuration
 
-Single file: `~/.alfred-personal/config/alfred.json` (Docker) or `workspace/config/alfred.json` (local dev).
+Single file: `~/.alfred/config/alfred.json` (Docker) or `workspace/config/alfred.json` (local dev).
 
 ### `WORKSPACE` environment variable
 
@@ -348,7 +343,7 @@ docker compose -f docker/docker-compose.yml logs -f alfred
 docker attach alfred-agent    # Access the CLI channel
 ```
 
-Volume mapping: `~/.alfred-personal` on the host → `/workspace` inside the container. All data persists across restarts.
+Volume mapping: `~/.alfred` on the host → `/workspace` inside the container. All data persists across restarts.
 
 > **Image note:** the build runs `npm ci` in both stages (with dev deps only in the builder) and cleans the npm cache in the final stage (`npm cache clean --force`) so `/root/.npm` doesn't ship in the image. The WhatsApp channel (whatsapp-web.js + system Chromium) was removed entirely — the image is estimated at ~0.5-1.0 GB instead of ~2.5 GB. Confirm with `docker compose build --no-cache` + `docker history --no-trunc`.
 >
@@ -370,14 +365,14 @@ There are two levels of changes, each with its own update path:
 
 ### Level 1: Configuration & Data (no restart needed)
 
-Files on the `~/.alfred-personal` volume are read from disk on every request — **no restart required**:
+Files on the `~/.alfred` volume are read from disk on every request — **no restart required**:
 
 | File | How to update |
 |---|---|
-| `~/.alfred-personal/config/alfred.json` | Edit the file, then trigger a hot-reload (see below) |
-| `~/.alfred-personal/config/SOUL.md` | Edit the file, then trigger a hot-reload |
-| `~/.alfred-personal/memory/personality/preferences.md` | Alfred manages it via `file_ops` — just tell Alfred what you want |
-| `~/.alfred-personal/files/*` | Read/written by Alfred via `file_ops` tool |
+| `~/.alfred/config/alfred.json` | Edit the file, then trigger a hot-reload (see below) |
+| `~/.alfred/config/SOUL.md` | Edit the file, then trigger a hot-reload |
+| `~/.alfred/memory/personality/preferences.md` | Alfred manages it via `file_ops` — just tell Alfred what you want |
+| `~/.alfred/files/*` | Read/written by Alfred via `file_ops` tool |
 
 **Hot-reload** applies config and personality changes without restarting the container:
 
@@ -412,24 +407,25 @@ docker compose -f docker/docker-compose.yml build
 docker compose -f docker/docker-compose.yml up -d --force-recreate
 ```
 
-The volume `~/.alfred-personal` persists across rebuilds — your config, database, files, and logs are never lost.
+The volume `~/.alfred` persists across rebuilds — your config, database, files, and logs are never lost.
 
 ### deploy.sh
 
-A convenience script that automates the full code deployment cycle:
+A convenience script that automates the full deployment cycle — also used for first-time setup:
 
 ```bash
 ./deploy.sh
 ```
 
 Steps performed:
-1. `git pull` — fetches latest code from the repository
-2. `docker compose build` — rebuilds the image with new code
-3. `docker compose up -d --force-recreate` — replaces the running container
-4. `docker image prune -f` — cleans up old images
+1. Ensures the workspace directory — creates `~/.alfred` if missing and chowns it to the container's `node` user (UID 1000) so Docker can read/write it (override with `WORKSPACE_DIR` and `ALFRED_UID`; must match the bind mount in `docker-compose.yml`)
+2. `git pull` — fetches latest code from the repository
+3. `docker compose build` — rebuilds the image with new code
+4. `docker compose up -d --force-recreate` — replaces the running container
 5. Post-deploy healthcheck — probes port 18789 (`nc -z localhost 18789`), waits up to `HEALTH_WAIT_SECONDS` (default 60) for the gateway, and exits 1 with the container logs if it never comes up
+6. `docker image prune -f` — cleans up old images
 
-> **Tip:** Stash `deploy.sh` in a `~/alfred/` directory alongside the repo, or run it from the project root on your Raspberry Pi after SSH'ing in.
+> **Tip:** Run `./deploy.sh` from the repo root (`~/alfred`) on your Raspberry Pi after SSH'ing in. Note the two separate locations: the repo lives in `~/alfred` (code) while the workspace lives in `~/.alfred` (data — config, database, files, logs, memory, skills).
 
 ## Recent Improvements (v2.2)
 

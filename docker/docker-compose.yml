@@ -16,7 +16,7 @@ services:
     tty: true
 
     volumes:
-      - ~/.alfred-personal:/workspace
+      - ~/.alfred:/workspace
 
     environment:
       NODE_ENV: production
