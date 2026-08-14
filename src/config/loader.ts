@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { z } from 'zod';
-import { AlfredConfig, ChannelConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ToolSpecificConfig } from '../types/config';
+import { AlfredConfig, ChannelConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ToolSpecificConfig, VoiceConfig } from '../types/config';
 import { LLMConfig, ProviderConfig } from '../types/llm';
 import { resolvePath } from '../utils/workspace';
 
@@ -34,6 +34,12 @@ const SpendingLimitsConfigSchema = z.object({
   on_limit_reached: z.enum(['block_paid_providers', 'block_all']).default('block_paid_providers'),
 });
 
+const StreamingConfigSchema = z.object({
+  initial_response_timeout_seconds: z.number().positive().default(120),
+  idle_timeout_seconds: z.number().positive().default(60),
+  max_total_time_seconds: z.number().positive().nullish().default(null),
+}).default({});
+
 const LLMConfigSchema = z.object({
   primary_provider: z.string().min(1),
   fallback_providers: z.array(z.string()),
@@ -45,6 +51,7 @@ const LLMConfigSchema = z.object({
     backoff_factor: z.number().min(1).max(10).default(2),
   }).optional(),
   spending_limits: SpendingLimitsConfigSchema.optional(),
+  streaming: StreamingConfigSchema,
 });
 
 const ChannelConfigSchema = z.object({
@@ -163,12 +170,40 @@ const ServerConfigSchema = z.object({
   host: z.string().default('0.0.0.0'),
 }).optional();
 
+const VoiceProviderConfigSchema = z.object({
+  api_url: z.string().url().optional(),
+  api_key: z.string().optional(),
+});
+
+const VoiceSttConfigSchema = z.object({
+  provider: VoiceProviderConfigSchema.optional(),
+  model: z.string().min(1),
+  language: z.string().optional(),
+});
+
+const VoiceTtsConfigSchema = z.object({
+  provider: VoiceProviderConfigSchema.optional(),
+  model: z.string().min(1),
+  voice: z.string().min(1),
+  response_format: z.string().optional(),
+  expose_to_model: z.boolean().optional(),
+});
+
+const VoiceConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: VoiceProviderConfigSchema.optional(),
+  timeout_seconds: z.number().int().positive().optional(),
+  stt: VoiceSttConfigSchema.optional(),
+  tts: VoiceTtsConfigSchema.optional(),
+}).optional();
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
     version: z.string().min(1),
     personality_file: z.string().min(1),
     max_tool_iterations: z.number().int().positive().optional(),
+    trace: z.boolean().optional(),
   }),
   llm: LLMConfigSchema,
   providers: z.record(z.string(), ProviderConfigSchema),
@@ -179,6 +214,7 @@ const AlfredConfigSchema = z.object({
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
   health_monitor: HealthMonitorConfigSchema.optional(),
+  voice: VoiceConfigSchema,
   server: ServerConfigSchema,
 });
 
@@ -325,6 +361,10 @@ export class ConfigLoader {
 
   get healthMonitor() {
     return this.config.health_monitor;
+  }
+
+  get voiceConfig(): VoiceConfig | undefined {
+    return this.config.voice;
   }
 
   get serverConfig(): { port: number; host: string } {

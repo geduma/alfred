@@ -4,6 +4,8 @@ import { createHash } from 'crypto';
 import { getLogger } from '../utils/logger';
 import { isDatabaseInitialized, getDatabase } from '../db';
 
+const SUPPORTED_SUBDIRS = ['system', 'web', 'files'];
+
 export interface Skill {
   name: string;
   description: string;
@@ -45,37 +47,38 @@ export class SkillLoader {
       return [];
     }
 
-    let files: string[];
-    try {
-      files = await fs.promises.readdir(this.skillsDir);
-    } catch {
-      this.cachedSkills = [];
-      return [];
-    }
-
-    const skillFiles = files.filter(f => f.endsWith('.md'));
-
-    const customDir = path.join(this.skillsDir, 'custom');
-    try {
-      const customFiles = await fs.promises.readdir(customDir);
-      for (const file of customFiles.filter(f => f.endsWith('.md'))) {
-        skillFiles.push(path.join('custom', file));
-      }
-    } catch {
-      // no custom dir, use root skills only
-    }
-
     const skills: Skill[] = [];
+    const seen = new Set<string>();
 
-    for (const file of skillFiles) {
+    const scanDir = async (dir: string, dirName: string | null): Promise<void> => {
+      let files: string[];
       try {
-        const fullPath = path.join(this.skillsDir, file);
-        const content = await fs.promises.readFile(fullPath, 'utf-8');
-        const skill = this.parseSkill(content, file);
-        if (skill) skills.push(skill);
-      } catch (error: any) {
-        getLogger().warn({ file, error: error.message }, 'Failed to load skill');
+        files = await fs.promises.readdir(dir);
+      } catch {
+        return;
       }
+
+      for (const file of files.filter(f => f.endsWith('.md'))) {
+        const relative = dirName ? path.join(dirName, file) : file;
+        const fullPath = path.join(dir, file);
+        try {
+          const content = await fs.promises.readFile(fullPath, 'utf-8');
+          const skill = this.parseSkill(content, relative);
+          if (!skill) continue;
+          const key = skill.name.trim().toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          skills.push(skill);
+        } catch (error: any) {
+          getLogger().warn({ file: relative, error: error.message }, 'Failed to load skill');
+        }
+      }
+    };
+
+    await scanDir(path.join(this.skillsDir, 'custom'), 'custom');
+    await scanDir(this.skillsDir, null);
+    for (const sub of SUPPORTED_SUBDIRS) {
+      await scanDir(path.join(this.skillsDir, sub), sub);
     }
 
     this.cachedSkills = skills;
@@ -92,7 +95,6 @@ export class SkillLoader {
       if (s.tools && s.tools.length > 0) {
         block += `\nRequires tools: ${s.tools.join(', ')}`;
       }
-      block += `\n\n${s.instructions}`;
       return block;
     }).join('\n\n---\n\n');
   }

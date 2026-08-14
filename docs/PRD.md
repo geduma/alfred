@@ -68,7 +68,7 @@ A personal AI agent with a personality (SOUL.md) that operates as a digital butl
 - **Description:** Central WebSocket hub (port 18789)
 - **Protocol:** JSON-RPC-like (req/res/event)
 - **Auth:** Gateway token
-- **Functions:** connect, agent, skill_list, config_get, config_update
+- **Functions:** connect, agent, skill_list, tool_list, metrics
 
 ### F5.5 Multi-channel Channels
 - **ID:** F-CH-001

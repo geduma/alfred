@@ -2,12 +2,19 @@
   "agent": {
     "name": "Alfred",
     "version": "2.2.0",
-    "personality_file": "/workspace/config/SOUL.md"
+    "personality_file": "/workspace/config/SOUL.md",
+    "max_tool_iterations": 12,
+    "trace": false
   },
   "llm": {
     "primary_provider": "ollama-runpod",
     "fallback_providers": ["ollama-local", "anthropic"],
     "model_selection": "automatic",
+    "streaming": {
+      "initial_response_timeout_seconds": 120,
+      "idle_timeout_seconds": 60,
+      "max_total_time_seconds": null
+    },
     "spending_limits": {
       "enabled": true,
       "daily_token_limit": 500000,
@@ -209,6 +216,24 @@
       "telegram": {
         "enabled": true
       }
+    }
+  },
+  "voice": {
+    "enabled": false,
+    "timeout_seconds": 60,
+    "provider": {
+      "api_url": "http://speaches.home/v1",
+      "api_key": ""
+    },
+    "stt": {
+      "model": "Systran/faster-whisper-base",
+      "language": "auto"
+    },
+    "tts": {
+      "model": "speaches-ai/piper-es_MX-ald-medium",
+      "voice": "ald",
+      "response_format": "wav",
+      "expose_to_model": true
     }
   },
   "server": {

@@ -68,6 +68,17 @@ describe('ConfigLoader', () => {
     expect(loader.allConfig.agent.version).toBe('2.1.0');
   });
 
+  test('should accept optional agent.trace and max_tool_iterations', () => {
+    const cfg = buildConfig();
+    cfg.agent.trace = true;
+    cfg.agent.max_tool_iterations = 12;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.allConfig.agent.trace).toBe(true);
+    expect(loader.allConfig.agent.max_tool_iterations).toBe(12);
+  });
+
   test('should have valid provider chain in order', () => {
     const loader = new ConfigLoader(configPath);
     expect(loader.providerChain).toEqual(['primary', 'fallback']);
@@ -118,5 +129,96 @@ describe('ConfigLoader', () => {
     fs.writeFileSync(configPath, JSON.stringify(bad, null, 2), 'utf-8');
 
     expect(() => new ConfigLoader(configPath)).toThrow();
+  });
+
+  test('should load optional voice config with per-direction providers', () => {
+    const cfg = buildConfig();
+    (cfg as any).voice = {
+      enabled: true,
+      timeout_seconds: 60,
+      provider: { api_url: 'http://speaches.home/v1', api_key: '' },
+      stt: {
+        provider: { api_url: 'https://api.groq.com/openai/v1', api_key: 'groq-key' },
+        model: 'whisper-large-v3-turbo',
+        language: 'auto',
+      },
+      tts: {
+        model: 'speaches-ai/piper-es_MX-ald-medium',
+        voice: 'ald',
+        response_format: 'wav',
+        expose_to_model: true,
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.voiceConfig).toBeDefined();
+    expect(loader.voiceConfig?.enabled).toBe(true);
+    expect(loader.voiceConfig?.stt?.provider?.api_url).toBe('https://api.groq.com/openai/v1');
+    expect(loader.voiceConfig?.tts?.expose_to_model).toBe(true);
+  });
+
+  test('should default voice to disabled when absent', () => {
+    const loader = new ConfigLoader(configPath);
+    expect(loader.voiceConfig).toBeUndefined();
+  });
+
+  test('should apply default streaming timeouts when llm.streaming is absent', () => {
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 120,
+      idle_timeout_seconds: 60,
+      max_total_time_seconds: null,
+    });
+  });
+
+  test('should accept a centralized llm.streaming configuration', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = {
+      initial_response_timeout_seconds: 240,
+      idle_timeout_seconds: 90,
+      max_total_time_seconds: 900,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 240,
+      idle_timeout_seconds: 90,
+      max_total_time_seconds: 900,
+    });
+  });
+
+  test('should merge partial llm.streaming with defaults', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = { initial_response_timeout_seconds: 300 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.llmConfig.streaming).toEqual({
+      initial_response_timeout_seconds: 300,
+      idle_timeout_seconds: 60,
+      max_total_time_seconds: null,
+    });
+  });
+
+  test('should reject invalid llm.streaming values', () => {
+    const cfg = buildConfig();
+    (cfg as any).llm.streaming = { initial_response_timeout_seconds: -5 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    expect(() => new ConfigLoader(configPath)).toThrow();
+  });
+
+  test('should ignore legacy per-provider streaming timeout fields', () => {
+    const cfg = buildConfig();
+    (cfg.providers.primary.config as any).stream_idle_timeout_seconds = 10;
+    (cfg.providers.primary.config as any).max_total_time_seconds = 20;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    const provider = loader.providers.primary;
+    expect((provider.config as any).stream_idle_timeout_seconds).toBeUndefined();
+    expect((provider.config as any).max_total_time_seconds).toBeUndefined();
   });
 });

@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
@@ -11,13 +12,13 @@ import { getLogger } from './utils/logger';
 import { ToolHandler } from './types/tool';
 import { createTools } from './tools/index';
 import { SessionStore, StoredSession } from './db/session-store';
-import { JobSchedulerTool } from './tools/job-scheduler';
-import { Message, LLMResponse } from './types/llm';
+import { JobSchedulerTool, Job } from './tools/job-scheduler';
+import { Message, LLMResponse, LLMStreamEvent } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
 import { VectorStoreManager } from './services/vector-store/index';
 import { SnapshotManager } from './services/snapshot';
-import { approximateSystemPromptTokens, estimateTokenCount } from './utils/token-counter';
+import { approximateSystemPromptTokens, estimateTokenCount, estimateMessagesTokens } from './utils/token-counter';
 import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET, isBudgetBlockedError } from './utils/provider-errors';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
@@ -38,12 +39,16 @@ interface GatewayRequest {
 }
 
 const MAX_SESSIONS = 100;
-const MAX_TOOL_ITERATIONS = 25;
+const MAX_TOOL_ITERATIONS = 12;
+const MAX_HALLUCINATED_ROUNDS = 3;
+const MAX_TRACE_BYTES = 65536;
 const SAVE_DEBOUNCE_MS = 5000;
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_TOOLS = 3;
 const MAX_ADAPTIVE_ATTEMPTS = 3;
 const MIN_OUTPUT_TOKENS = 512;
+const AGENT_JOB_MIN_INTERVAL_MS = 30 * 60 * 1000;
+const AGENT_JOB_MIN_REMAINING_PERCENT = 10;
 
 export class Gateway {
   private wss: WebSocketServer | null = null;
@@ -61,8 +66,10 @@ export class Gateway {
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
   private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
+  private lastAgentJobFire: Map<string, number> = new Map();
   private port: number;
   private host: string;
+  private startedAt: number = 0;
   private contextCompressor: ContextCompressor;
   private promptCompressor: PromptCompressor;
   private vectorStore: VectorStoreManager | null = null;
@@ -144,7 +151,9 @@ export class Gateway {
     const healthConfig = this.config.healthMonitor;
     if (healthConfig?.enabled) {
       const notifier = new NotificationService(healthConfig, this.channelManager);
-      const logPath = this.config.logging.config.file_path || WORKSPACE_PATHS.alfredLog();
+      const logPath = this.config.logging.config.file_path
+        ? path.join(this.config.logging.config.file_path, 'alfred.log')
+        : WORKSPACE_PATHS.alfredLog();
       this.healthMonitor = new HealthMonitor(healthConfig, notifier, logPath);
     } else {
       this.healthMonitor = null;
@@ -170,6 +179,42 @@ export class Gateway {
       this.toolSchemaTokens = estimateTokenCount(JSON.stringify(this.getToolSchemas()));
     }
     return this.toolSchemaTokens;
+  }
+
+  private traceEnabled(): boolean {
+    return this.config.allConfig.agent.trace === true;
+  }
+
+  private writeAgentTrace(entry: Record<string, unknown>): void {
+    if (!this.traceEnabled()) return;
+    try {
+      const dir = WORKSPACE_PATHS.logs();
+      fs.mkdirSync(dir, { recursive: true });
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+      fs.appendFileSync(path.join(dir, 'agent-traces.jsonl'), `${line}\n`, 'utf-8');
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Agent trace write failed');
+    }
+  }
+
+  private serializeToolSchemasForTrace(): { names: string[]; hash: string } {
+    const schemas = this.getToolSchemas().map(t => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema,
+      },
+    }));
+    const hash = createHash('sha256').update(JSON.stringify(schemas)).digest('hex');
+    return { names: schemas.map(s => s.function.name), hash };
+  }
+
+  private truncateForTrace(value: unknown, maxBytes = MAX_TRACE_BYTES): unknown {
+    const raw = JSON.stringify(value);
+    if (raw === undefined) return undefined;
+    if (raw.length <= maxBytes) return value;
+    return { truncated: true, snippet: raw.slice(0, maxBytes) };
   }
 
   private getContextBudget(): number {
@@ -325,6 +370,7 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket) => this.onClientConnect(ws));
     this.httpServer.listen(this.port, this.host);
 
+    this.startedAt = Date.now();
     this.startJobRunner();
     await this.initServices();
 
@@ -362,6 +408,8 @@ export class Gateway {
         '.json': 'application/json',
         '.png': 'image/png',
         '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.webmanifest': 'application/manifest+json',
       };
       res.writeHead(200, { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' });
       res.end(data);
@@ -504,9 +552,69 @@ export class Gateway {
 
   private startJobRunner(): void {
     this.jobRunnerTimer = setInterval(() => {
-      this.jobScheduler.fireDueJobs(this.channelManager);
+      this.jobScheduler.fireDueJobs(this.channelManager, (job) => this.handleAgentJobFire(job));
     }, 30000);
     getLogger().info('Job runner started (30s interval)');
+  }
+
+  private async handleAgentJobFire(job: Job): Promise<void> {
+    const { channel, user_id, chat_id } = job.created_by;
+    const metadata = chat_id !== undefined ? { chat_id } : undefined;
+
+    if (await this.skipAgentJob(job)) {
+      return;
+    }
+
+    const content = await this.processMessage({
+      channel,
+      userId: user_id,
+      userName: undefined,
+      content: job.message,
+      sessionId: `${channel}_${user_id}_jobs`,
+      metadata: { source: 'job', jobId: job.id },
+    });
+
+    if (content) {
+      await this.channelManager.sendMessage(channel, user_id, content, metadata);
+    }
+  }
+
+  private async skipAgentJob(job: Job): Promise<boolean> {
+    const now = Date.now();
+    const last = this.lastAgentJobFire.get(job.id);
+    const metadata = job.created_by.chat_id !== undefined ? { chat_id: job.created_by.chat_id } : undefined;
+
+    if (last !== undefined && now - last < AGENT_JOB_MIN_INTERVAL_MS) {
+      getLogger().warn({ jobId: job.id, skip_reason: 'min_interval' }, 'Agent job skipped (min interval)');
+      await this.channelManager.sendMessage(
+        job.created_by.channel,
+        job.created_by.user_id,
+        'Skipped: minimum interval between agent runs for this job has not elapsed.',
+        metadata
+      );
+      return true;
+    }
+
+    const budgetTracker = this.llmRouter?.getBudgetTracker?.();
+    if (budgetTracker) {
+      const budget = await budgetTracker.checkBudget();
+      if (!budget.allowed || budget.remainingPercent < AGENT_JOB_MIN_REMAINING_PERCENT) {
+        getLogger().warn(
+          { jobId: job.id, skip_reason: 'budget', remainingPercent: budget.remainingPercent, reason: budget.reason },
+          'Agent job skipped (budget)'
+        );
+        await this.channelManager.sendMessage(
+          job.created_by.channel,
+          job.created_by.user_id,
+          'Skipped: token budget for this period is exhausted or near its limit.',
+          metadata
+        );
+        return true;
+      }
+    }
+
+    this.lastAgentJobFire.set(job.id, now);
+    return false;
   }
 
   private stopJobRunner(): void {
@@ -519,7 +627,8 @@ export class Gateway {
   private async prepareContext(
     session: StoredSession,
     systemPrompt: string,
-    currentMessage?: string
+    currentMessage?: string,
+    skipCompression = false
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const budgetPercent = await this.getBudgetRemainingPercent();
     if (budgetPercent !== null && budgetPercent < 20) {
@@ -527,7 +636,7 @@ export class Gateway {
     }
 
     try {
-      return await this.prepareContextInner(session, systemPrompt, currentMessage);
+      return await this.prepareContextInner(session, systemPrompt, currentMessage, skipCompression);
     } finally {
       this.contextCompressor.clearThresholdOverride();
     }
@@ -536,7 +645,8 @@ export class Gateway {
   private async prepareContextInner(
     session: StoredSession,
     systemPrompt: string,
-    currentMessage?: string
+    currentMessage?: string,
+    skipCompression = false
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
     const extraTokens = this.getToolSchemaTokens();
@@ -560,10 +670,11 @@ export class Gateway {
     this.ensureToolResponses(session.messages);
 
     let contextMessages: Message[] = messages;
+    let ragTokens = 0;
 
     if (this.vectorStore && currentMessage) {
       try {
-        const results = await this.vectorStore.search(currentMessage);
+        const results = await this.vectorStore.search(currentMessage, undefined, { excludeSessionId: session.id });
         if (results.length > 0) {
           const ragContext = results
             .map(r => {
@@ -572,19 +683,37 @@ export class Gateway {
             })
             .join('\n\n');
 
+          ragTokens = estimateTokenCount(ragContext);
+
           contextMessages = [
             { role: 'user', content: `[RAG CONTEXT — Retrieved from long-term memory]\n${ragContext}` },
             ...messages,
           ];
 
-          getLogger().debug({ chunkCount: results.length }, 'RAG context injected');
+          getLogger().debug({ chunkCount: results.length, ragTokens }, 'RAG context injected');
         }
       } catch (error: any) {
         getLogger().warn({ error: error.message }, 'RAG search failed, continuing without');
       }
     }
 
-    const compressedSystemPrompt = this.promptCompressor.compress(systemPrompt);
+    const compressedSystemPrompt = skipCompression
+      ? systemPrompt
+      : this.promptCompressor.compress(systemPrompt);
+
+    getLogger().debug(
+      {
+        component: 'req_payload',
+        sessionId: session.id,
+        systemTokens: systemPromptTokens,
+        toolTokens: extraTokens,
+        messagesTokens: estimateMessagesTokens(contextMessages),
+        ragTokens,
+        totalEstimateTokens: systemPromptTokens + extraTokens + estimateMessagesTokens(contextMessages),
+        messageCount: contextMessages.length,
+      },
+      'LLM request payload estimate'
+    );
 
     return { messages: contextMessages, systemPrompt: compressedSystemPrompt };
   }
@@ -633,6 +762,8 @@ export class Gateway {
 
   private async ingestMessage(session: StoredSession, msg: Message, params: { channel: string; userId: string }): Promise<void> {
     if (!this.vectorStore) return;
+    const ingestConfig = this.config.memoryConfig?.vector_store?.ingest;
+    if (ingestConfig && ingestConfig.on_message === false) return;
     if (!msg.content || msg.content.trim().length < 10) return;
 
     try {
@@ -768,14 +899,8 @@ export class Gateway {
         case 'tool_list':
           this.handleToolList(ws);
           break;
-        case 'reload':
-          await this.handleReload(ws, req);
-          break;
-        case 'config_get':
-          this.handleConfigGet(ws, req);
-          break;
-        case 'config_update':
-          await this.handleConfigUpdate(ws, req);
+        case 'metrics':
+          await this.handleMetrics(ws, req);
           break;
         default:
           this.sendError(ws, req.id, `Unknown method: ${req.method}`);
@@ -821,7 +946,9 @@ export class Gateway {
     systemPrompt: string,
     contextMessages: Message[],
     ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> },
-    _onEvent: (event: string, payload: any) => void
+    runId: string,
+    _onEvent: (event: string, payload: any) => void,
+    onLLMEvent?: (event: LLMStreamEvent) => void
   ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
     let finalSystem = systemPrompt;
     let messages = contextMessages;
@@ -829,30 +956,77 @@ export class Gateway {
     let allToolCalls: any[] = [];
     let totalUsage: any = undefined;
     let iteration = 0;
+    let consecutiveBadRounds = 0;
+
+    const source = ingestParams.metadata?.source === 'job' ? 'job' : 'interactive';
+    const toolSchemasForTrace = this.serializeToolSchemasForTrace();
 
     const maxIterations = this.config.allConfig.agent.max_tool_iterations || MAX_TOOL_ITERATIONS;
     while (iteration < maxIterations) {
-      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem);
+      const round = iteration + 1;
+      this.writeAgentTrace({
+        component: 'round_start',
+        runId,
+        round,
+        source,
+        messageCount: messages.length,
+        systemTokens: approximateSystemPromptTokens(finalSystem),
+        toolSchemaHash: toolSchemasForTrace.hash,
+        toolNames: toolSchemasForTrace.names,
+        maxTokens: this.getOutputTokens(),
+      });
 
-      if (!response.tool_calls || response.tool_calls.length === 0) {
+      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem, onLLMEvent);
+
+      const parsedToolCalls = response.tool_calls || [];
+      this.writeAgentTrace({
+        component: 'round_end',
+        runId,
+        round,
+        source,
+        model: response.model,
+        stop_reason: response.stop_reason,
+        usage: response.usage,
+        toolCalls: parsedToolCalls,
+        raw: this.truncateForTrace(response.raw),
+      });
+
+      if (parsedToolCalls.length === 0) {
         finalContent = response.content || '';
         totalUsage = response.usage;
         break;
       }
 
-      allToolCalls = allToolCalls.concat(response.tool_calls);
+      allToolCalls = allToolCalls.concat(parsedToolCalls);
 
       const assistantToolMsg: Message = {
         role: 'assistant',
         content: response.content || '',
-        tool_calls: response.tool_calls,
+        tool_calls: parsedToolCalls,
       };
       session.messages.push(assistantToolMsg);
       await this.ingestMessage(session, assistantToolMsg, ingestParams);
 
+      let roundBad = false;
+
       const executeTool = async (toolCall: any): Promise<void> => {
         const tool = this.tools.find(t => t.tool.name === toolCall.function.name);
         if (!tool) {
+          roundBad = true;
+          getLogger().warn(
+            { runId, round, toolName: toolCall.function.name },
+            'Agent loop: unknown tool name in tool_calls'
+          );
+          this.writeAgentTrace({
+            component: 'suspicious_round',
+            runId,
+            round,
+            source,
+            reason: 'unknown_tool_name',
+            toolName: toolCall.function.name,
+            arguments: toolCall.function.arguments,
+            raw: this.truncateForTrace(response.raw),
+          });
           const errorMsg: Message = { role: 'tool', content: `Tool "${toolCall.function.name}" not found or disabled`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
           return;
@@ -862,6 +1036,11 @@ export class Gateway {
         try {
           args = JSON.parse(toolCall.function.arguments);
         } catch {
+          roundBad = true;
+          getLogger().warn(
+            { runId, round, toolName: toolCall.function.name },
+            'Agent loop: invalid JSON in tool arguments'
+          );
           const errorMsg: Message = { role: 'tool', content: `Invalid JSON in tool arguments: ${toolCall.function.arguments}`, tool_call_id: toolCall.id };
           session.messages.push(errorMsg);
           return;
@@ -919,19 +1098,36 @@ export class Gateway {
         }
       };
 
-      for (let i = 0; i < response.tool_calls.length; i += MAX_CONCURRENT_TOOLS) {
-        const batch = response.tool_calls.slice(i, i + MAX_CONCURRENT_TOOLS);
+      for (let i = 0; i < parsedToolCalls.length; i += MAX_CONCURRENT_TOOLS) {
+        const batch = parsedToolCalls.slice(i, i + MAX_CONCURRENT_TOOLS);
         await Promise.all(batch.map(tc => executeToolWithTimeout(tc)));
       }
 
+      consecutiveBadRounds = roundBad ? consecutiveBadRounds + 1 : 0;
+
+      if (consecutiveBadRounds >= MAX_HALLUCINATED_ROUNDS) {
+        finalContent = source === 'job'
+          ? '⚠️ Iteration limit reached due to invalid tool calls. Review manually.'
+          : 'Reached the iteration limit due to repeated invalid tool calls. Please review manually.';
+        totalUsage = response.usage;
+        getLogger().warn(
+          { runId, round, consecutiveBadRounds },
+          'Agent loop broken: repeated invalid tool calls'
+        );
+        break;
+      }
+
       iteration++;
-      const contextResult = await this.prepareContext(session, finalSystem);
+      const contextResult = await this.prepareContext(session, finalSystem, undefined, true);
       messages = contextResult.messages;
       finalSystem = contextResult.systemPrompt;
     }
 
     if (iteration >= maxIterations && !finalContent) {
-      finalContent = 'Reached maximum tool call iterations. Please refine your request.';
+      finalContent = source === 'job'
+        ? '⚠️ Iteration limit reached. Review manually.'
+        : 'Reached maximum tool call iterations. Please refine your request.';
+      getLogger().warn({ runId, iterations: iteration }, 'Agent loop reached max iterations');
     }
 
     return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage };
@@ -940,11 +1136,12 @@ export class Gateway {
   private async callWithAdaptiveRetry(
     session: StoredSession,
     messages: Message[],
-    system: string
+    system: string,
+    onEvent?: (event: LLMStreamEvent) => void
   ): Promise<LLMResponse> {
     let attempt = 0;
     let callMessages = messages;
-    let callSystem = system;
+    const callSystem = system;
     let tools = this.getToolSchemas();
 
     for (;;) {
@@ -954,6 +1151,7 @@ export class Gateway {
           system: callSystem,
           tools,
           max_tokens: this.getOutputTokens(),
+          onEvent,
         });
       } catch (error: any) {
         if (!isThrottleError(error.message)) throw error;
@@ -988,7 +1186,6 @@ export class Gateway {
         }
         this.ensureToolResponses(session.messages);
         callMessages = session.messages;
-        callSystem = this.promptCompressor.compress(callSystem);
 
         getLogger().warn(
           { attempt, budget: this.getContextBudget() },
@@ -1063,7 +1260,6 @@ export class Gateway {
       const [systemPrompt, skillsContext] = await Promise.all([
         this.promptBuilder.buildSystemPrompt(),
         this.loadSkillsContext(),
-        this.ingestMessage(session, userMsg, ingestParams),
       ]);
 
       const finalSkillsPrompt = skillsContext
@@ -1071,10 +1267,17 @@ export class Gateway {
         : systemPrompt;
 
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, message);
+      await this.ingestMessage(session, userMsg, ingestParams);
 
       const { content, toolCalls, usage } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
-        () => {} // no-op for WebSocket events
+        runId,
+        () => {}, // no-op for WebSocket events
+        (event) => {
+          if (event.type === 'text_delta') {
+            this.sendEvent(ws, 'agent_delta', { runId, text: event.text });
+          }
+        }
       );
 
       const assistantMsg: Message = { role: 'assistant', content };
@@ -1117,8 +1320,9 @@ export class Gateway {
     sessionId: string;
     metadata?: Record<string, unknown>;
   }): Promise<string | null> {
+    const isJobTriggered = params.metadata?.source === 'job';
     const rateLimit = this.config.security?.rate_limiting;
-    if (rateLimit) {
+    if (rateLimit && !isJobTriggered) {
       if (!this.rateLimiter.checkUser(params.userId, rateLimit.requests_per_user_per_hour || 100)) {
         getLogger().warn({ userId: params.userId }, 'Rate limit exceeded for user');
         return 'Rate limit exceeded. Please wait before sending another message.';
@@ -1162,7 +1366,6 @@ export class Gateway {
       const [systemPrompt, skillsContext] = await Promise.all([
         this.promptBuilder.buildSystemPrompt(),
         this.loadSkillsContext(),
-        this.ingestMessage(session, userMsg, ingestParams),
       ]);
 
       const finalSkillsPrompt = skillsContext
@@ -1170,9 +1373,11 @@ export class Gateway {
         : systemPrompt;
 
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, params.content);
+      await this.ingestMessage(session, userMsg, ingestParams);
 
       const { content } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
+        runId,
         () => {}
       );
 
@@ -1193,24 +1398,99 @@ export class Gateway {
     }
   }
 
-  private async handleReload(ws: WebSocket, req: GatewayRequest): Promise<void> {
+  private async handleMetrics(ws: WebSocket, req: GatewayRequest): Promise<void> {
     try {
-      const log = getLogger();
+      const budgetTracker = this.llmRouter?.getBudgetTracker?.();
+      const limits = this.config.llmConfig.spending_limits;
 
-      log.info('Hot-reload triggered via WebSocket');
+      let budget: Record<string, unknown> = {
+        enabled: !!limits?.enabled,
+        allowed: true,
+        today: 0,
+        thisMonth: 0,
+        byProvider: {},
+        remainingPercent: 100,
+        dailyRemainingPercent: 100,
+        monthlyRemainingPercent: 100,
+      };
 
-      await this.reload();
+      if (budgetTracker) {
+        try {
+          const check = await budgetTracker.checkBudget();
+          const usage = await budgetTracker.getTokenUsage();
+          budget = {
+            enabled: !!limits?.enabled,
+            allowed: check.allowed,
+            reason: check.reason || undefined,
+            today: usage.today,
+            thisMonth: usage.thisMonth,
+            byProvider: usage.byProvider,
+            remainingPercent: check.remainingPercent,
+            dailyRemainingPercent: check.dailyRemainingPercent,
+            monthlyRemainingPercent: check.monthlyRemainingPercent,
+            dailyLimit: limits?.daily_token_limit || 0,
+            monthlyLimit: limits?.monthly_token_limit || 0,
+          };
+        } catch {
+          // budget read failed; report disabled state
+        }
+      }
+
+      const jobs = await this.jobScheduler.loadAllJobs().catch(() => []);
+      const enabledJobs = jobs.filter(j => j.enabled);
+      const nextDue = enabledJobs
+        .map(j => j.next_fire)
+        .filter((v): v is string => !!v)
+        .sort()[0];
+
+      let skills = 0;
+      try {
+        skills = (await this.skillLoader.loadSkills()).length;
+      } catch {
+        // skills count unavailable
+      }
+
+      let health = { findings: 0, errors: 0, items: [] as unknown[] };
+      if (this.healthMonitor) {
+        try {
+          const findings = await this.healthMonitor.getFindings();
+          health = {
+            findings: findings.length,
+            errors: findings.filter(f => f.severity === 'error').length,
+            items: findings,
+          };
+        } catch {
+          // health findings unavailable
+        }
+      }
+
+      const providerStates = this.llmRouter?.getCircuitStates?.() || [];
 
       this.sendResponse(ws, req.id, {
-        status: 'reloaded',
-        config: true,
-        llmRouter: true,
-        promptBuilder: true,
-        tools: true,
+        metrics: {
+          version: this.config.allConfig.agent.version,
+          uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
+          providers: {
+            primary: this.config.llmConfig.primary_provider,
+            chain: providerStates.map(s => s.provider),
+            states: providerStates,
+          },
+          budget,
+          sessions: { active: this.sessions.size },
+          webClients: this.webChannel?.clientCount ?? 0,
+          jobs: {
+            total: jobs.length,
+            enabled: enabledJobs.length,
+            nextDue: nextDue || null,
+          },
+          skills,
+          tools: this.tools.length,
+          health,
+        },
       });
     } catch (error: any) {
-      getLogger().error({ error: error.message }, 'Hot-reload failed');
-      this.sendError(ws, req.id, `Reload failed: ${error.message}`);
+      getLogger().error({ error: error.message }, 'Metrics collection failed');
+      this.sendError(ws, req.id, `Metrics failed: ${error.message}`);
     }
   }
 
@@ -1222,60 +1502,6 @@ export class Gateway {
     }));
 
     this.sendResponse(ws, 'tool_list', { tools: toolList });
-  }
-
-  private handleConfigGet(ws: WebSocket, req: GatewayRequest): void {
-    const raw = this.config.allConfig;
-    this.sendResponse(ws, req.id, { config: this.sanitizeConfig(raw) });
-  }
-
-  private async handleConfigUpdate(ws: WebSocket, req: GatewayRequest): Promise<void> {
-    const patch = req.params?.config;
-    if (!patch || typeof patch !== 'object') {
-      this.sendError(ws, req.id, 'config object is required');
-      return;
-    }
-
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.config.configPathValue, 'utf-8'));
-      const merged = this.deepMerge(raw, patch);
-      await this.config.writeRaw(merged);
-      this.sendResponse(ws, req.id, {
-        status: 'saved',
-        message: 'Configuration saved. Use "reload" to apply changes.',
-      });
-    } catch (error: any) {
-      getLogger().error({ error: error.message }, 'Config update failed');
-      this.sendError(ws, req.id, `Config update failed: ${error.message}`);
-    }
-  }
-
-  private sanitizeConfig(raw: any): any {
-    const redacted = JSON.parse(JSON.stringify(raw));
-    if (redacted.providers) {
-      for (const name of Object.keys(redacted.providers)) {
-        const config = redacted.providers[name]?.config;
-        if (config?.api_key) {
-          config.api_key = '*****';
-        }
-      }
-    }
-    if (redacted.security?.gateway_auth_token) {
-      redacted.security.gateway_auth_token = '*****';
-    }
-    return redacted;
-  }
-
-  private deepMerge(base: any, patch: any): any {
-    const out = Array.isArray(base) ? [...base] : { ...base };
-    for (const [key, value] of Object.entries(patch)) {
-      if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
-        out[key] = this.deepMerge(base[key], value);
-      } else {
-        out[key] = value;
-      }
-    }
-    return out;
   }
 
   private sendResponse(ws: WebSocket, id: string, payload: unknown): void {

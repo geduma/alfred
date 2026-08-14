@@ -1,0 +1,20 @@
+{
+  "name": "Alfred — Control panel",
+  "short_name": "Alfred",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#15181f",
+  "theme_color": "#15181f",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -130,6 +130,14 @@ Single file: `workspace/config/alfred.json`
 
 ## Skill Implementation Protocol
 
+**First, determine intent — execute vs. create:**
+- If the request names an existing skill (by name, or matches an entry listed
+  under `## Available Skills`) and asks to run/execute/use it, **execute that
+  skill's instructions directly** — never create, edit, or regenerate its
+  SKILL.md file as part of fulfilling the request.
+- The create-skill flow only applies when the request describes new
+  functionality with no matching existing skill.
+
 When the user requests new functionality via any channel, Alfred's default
 response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/`.
 
@@ -137,15 +145,29 @@ response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/
 - **Tools used**: The skill instructs Alfred how to orchestrate `exec`, `file_ops`, `web`, `job`, and `system` tools
 - **Fallback**: If the functionality requires capabilities beyond these tools, Alfred explains why and requests code implementation
 - **Rule location**: `system/alfred-rules.md` → section "Skill Implementation Protocol"
+- **Reminder/job edge case**: a job message such as "Run the Daily Digest skill"
+  is an *execution* request for the named skill, never an instruction to create,
+  edit, or regenerate its SKILL.md file
 
-Skills directories:
+> **Deploy status (2026-08-11):** the execute-vs-create wording above was added to
+> `system/alfred-rules.md` and verified against the live dev instance (targeted
+> repro "Run the Daily Digest skill": 0 `file_ops` writes; control case with new
+> functionality: skill-creation flow still fires). Dev is already fixed because
+> the dev process reads `system/alfred-rules.md` on every prompt build
+> (`src/agent/prompt-builder.ts` → `loadRules()`). **Deploy to production is
+> pending**: the Docker image bakes its own copy of the rules, so run `./deploy.sh`
+> once the Docker daemon is available before enabling real `mode: 'agent'` jobs.
+
+Skills directories (all loaded by `SkillLoader.loadSkills()`):
 ```
 /workspace/skills/
-├── custom/    ← User-requested custom skills
+├── custom/    ← User-requested custom skills (highest precedence)
+├── (root)     ← Skills at the skills root
 ├── system/    ← System-level skills
 ├── web/       ← Web-oriented skills
 └── files/     ← File-oriented skills
 ```
+Duplicate names resolve by precedence: custom > root > system > web > files. The 30s watcher invalidates the whole cache, so files added to any of these dirs are picked up without a restart.
 
 ## Secrets Management
 
@@ -167,10 +189,15 @@ Alfred must never output secret values in responses or log them. The `exec` tool
 
 - Reminders stored as JSON in `workspace/memory/jobs/{id}.json`
 - Supports: one-time (`delay_minutes`), daily, weekly (`day_of_week`), monthly (`day_of_month`)
-- Recurring jobs auto-compute next fire time
+- Recurring jobs auto-compute next fire time; the schedule advances **before** firing so slow agent runs never double-fire
 - JobRunner in gateway checks every 30 seconds
 - Notifications sent to the originating channel (or all channels if not specified)
 - User can list, update, and cancel any job
+- **`mode: 'agent'`**: routes the job's message through the agent (via `processMessage`) so a skill can run proactively. Uses a dedicated session (`{channel}_{user}_jobs`), bypasses the rate limiter, and is gated by:
+  - `AGENT_JOB_MIN_INTERVAL_MS` (30 min) per job, and
+  - the token budget (`checkBudget()`): skipped if exhausted or under 10% remaining
+  - Skips log `skip_reason: 'min_interval' | 'budget'` and notify the channel; the job simply waits for its next scheduled fire (no retry). If no handler is wired, an agent-mode job falls back to a static reminder.
+  - **Unattended contract**: only skills with `unattended: true` in frontmatter may run; only their listed "Approved actions" are allowed; anything else is skipped and reported as "requires approval". Prompt-level contract, not a code-level permission gate.
 
 ## Session Persistence
 
@@ -327,7 +354,7 @@ The gateway serves a static web UI (`web/`) and exposes a WebSocket on the same 
 
 - **Routing**: single `http.Server` + `WebSocketServer({ noServer: true })`; upgrade requests for `/ws` → web client (no auth, **TODO**), any other path → main WS with `gateway_auth_token`
 - **Web client**: push-only via `WebChannel` — registers on connect, receives broadcasts (`{ type: 'notify', event: 'message' }`); the `agent` method responds via the `agent_complete` event, so the frontend uses fire-and-forget `AlfredWS.send`
-- **Config API**: `config_get` (api_key/gateway_auth_token sanitized as `*****`) and `config_update` (deep merge + `writeRaw`; requires `reload`)
+- **Metrics API**: `metrics` returns runtime state (version/uptime, provider chain + circuit-breaker states, token budget, active sessions, web clients, jobs, skills, tools, health findings); the frontend polls it every 5s
 - **Config**: `server.port` (default 18789, `0` for ephemeral/test), `server.host` (default `0.0.0.0`)
 - **Docker**: `web/` copied in both builder and runtime stages; `deploy.sh` post-deploy healthcheck probes port 18789 (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exit 1 with logs on failure)
 
@@ -335,7 +362,7 @@ Key files: `src/gateway.ts`, `src/channels/web.ts`, `web/`, `src/config/loader.t
 
 ## Default Skills (v2.2)
 
-On first startup Alfred auto-copies new files from `system/skills-custom/` into `workspace/skills/custom/` (copy-if-missing, never overwrites). `SkillLoader.loadSkills()` scans both the skills root and `skillsDir/custom`.
+On first startup Alfred auto-copies new files from `system/skills-custom/` into `workspace/skills/custom/` (copy-if-missing, never overwrites). `SkillLoader.loadSkills()` scans the skills root, `skillsDir/custom`, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files).
 
 Bundled: `daily-digest`, `weekly-review`, `system-check` — with instructions in Spanish for the day-to-day agent use cases.
 
@@ -344,6 +371,11 @@ Key files: `system/skills-custom/`, `src/index.ts` (`copyDefaultSkills`), `src/a
 ## LLM Provider Agnosticism (v2.2)
 
 Alfred remains 100% agnostic to LLM providers — no code references any specific vendor (e.g. Relio). Provider-related strategies (routing strategy, cache-aware selection, cost-aware ranking) are **documentation-only** (README/AGENTS.md) and are not hardcoded in source. Add provider-specific behavior only through the Provider Factory pattern in `src/agent/providers/`.
+
+### Tool payload invariants (`src/agent/llm-router.ts`)
+
+- Provider config may declare `capabilities.supports_tools: false`. The router then omits `tools` from the payload; if the message history contains `tool` results or `assistant.tool_calls`, that provider is **skipped** (never sent a malformed artifact-bearing payload) and the chain fails over.
+- If a caller passes an **empty `tools: []`** (the gateway's 413 fallback "retry without tools") while the history still contains tool artifacts, the router **strips the artifacts** (drops `tool`-role messages and `tool_calls` from assistant messages) before calling. This mirrors the same invariant from the other direction: no tools ⇒ no artifacts.
 
 ## Auto-Created Configs
 

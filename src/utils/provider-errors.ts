@@ -1,3 +1,5 @@
+import { LLMStreamInterruptedError, LLMStreamTimeoutError } from '../agent/providers/stream-utils';
+
 const THROTTLE_PATTERN = /\b(429|413)\b|rate limit|too many requests|tokens[_ ]?per[_ ]?minute|request too large|reduce your message size|context window/i;
 
 const RETRYABLE_STATUS = new Set([408, 409, 413, 425, 429, 500, 502, 503, 504]);
@@ -75,4 +77,12 @@ export class BudgetBlockedError extends Error {
 
 export function isBudgetBlockedError(error: unknown): boolean {
   return error instanceof BudgetBlockedError || (error as any)?.code === 'BUDGET_BLOCKED';
+}
+
+export function isStreamInterruptedError(error: unknown): boolean {
+  return error instanceof LLMStreamInterruptedError || (error as any)?.code === 'LLM_STREAM_INTERRUPTED';
+}
+
+export function isStreamTimeoutError(error: unknown): boolean {
+  return error instanceof LLMStreamTimeoutError || (error as any)?.code === 'LLM_STREAM_TIMEOUT';
 }

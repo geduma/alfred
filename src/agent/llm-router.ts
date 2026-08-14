@@ -1,10 +1,11 @@
-import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig, SpendingLimitsConfig, isPaidProvider } from '../types/llm';
+import { LLMCallParams, LLMResponse, LLMProvider, RetryConfig, SpendingLimitsConfig, isPaidProvider, LLMStreamEvent } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { ProviderFactory } from './providers/factory';
 import { getLogger } from '../utils/logger';
 import { CircuitBreaker } from '../services/circuit-breaker';
 import { TokenBudgetTracker } from '../services/token-budget';
 import { isThrottleError, isRetryableError, getErrorMessage, BudgetBlockedError } from '../utils/provider-errors';
+import { LLMStreamInterruptedError } from './providers/stream-utils';
 
 const DEFAULT_RETRY: RetryConfig = {
   max_attempts: 3,
@@ -39,6 +40,27 @@ export class LLMRouter {
     return isPaidProvider(provider.type, provider.paid);
   }
 
+  providerSupportsTools(name: string): boolean {
+    const provider = this.config.providers[name];
+    return provider?.capabilities?.supports_tools !== false;
+  }
+
+  messagesContainToolArtifacts(messages: LLMCallParams['messages']): boolean {
+    return messages.some(m => m.role === 'tool' || (m.tool_calls !== undefined && m.tool_calls.length > 0));
+  }
+
+  stripToolArtifacts(messages: LLMCallParams['messages']): LLMCallParams['messages'] {
+    return messages.flatMap(m => {
+      if (m.role === 'tool') {
+        return [];
+      }
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        return [{ role: m.role, content: m.content }];
+      }
+      return [m];
+    });
+  }
+
   getBudgetTracker(): TokenBudgetTracker {
     return this.budgetTracker;
   }
@@ -57,7 +79,7 @@ export class LLMRouter {
       const providerConfig = this.config.providers[name];
       if (!providerConfig.enabled) continue;
 
-      const provider = await ProviderFactory.createProvider(providerConfig);
+      const provider = await ProviderFactory.createProvider(providerConfig, this.config.llmConfig.streaming);
       const valid = await provider.validateConfig();
 
       if (valid) {
@@ -96,6 +118,11 @@ export class LLMRouter {
     const startIndex = this.currentIndex;
     const attempts: Array<{ provider: string; error?: string }> = [];
 
+    if (Array.isArray(params.tools) && params.tools.length === 0 && this.messagesContainToolArtifacts(params.messages)) {
+      getLogger().warn({}, 'Call has no tools but messages contain tool artifacts; stripping artifacts');
+      params = { ...params, messages: this.stripToolArtifacts(params.messages) };
+    }
+
     for (let i = 0; i < chain.length; i++) {
       const idx = (startIndex + i) % chain.length;
       const providerName = chain[idx];
@@ -111,13 +138,50 @@ export class LLMRouter {
         continue;
       }
 
+      if (!this.providerSupportsTools(providerName)) {
+        if (this.messagesContainToolArtifacts(params.messages)) {
+          getLogger().warn(
+            { provider: providerName },
+            'Provider does not support tools but payload contains tool artifacts; skipping provider'
+          );
+          attempts.push({ provider: providerName, error: 'Provider lacks tool support and payload contains tool artifacts' });
+          continue;
+        }
+        getLogger().warn(
+          { provider: providerName },
+          'Provider does not support tools; omitting tools for this call'
+        );
+      }
+
+      const callParams = this.providerSupportsTools(providerName) ? params : { ...params, tools: undefined };
+
       let lastError: unknown;
       let exhausted = false;
 
       for (let attempt = 0; attempt < this.retry.max_attempts; attempt++) {
+        let delivered = false;
+        const onEvent: (event: LLMStreamEvent) => void = (event) => {
+          if (event.type === 'text_delta' || event.type === 'tool_call_delta') {
+            delivered = true;
+          }
+          callParams.onEvent?.(event);
+        };
+        const attemptParams: LLMCallParams = { ...callParams, onEvent };
+
         try {
           getLogger().debug({ provider: providerName, attempt: attempt + 1 }, 'Calling LLM provider');
-          const response = await provider.call(params);
+          const response = await provider.call(attemptParams);
+
+          getLogger().debug(
+            {
+              trace: 'provider_call',
+              provider: providerName,
+              model: response.model || this.config.providers[providerName]?.model,
+              input_tokens: response.usage?.input_tokens,
+              output_tokens: response.usage?.output_tokens,
+            },
+            'LLM provider call succeeded'
+          );
 
           this.circuitBreaker.recordSuccess(providerName);
           this.currentIndex = 0;
@@ -128,6 +192,11 @@ export class LLMRouter {
 
           return response;
         } catch (error: any) {
+          if (delivered) {
+            throw new LLMStreamInterruptedError(
+              `Provider ${providerName} failed mid-stream after delivering content: ${getErrorMessage(error)}`
+            );
+          }
           lastError = error;
           const message = getErrorMessage(error);
           const retryable = isRetryableError(error);

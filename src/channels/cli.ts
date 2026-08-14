@@ -68,7 +68,7 @@ export class CLIChannel implements Channel {
     console.log('║   ✅ Alfred is running!                   ║');
     console.log('║   WebSocket: ws://127.0.0.1:18789          ║');
     console.log('╚═══════════════════════════════════════════╝');
-    console.log(' Escribe "exit" para salir\n');
+    console.log(' Type "exit" to quit\n');
     this.rl?.prompt();
   }
 

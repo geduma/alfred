@@ -1,11 +1,11 @@
 {
   "name": "alfred-personal",
   "version": "2.2.0",
-  "description": "Personal AI Agent - Multicanal, agn\u00f3stico a LLM, con SOUL.md",
+  "description": "Personal AI Agent - Multi-channel, LLM-agnostic, with SOUL.md",
   "main": "dist/index.js",
   "scripts": {
     "build": "rm -rf dist && tsc",
-    "dev": "tsx watch src/index.ts",
+    "dev": "node --watch --import tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -49,7 +49,7 @@
   "keywords": [
     "ai-agent",
     "llm",
-    "multicanal",
+    "multi-channel",
     "telegram",
     "personal-assistant"
   ],

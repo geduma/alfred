@@ -102,12 +102,40 @@ export interface SnapshotConfig {
   max_snapshots_per_session: number;
 }
 
+export interface VoiceProviderConfig {
+  api_url?: string;
+  api_key?: string;
+}
+
+export interface VoiceSttConfig {
+  provider?: VoiceProviderConfig;
+  model: string;
+  language?: string;
+}
+
+export interface VoiceTtsConfig {
+  provider?: VoiceProviderConfig;
+  model: string;
+  voice: string;
+  response_format?: string;
+  expose_to_model?: boolean;
+}
+
+export interface VoiceConfig {
+  enabled: boolean;
+  provider?: VoiceProviderConfig;
+  timeout_seconds?: number;
+  stt?: VoiceSttConfig;
+  tts?: VoiceTtsConfig;
+}
+
 export interface AlfredConfig {
   agent: {
     name: string;
     version: string;
     personality_file: string;
     max_tool_iterations?: number;
+    trace?: boolean;
   };
   llm: LLMConfig;
   providers: Record<string, ProviderConfig>;
@@ -118,6 +146,7 @@ export interface AlfredConfig {
   logging: LoggingConfig;
   security: SecurityConfig;
   health_monitor?: import('./notification').HealthMonitorConfig;
+  voice?: VoiceConfig;
   server?: {
     port?: number;
     host?: string;

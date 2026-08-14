@@ -109,6 +109,32 @@ The config file paths (`database.path`, `logging.file_path`, `agent.personality_
 
 On first startup, if the config doesn't exist, it's auto-created from `system/alfred.json.example`. The `gateway_auth_token` is also auto-generated if set to `CHANGE_ME`.
 
+### Streaming timeouts
+
+Optional `llm.streaming` section — controls how long Alfred waits for slow or stalled LLM responses. It applies to **all providers** (provider-agnostic) and only affects streaming calls. All values are in **seconds**:
+
+```json
+{
+  "llm": {
+    "streaming": {
+      "initial_response_timeout_seconds": 120,
+      "idle_timeout_seconds": 60,
+      "max_total_time_seconds": null
+    }
+  }
+}
+```
+
+| Setting | Default | Unit | Purpose |
+|---|---|---|---|
+| `initial_response_timeout_seconds` | `120` | s | Max time waiting for the **first content** event (time-to-first-token). Covers slow local models (Ollama, cold GPU, first-token latency). Only a real `text_delta`/`tool_call_delta` disarms it. |
+| `idle_timeout_seconds` | `60` | s | Max time without activity after the stream starts producing content. Detects a generation that stalled mid-stream. Transport heartbeats keep it alive but are **not** treated as model content. |
+| `max_total_time_seconds` | `null` (unlimited) | s | Absolute ceiling for the whole stream. Wins over the other two regardless of progress. If set, it also caps the underlying HTTP client timeout. |
+
+Interaction: `initial` covers the window until the first token; `idle` governs gaps afterwards; `total` is the hard ceiling. A timeout that fires **before any content** is retried/failed over normally. A timeout that fires **after content** is never auto-retried (no duplicated text or tool calls) — Alfred surfaces an interruption error instead.
+
+`config.timeout_seconds` on each provider is separate and means the **HTTP transport timeout for non-streaming** requests only; it no longer limits the first streaming token. Set the streaming limits here instead.
+
 ### Spending limits
 
 Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request and checked against daily/monthly caps:
@@ -239,7 +265,7 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 | `exec` | Execute shell commands (allowlist/denylist enforced) |
 | `file_ops` | Read/write/edit/list files within permitted paths |
 | `web` | Web search (DuckDuckGo) and URL content fetch |
-| `job` | Schedule one-time and recurring reminders |
+| `job` | Schedule one-time and recurring reminders; `mode: 'agent'` runs the message through the agent (can execute skills proactively) |
 | `system` | Health/status/reload delegated to the gateway |
 | `health` | Health monitor + token budget + circuit states — `status`/`budget`/`findings`/`check`/`configure` |
 | `memory` | Conditional — vector search + snapshots (registered only when the memory system is enabled) |
@@ -254,9 +280,15 @@ Example: _"Respond in English and be more concise"_ → Alfred adds `language: e
 
 ## Skills & Secrets
 
-Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task.
+Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task. `SkillLoader` also scans `/workspace/skills/system/`, `/workspace/skills/web/`, and `/workspace/skills/files/`; duplicate names resolve with precedence **custom > root > system > web > files**.
 
 On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — written in English) into `/workspace/skills/custom/` without overwriting existing files.
+
+### Proactive skills via agent-mode jobs
+
+A job with `mode: 'agent'` routes its message through the agent when it fires, so a skill can actually run without you being present (e.g. a daily digest every morning). Each firing is a full LLM run and consumes tokens; the bundled skills carry `unattended: true` in their frontmatter and may only perform their listed "Approved actions" during unattended runs — anything else is skipped and reported as "requires approval". This is a **prompt-level contract, not a hard code-level permission gate**.
+
+**Cost warning:** without `spending_limits` configured (opt-in in `alfred.json`), the only brake against a misconfigured proactive job is the minimum interval between agent firings (`AGENT_JOB_MIN_INTERVAL_MS`, 30 minutes). Configure `spending_limits` if you want a hard cap on spend; otherwise `mode: 'agent'` jobs rely on the interval alone.
 
 **Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
 
@@ -280,6 +312,8 @@ Switch providers by editing `alfred.json`:
 ```
 
 Supported: OpenAI-compatible (Ollama, RunPod, LocalAI), Anthropic Claude, OpenAI, Google Gemini. Automatic fallback if the primary provider fails.
+
+Per-provider `capabilities.supports_tools` (default `true`): when `false`, the router omits the tools payload for that provider (saves tokens). If the request history still contains `tool_calls`/`tool` results, the provider is skipped and the chain fails over — it is never sent a malformed tool-bearing payload.
 
 ## Architecture
 
@@ -408,13 +442,13 @@ Steps performed:
 - **Health tool budget**: `health status` / `health budget` expose allowance, remaining %, and per-provider usage
 
 ### Web Channel
-- **Web UI**: static frontend in `web/` (chat + config editor) served by the gateway HTTP server
+- **Web UI**: static frontend in `web/` (chat + live metrics dashboard) served by the gateway HTTP server
 - **WebSocket routing**: `/ws` → web client (no auth yet — explicit TODO), root → main WS with auth token; same port (`server.port`, default 18789)
-- **Config via WS**: `config_get` (secrets sanitized as `*****`) and `config_update` (deep merge + persist, needs reload)
+- **Metrics via WS**: `metrics` returns runtime state — version/uptime, provider chain + circuit-breaker states, token budget (today/month/per-provider/remaining %), active sessions, web clients, jobs, skills, tools, and health findings
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
 ### Daily Life Agent
-- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans both the skills root and the custom subdir
+- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans the skills root, the custom subdir, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files); `job mode:'agent'` lets scheduled jobs run skills proactively (unattended, min-interval + budget guards)
 
 ### Ops & Resilience (no breaking changes)
 - **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)

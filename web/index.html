@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Alfred — Panel</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#4f8cff">
+  <meta name="theme-color" content="#12161d">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,7 +23,7 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="config">Settings</button>
+    <button class="tab" data-tab="metrics">Metrics</button>
   </nav>
 
   <main>
@@ -29,23 +35,17 @@
       </form>
     </section>
 
-    <section id="tab-config" class="tab-panel">
-      <div class="config-header">
-        <p>Edit the configuration as JSON. Secrets (api_key, gateway_auth_token) are shown masked.</p>
-        <div class="config-actions">
-          <button id="config-refresh">Load</button>
-          <button id="config-save">Save</button>
-          <button id="config-reload">Apply (reload)</button>
-        </div>
+    <section id="tab-metrics" class="tab-panel">
+      <div class="metrics-header">
+        <p id="metrics-status" class="metrics-status">Waiting for data…</p>
       </div>
-      <textarea id="config-editor" class="config-editor" spellcheck="false"></textarea>
-      <div id="config-status" class="config-status"></div>
+      <div id="metrics-grid" class="metrics-grid"></div>
     </section>
   </main>
 
   <script src="js/ws-client.js"></script>
   <script src="js/tabs.js"></script>
   <script src="js/chat.js"></script>
-  <script src="js/config.js"></script>
+  <script src="js/metrics.js"></script>
 </body>
 </html>

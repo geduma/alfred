@@ -5,6 +5,8 @@ import { ConfigLoader } from '../../src/config/loader';
 import { Gateway } from '../../src/gateway';
 import { ToolHandler } from '../../src/types/tool';
 import { Message, ToolCall } from '../../src/types/llm';
+import { TokenBudgetTracker } from '../../src/services/token-budget';
+import { WORKSPACE_PATHS } from '../../src/utils/workspace';
 
 function buildConfig() {
   return {
@@ -239,6 +241,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'u', metadata: {} },
+      'run_ghost',
       () => {}
     );
 
@@ -249,6 +252,107 @@ describe('Gateway runAgentLoop', () => {
     expect(toolMsg).toBeDefined();
     expect((toolMsg as any).tool_call_id).toBe('call_ghost');
     expect((toolMsg as any).content).toContain('nonexistent_tool');
+  });
+
+  test('should break early on repeated unknown tool names instead of looping to the cap', async () => {
+    const unknownCall = {
+      content: '',
+      tool_calls: [{
+        id: 'call_ghost',
+        type: 'function',
+        function: { name: 'nonexistent_tool', arguments: '{}' },
+      }],
+      stop_reason: 'tool_use',
+    };
+    routerCall
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce(unknownCall)
+      .mockResolvedValueOnce({
+        content: 'should not be reached',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+      });
+
+    const session: any = {
+      id: 'session-earlybreak',
+      messages: [{ role: 'user', content: 'do something weird' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      'run_earlybreak',
+      () => {}
+    );
+
+    expect(routerCall).toHaveBeenCalledTimes(3);
+    expect(result.content).toContain('repeated invalid tool calls');
+    expect(session.messages.filter((m: Message) => m.role === 'tool')).toHaveLength(3);
+  });
+
+  test('should write agent traces with model, tool schemas, and raw response for suspicious rounds', async () => {
+    (gateway as any).config.allConfig.agent.trace = true;
+
+    const tracePath = path.join(WORKSPACE_PATHS.logs(), 'agent-traces.jsonl');
+    fs.rmSync(tracePath, { force: true });
+
+    routerCall
+      .mockResolvedValueOnce({
+        content: '',
+        tool_calls: [{
+          id: 'call_ghost',
+          type: 'function',
+          function: { name: 'nonexistent_tool', arguments: '{}' },
+        }],
+        stop_reason: 'tool_use',
+        model: 'probe-model',
+        raw: { choices: [{ message: { content: 'raw probe' } }] },
+      })
+      .mockResolvedValueOnce({
+        content: 'done',
+        tool_calls: [],
+        stop_reason: 'end_turn',
+        model: 'probe-model',
+      });
+
+    const session: any = {
+      id: 'session-trace',
+      messages: [{ role: 'user', content: 'trace me' }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await (gateway as any).runAgentLoop(
+      session,
+      'system prompt',
+      session.messages,
+      { channel: 'cli', userId: 'u', metadata: {} },
+      'run_trace_1',
+      () => {}
+    );
+
+    const lines = fs.readFileSync(tracePath, 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+
+    const roundStart = lines.find(l => l.component === 'round_start');
+    expect(roundStart).toBeDefined();
+    expect(roundStart.toolNames).toEqual(['exec']);
+    expect(roundStart.toolSchemaHash).toBeDefined();
+
+    const roundEnd = lines.find(l => l.component === 'round_end');
+    expect(roundEnd).toBeDefined();
+    expect(roundEnd.model).toBe('probe-model');
+
+    const suspicious = lines.filter(l => l.component === 'suspicious_round');
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].runId).toBe('run_trace_1');
+    expect(suspicious[0].toolName).toBe('nonexistent_tool');
+
+    fs.rmSync(tracePath, { force: true });
   });
 
   test('should repair dangling tool_calls when preparing context', async () => {
@@ -371,5 +475,144 @@ describe('Gateway runAgentLoop', () => {
     ).rejects.toThrow('Connection refused');
 
     expect(routerCall).toHaveBeenCalledTimes(1);
+  });
+
+  describe('agent-mode job firing', () => {
+    let processSpy: jest.SpyInstance;
+
+    const allowBudget = () => {
+      (gateway as any).llmRouter.getBudgetTracker = () => ({
+        checkBudget: async () => ({ allowed: true, remainingPercent: 100 }),
+      });
+    };
+
+    const makeJob = (overrides: any = {}) => ({
+      id: 'job_digest',
+      message: 'Run the Daily Digest skill',
+      mode: 'agent' as const,
+      created_by: { channel: 'telegram', user_id: 'u1', chat_id: 42 },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      allowBudget();
+      processSpy = jest.spyOn(gateway, 'processMessage').mockResolvedValue('Good morning ☀️');
+    });
+
+    afterEach(() => {
+      processSpy.mockRestore();
+      (gateway as any).lastAgentJobFire.clear();
+    });
+
+    test('should route an agent job through processMessage with a dedicated session and send the reply to the channel', async () => {
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).toHaveBeenCalledTimes(1);
+      expect(processSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
+        channel: 'telegram',
+        userId: 'u1',
+        content: 'Run the Daily Digest skill',
+        sessionId: 'telegram_u1_jobs',
+        metadata: { source: 'job', jobId: 'job_digest' },
+      }));
+
+      expect((gateway as any).channelManager.sendMessage)
+        .toHaveBeenCalledWith('telegram', 'u1', 'Good morning ☀️', { chat_id: 42 });
+    });
+
+    test('should skip an agent job when the min interval has not elapsed', async () => {
+      (gateway as any).lastAgentJobFire.set('job_digest', Date.now());
+
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).toHaveBeenCalled();
+      const msg = (gateway as any).channelManager.sendMessage.mock.calls[0];
+      expect(msg[0]).toBe('telegram');
+      expect(String(msg[2])).toContain('Skipped');
+    });
+
+    test('should skip an agent job when the token budget is exhausted', async () => {
+      (gateway as any).llmRouter.getBudgetTracker = () => ({
+        checkBudget: async () => ({ allowed: false, reason: 'daily_limit', remainingPercent: 0 }),
+      });
+
+      await (gateway as any).handleAgentJobFire(makeJob());
+
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).toHaveBeenCalled();
+    });
+
+    test('should record the fire time after a successful pass', async () => {
+      await (gateway as any).handleAgentJobFire(makeJob());
+      expect((gateway as any).lastAgentJobFire.get('job_digest')).toBeDefined();
+    });
+  });
+
+  test('should skip rate limiting for job-triggered messages', async () => {
+    const checkUser = jest.spyOn((gateway as any).rateLimiter, 'checkUser');
+    const checkChannel = jest.spyOn((gateway as any).rateLimiter, 'checkChannel');
+
+    (gateway as any).sessions.set('telegram_u1_jobs', {
+      id: 'telegram_u1_jobs',
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const result = await (gateway as any).processMessage({
+      channel: 'telegram',
+      userId: 'u1',
+      content: 'Run the System Check skill',
+      sessionId: 'telegram_u1_jobs',
+      metadata: { source: 'job', jobId: 'job_x' },
+    });
+
+    expect(checkUser).not.toHaveBeenCalled();
+    expect(checkChannel).not.toHaveBeenCalled();
+    expect(typeof result).toBe('string');
+  });
+
+  test('processMessage should return a degraded message without calling the router when budget is blocked', async () => {
+    const testDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-degraded-'));
+    const configPath2 = path.join(testDir2, 'alfred.json');
+    fs.writeFileSync(
+      configPath2,
+      JSON.stringify({
+        ...buildConfig(),
+        llm: {
+          primary_provider: 'primary',
+          fallback_providers: [],
+          spending_limits: { enabled: true, daily_token_limit: 1000, monthly_token_limit: 10000, warn_threshold: 0.8, on_limit_reached: 'block_all' },
+        },
+      }, null, 2),
+      'utf-8'
+    );
+
+    const config = new ConfigLoader(configPath2);
+    const tracker = new TokenBudgetTracker(config);
+    jest.spyOn(tracker, 'checkBudget').mockResolvedValue({
+      allowed: false,
+      reason: 'daily_limit',
+      remainingPercent: 0,
+      dailyRemainingPercent: 0,
+      monthlyRemainingPercent: 50,
+    });
+
+    const fakeRouter: any = { call: routerCall, getBudgetTracker: () => tracker };
+    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
+    const g = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
+
+    const response = await g.processMessage({
+      channel: 'cli',
+      userId: 'user-1',
+      content: 'hello',
+      sessionId: 'session-1',
+    });
+
+    expect(response).toContain('degraded');
+    expect(routerCall).not.toHaveBeenCalled();
+    fs.rmSync(testDir2, { recursive: true, force: true });
   });
 });

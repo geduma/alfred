@@ -1,12 +1,12 @@
 import { BaseProvider } from './base';
-import { LLMCallParams, LLMResponse, ToolCall, Message } from '../../types/llm';
+import { LLMCallParams, LLMResponse, LLMStreamEvent, ToolCall, Message, LLMStreamingConfig } from '../../types/llm';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export class GeminiProvider extends BaseProvider {
   private client: any = null;
 
-  constructor(config: any) {
-    super(config);
+  constructor(config: any, streaming?: LLMStreamingConfig) {
+    super(config, streaming);
     this.client = new GoogleGenerativeAI(this.config.config.api_key);
   }
 
@@ -48,9 +48,8 @@ export class GeminiProvider extends BaseProvider {
     }
   }
 
-  async call(params: LLMCallParams): Promise<LLMResponse> {
-    const client = this.client;
-    const model = client.getGenerativeModel({ model: this.getModel() });
+  private buildRequest(params: LLMCallParams): { request: any; model: any } {
+    const model = this.client.getGenerativeModel({ model: this.getModel() });
 
     const nameById: Map<string, string> = new Map();
     for (const m of params.messages) {
@@ -86,6 +85,12 @@ export class GeminiProvider extends BaseProvider {
     if (tools) request.tools = tools;
     if (params.system) request.systemInstruction = params.system;
 
+    return { request, model };
+  }
+
+  protected async callNonStreaming(params: LLMCallParams): Promise<LLMResponse> {
+    const { request, model } = this.buildRequest(params);
+
     const result = await model.generateContent(request);
     const response = result.response;
 
@@ -110,6 +115,75 @@ export class GeminiProvider extends BaseProvider {
         input_tokens: response.usageMetadata.promptTokenCount || 0,
         output_tokens: response.usageMetadata.candidatesTokenCount || 0,
       } : undefined,
+      model: this.getModel(),
+      raw: parts,
     };
+  }
+
+  protected async *streamEvents(params: LLMCallParams, signal: AbortSignal): AsyncGenerator<LLMStreamEvent> {
+    const { request, model } = this.buildRequest(params);
+
+    const result = await model.generateContentStream(request, { signal });
+
+    let completed = false;
+    try {
+      for await (const chunk of result) {
+        const text = chunkText(chunk);
+        if (text) {
+          yield { type: 'text_delta', text };
+        }
+      }
+      completed = true;
+    } catch (error) {
+      if (signal.aborted) return;
+      throw error;
+    }
+
+    if (!completed) return;
+
+    const finalResponse = await result.response;
+
+    const functionCalls = finalResponse.functionCalls?.() || [];
+    for (let index = 0; index < functionCalls.length; index++) {
+      const fc = functionCalls[index];
+      yield {
+        type: 'tool_call_delta',
+        index,
+        id: `gemini_${fc.name}`,
+        name: fc.name,
+        arguments: JSON.stringify(fc.args || {}),
+      };
+    }
+
+    const usage = finalResponse.usageMetadata;
+    if (usage) {
+      yield {
+        type: 'usage',
+        input_tokens: usage.promptTokenCount || 0,
+        output_tokens: usage.candidatesTokenCount || 0,
+      };
+    }
+
+    const finishReason = finalResponse.candidates?.[0]?.finishReason;
+    yield { type: 'finish', stop_reason: mapFinishReason(finishReason, functionCalls.length > 0) };
+  }
+}
+
+function chunkText(chunk: any): string | undefined {
+  const parts = chunk?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return undefined;
+  const text = parts.filter((p: any) => p.text !== undefined).map((p: any) => p.text).join('');
+  return text || undefined;
+}
+
+function mapFinishReason(reason: string | undefined, hasToolCalls: boolean): LLMResponse['stop_reason'] {
+  switch (reason) {
+    case 'MAX_TOKENS':
+      return 'max_tokens';
+    case 'TOOL_CALL':
+    case 'FUNCTION_CALL':
+      return 'tool_use';
+    default:
+      return hasToolCalls ? 'tool_use' : 'end_turn';
   }
 }

@@ -147,6 +147,7 @@ async function main(): Promise<void> {
         channelManager.register(name, new TelegramChannel(channelManager, {
           config: chConfig.config,
           permissions: chConfig.permissions,
+          voice: configLoader.allConfig.voice,
         }));
         break;
       case 'cli':
