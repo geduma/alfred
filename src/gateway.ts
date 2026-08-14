@@ -3,6 +3,7 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { createHash } from 'crypto';
+import { BlockList } from 'net';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
@@ -127,6 +128,7 @@ export class Gateway {
     latency_ms?: number;
     at?: string;
   } | null = null;
+  private webIpAllowlist: BlockList | null = null;
 
   constructor(
     config: ConfigLoader,
@@ -160,7 +162,63 @@ export class Gateway {
       this.voiceService = new VoiceService(voiceConfig);
     }
 
+    this.loadWebIpAllowlist();
+
     this.buildServices();
+  }
+
+  private loadWebIpAllowlist(): void {
+    const allowFrom = this.config.allConfig.channels?.web?.permissions?.allow_from;
+    if (!allowFrom || allowFrom.length === 0) {
+      this.webIpAllowlist = null;
+      return;
+    }
+
+    const blockList = new BlockList();
+    for (const entry of allowFrom) {
+      const value = (entry || '').trim();
+      if (!value) continue;
+      const slash = value.indexOf('/');
+      if (slash > 0) {
+        const ip = value.slice(0, slash);
+        const prefix = parseInt(value.slice(slash + 1), 10);
+        if (Number.isInteger(prefix) && prefix >= 0) {
+          try {
+            blockList.addSubnet(ip, prefix);
+            continue;
+          } catch (error: any) {
+            getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist subnet, skipping');
+            continue;
+          }
+        }
+      }
+      try {
+        blockList.addAddress(value);
+      } catch (error: any) {
+        getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
+      }
+    }
+    this.webIpAllowlist = blockList;
+    getLogger().info(
+      { allowedIps: allowFrom },
+      'Web channel restricted to allowlist of client IPs'
+    );
+  }
+
+  private normalizeIp(ip: string): string {
+    const raw = (ip || 'unknown').trim();
+    if (raw.startsWith('::ffff:')) return raw.slice(7);
+    if (raw === '::1') return '127.0.0.1';
+    return raw;
+  }
+
+  private isAllowedWebClient(ip: string): boolean {
+    if (!this.webIpAllowlist) return true;
+    try {
+      return this.webIpAllowlist.check(this.normalizeIp(ip));
+    } catch {
+      return false;
+    }
   }
 
   setTools(tools: ToolHandler[]): void {
@@ -404,12 +462,20 @@ export class Gateway {
     this.wss = new WebSocketServer({ noServer: true });
 
     this.httpServer.on('upgrade', (req, socket, head) => {
+      const clientIp = this.normalizeIp(req.socket.remoteAddress || 'unknown');
+      if (!this.isAllowedWebClient(clientIp)) {
+        getLogger().warn({ ip: clientIp }, 'WebSocket upgrade rejected: client IP not in web allowlist');
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
       const url = req.url || '/';
       const isWeb = url === '/ws' || url.startsWith('/ws?') || url.startsWith('/ws/');
       this.wss!.handleUpgrade(req, socket, head, (ws) => {
         if (isWeb) {
           (ws as any).webClient = true;
-          getLogger().debug('Web client upgrade accepted (path-routed /ws, no auth yet — TODO)');
+          getLogger().debug('Web client upgrade accepted (path-routed /ws)');
         }
         this.wss!.emit('connection', ws, req);
       });
@@ -432,6 +498,14 @@ export class Gateway {
   }
 
   private handleStaticRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const clientIp = this.normalizeIp(req.socket.remoteAddress || 'unknown');
+    if (!this.isAllowedWebClient(clientIp)) {
+      getLogger().warn({ ip: clientIp }, 'HTTP request rejected: client IP not in web allowlist');
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden');
+      return;
+    }
+
     const urlPath = (req.url || '/').split('?')[0];
     const webDir = path.resolve(__dirname, '../web');
     const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
@@ -507,6 +581,8 @@ export class Gateway {
       this.promptCompressor.updateConfig(memoryConfig.prompt_compression || { enabled: true, mode: 'telegraph' });
     }
     this.refreshProviderBudgets();
+
+    this.loadWebIpAllowlist();
 
     await this.rebuildServicesAndTools();
   }

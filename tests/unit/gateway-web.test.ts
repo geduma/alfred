@@ -363,3 +363,65 @@ describe('Gateway web metrics and latency', () => {
     expect(g.latencies).toHaveLength(50);
   });
 });
+
+describe('Gateway web client IP allowlist', () => {
+  let testDir: string;
+  let gateway: Gateway;
+
+  const buildGateway = async (allowFrom?: string[]) => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-allowlist-'));
+    const configPath = path.join(testDir, 'alfred.json');
+    const cfg = buildConfig() as any;
+    cfg.channels = {
+      web: {
+        enabled: true,
+        type: 'web',
+        config: {},
+        ...(allowFrom ? { permissions: { allow_from: allowFrom } } : {}),
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const fakeRouter: any = { call: jest.fn() };
+    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
+    gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
+  };
+
+  afterEach(() => {
+    (gateway as any).rateLimiter.stop();
+    if (testDir) fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test('should allow every client when no allow_from is configured', async () => {
+    await buildGateway(undefined);
+    expect((gateway as any).webIpAllowlist).toBeNull();
+    expect((gateway as any).isAllowedWebClient('127.0.0.1')).toBe(true);
+    expect((gateway as any).isAllowedWebClient('192.168.1.9')).toBe(true);
+    expect((gateway as any).isAllowedWebClient('::1')).toBe(true);
+  });
+
+  test('should match exact IPs, CIDRs, and IPv4-mapped forms', async () => {
+    await buildGateway(['127.0.0.1', '10.0.0.0/24']);
+    const g: any = gateway;
+
+    expect(g.isAllowedWebClient('127.0.0.1')).toBe(true);
+    expect(g.isAllowedWebClient('::ffff:127.0.0.1')).toBe(true);
+    expect(g.isAllowedWebClient('::1')).toBe(true);
+    expect(g.isAllowedWebClient('10.0.0.5')).toBe(true);
+    expect(g.isAllowedWebClient('::ffff:10.0.0.5')).toBe(true);
+
+    expect(g.isAllowedWebClient('10.0.1.5')).toBe(false);
+    expect(g.isAllowedWebClient('192.168.1.7')).toBe(false);
+    expect(g.isAllowedWebClient('2001:db8::1')).toBe(false);
+    expect(g.isAllowedWebClient('unknown')).toBe(false);
+  });
+
+  test('should ignore invalid allowlist entries without throwing', async () => {
+    await buildGateway(['not-an-ip', '10.1.2.0/999', '']);
+    const g: any = gateway;
+    expect(g.isAllowedWebClient('10.1.2.3')).toBe(false);
+    expect(g.isAllowedWebClient('127.0.0.1')).toBe(false);
+  });
+});

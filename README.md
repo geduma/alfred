@@ -59,7 +59,7 @@ npm run dev
 |---|---|
 | **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
-| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. No auth in this phase (see TODO in `src/gateway.ts`); runs on the same HTTP server as the main WS (port from `server.port`, default 18789) |
+| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. Reachable from other LAN devices via the host IP. Access is restricted to `channels.web.permissions.allow_from` (IP/CIDR allowlist) in `alfred.json` — leave it empty to allow everyone; on Docker, host networking is required so the container sees real client IPs |
 
 ## Configuration
 
@@ -345,6 +345,8 @@ docker attach alfred-agent    # Access the CLI channel
 
 Volume mapping: `~/.alfred` on the host → `/workspace` inside the container. All data persists across restarts.
 
+> **Web channel on the LAN:** `docker-compose.yml` uses `network_mode: host` (Linux/Raspberry Pi), so the gateway binds `0.0.0.0:18789` directly on the host and you can open the UI at `http://<HOST-LAN-IP>:18789` from any device. Host networking is what lets the container see each client's real IP — required for the `channels.web.permissions.allow_from` IP/CIDR allowlist. Without it, Docker NAT makes every client appear as the bridge gateway IP and the allowlist cannot distinguish devices. Access from an IP outside the allowlist returns HTTP 403 and the WebSocket upgrade is refused.
+
 > **Image note:** the build runs `npm ci` in both stages (with dev deps only in the builder) and cleans the npm cache in the final stage (`npm cache clean --force`) so `/root/.npm` doesn't ship in the image. The WhatsApp channel (whatsapp-web.js + system Chromium) was removed entirely — the image is estimated at ~0.5-1.0 GB instead of ~2.5 GB. Confirm with `docker compose build --no-cache` + `docker history --no-trunc`.
 >
 > **Dependency note:** the `sqlite3` package is functional but its upstream repo (`node-sqlite3`) was archived in 2026. Consider migrating to a maintained alternative in a future release.
@@ -439,7 +441,8 @@ Steps performed:
 
 ### Web Channel
 - **Web UI**: static frontend in `web/` (chat + live metrics dashboard) served by the gateway HTTP server
-- **WebSocket routing**: `/ws` → web client (no auth yet — explicit TODO), root → main WS with auth token; same port (`server.port`, default 18789)
+- **WebSocket routing**: `/ws` → web client, root → main WS with auth token; same port (`server.port`, default 18789). Both HTTP and `/ws` are gated by an IP/CIDR allowlist via `channels.web.permissions.allow_from`
+- **IP allowlist**: if `allow_from` is set, only those client IPs can load the UI or open a WebSocket (HTTP 403 / upgrade refused otherwise); empty or absent = allow all. Works best with `network_mode: host` (see Deployment)
 - **Metrics via WS**: `metrics` returns runtime state — version/uptime, provider chain + circuit-breaker states, token budget (today/month/per-provider/remaining %), active sessions, web clients, jobs, skills, tools, and health findings
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
