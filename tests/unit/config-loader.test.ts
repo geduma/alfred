@@ -221,4 +221,18 @@ describe('ConfigLoader', () => {
     expect((provider.config as any).stream_idle_timeout_seconds).toBeUndefined();
     expect((provider.config as any).max_total_time_seconds).toBeUndefined();
   });
+
+  test('should default session_retention_days when memory section is absent', () => {
+    const loader = new ConfigLoader(configPath);
+    expect(loader.memoryConfig).toBeUndefined();
+  });
+
+  test('should accept memory.session_retention_days', () => {
+    const cfg = buildConfig();
+    (cfg as any).memory = { session_retention_days: 7 };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const loader = new ConfigLoader(configPath);
+    expect(loader.memoryConfig?.session_retention_days).toBe(7);
+  });
 });

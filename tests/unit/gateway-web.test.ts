@@ -368,16 +368,19 @@ describe('Gateway web client IP allowlist', () => {
   let testDir: string;
   let gateway: Gateway;
 
-  const buildGateway = async (allowFrom?: string[]) => {
+  const buildGateway = async (allowFrom?: string[], trustedProxies?: string[]) => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-allowlist-'));
     const configPath = path.join(testDir, 'alfred.json');
     const cfg = buildConfig() as any;
+    const permissions: any = {};
+    if (allowFrom) permissions.allow_from = allowFrom;
+    if (trustedProxies) permissions.trusted_proxies = trustedProxies;
     cfg.channels = {
       web: {
         enabled: true,
         type: 'web',
         config: {},
-        ...(allowFrom ? { permissions: { allow_from: allowFrom } } : {}),
+        ...(Object.keys(permissions).length ? { permissions } : {}),
       },
     };
     fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
@@ -423,5 +426,90 @@ describe('Gateway web client IP allowlist', () => {
     const g: any = gateway;
     expect(g.isAllowedWebClient('10.1.2.3')).toBe(false);
     expect(g.isAllowedWebClient('127.0.0.1')).toBe(false);
+  });
+});
+
+describe('Gateway trusted proxy header resolution', () => {
+  let testDir: string;
+  let gateway: Gateway;
+
+  const buildGateway = async (allowFrom: string[], trustedProxies: string[]) => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-proxy-'));
+    const configPath = path.join(testDir, 'alfred.json');
+    const cfg = buildConfig() as any;
+    cfg.channels = {
+      web: {
+        enabled: true,
+        type: 'web',
+        config: {},
+        permissions: { allow_from: allowFrom, trusted_proxies: trustedProxies },
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const fakeRouter: any = { call: jest.fn() };
+    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
+    gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
+  };
+
+  const makeReq = (remoteAddress: string, headers: Record<string, string | string[]> = {}) =>
+    ({ socket: { remoteAddress }, headers }) as any;
+
+  afterEach(() => {
+    (gateway as any).rateLimiter.stop();
+    if (testDir) fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test('should use X-Forwarded-For client IP from a trusted proxy', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '192.168.10.207' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.207');
+    expect(g.isAllowedWebClient(g.resolveClientIp(req))).toBe(true);
+  });
+
+  test('should take the leftmost (original client) hop from X-Forwarded-For', async () => {
+    await buildGateway(['203.0.113.5'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '203.0.113.5, 10.0.0.1, 172.20.0.1' });
+    expect(g.resolveClientIp(req)).toBe('203.0.113.5');
+    expect(g.isAllowedWebClient(g.resolveClientIp(req))).toBe(true);
+  });
+
+  test('should fall back to X-Real-IP when X-Forwarded-For is absent', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-real-ip': '192.168.10.207' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.207');
+  });
+
+  test('should return the peer IP when trusted proxy sends no headers', async () => {
+    await buildGateway(['172.20.0.1'], ['172.20.0.1']);
+    const g: any = gateway;
+    expect(g.resolveClientIp(makeReq('172.20.0.1'))).toBe('172.20.0.1');
+  });
+
+  test('should ignore forwarding headers from untrusted peers', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('192.168.10.207', { 'x-forwarded-for': '203.0.113.5' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.207');
+  });
+
+  test('should reject a spoofed client IP that is not in the allowlist', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '192.168.10.99' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.99');
+    expect(g.isAllowedWebClient(g.resolveClientIp(req))).toBe(false);
+  });
+
+  test('should normalize IPv4-mapped client IPs from forwarding headers', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '::ffff:192.168.10.207' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.207');
   });
 });

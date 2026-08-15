@@ -11,6 +11,7 @@ export interface ChannelConfig {
   config: Record<string, unknown>;
   permissions?: {
     allow_from?: string[];
+    trusted_proxies?: string[];
     groups?: Record<string, { require_mention?: boolean }>;
   };
 }
@@ -59,6 +60,7 @@ export interface MemoryConfig {
   compaction_threshold: number;
   compaction_model: string;
   summary_sections: string[];
+  session_retention_days?: number;
   prompt_compression?: PromptCompressionConfig;
   vector_store?: VectorStoreConfig;
   snapshots?: SnapshotConfig;
