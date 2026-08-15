@@ -12,6 +12,27 @@
   let timerInterval = null;
   let cancelled = false;
 
+  function audioSupport() {
+    return {
+      secure: !!window.isSecureContext,
+      mediaDevices: !!(window.isSecureContext && navigator.mediaDevices),
+      recorder: !!window.MediaRecorder,
+    };
+  }
+
+  function disableMic(reason) {
+    btn.disabled = true;
+    btn.title = reason;
+    btn.setAttribute('aria-label', reason);
+  }
+
+  const support = audioSupport();
+  if (!support.secure || !support.mediaDevices) {
+    disableMic('Microphone requires HTTPS (secure connection).');
+  } else if (!support.recorder) {
+    disableMic('Audio recording is not supported in this browser.');
+  }
+
   function pickMime() {
     if (!window.MediaRecorder) return '';
     const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', ''];
@@ -41,6 +62,10 @@
   }
 
   async function start() {
+    if (!window.isSecureContext) {
+      window.AlfredChat.appendError('Microphone requires HTTPS (secure connection).');
+      return;
+    }
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       window.AlfredChat.appendError('Audio recording is not supported in this browser.');
       return;

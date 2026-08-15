@@ -100,6 +100,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  touch-action: manipulation;
 }
 .mtab.active { color: var(--primary); border-color: var(--border-strong); box-shadow: var(--glow); }
 
@@ -282,6 +283,7 @@ body {
   cursor: pointer;
   transition: all 200ms ease-in-out;
   display: inline-flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
 }
 .icon-btn:hover { border-color: var(--border-strong); box-shadow: var(--glow); }
 .icon-btn svg { width: 18px; height: 18px; }
@@ -299,10 +301,11 @@ body {
   background: var(--bg-deep);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.4;
   min-height: 40px;
   max-height: 120px;
+  touch-action: manipulation;
 }
 #chat-input:focus { outline: none; border-color: var(--border-strong); box-shadow: var(--glow); }
 #chat-input:disabled { opacity: 0.5; }
@@ -316,6 +319,7 @@ body {
   cursor: pointer;
   transition: all 200ms ease-in-out;
   display: inline-flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
 }
 .send-btn:hover:not(:disabled) { box-shadow: 0 0 12px rgba(45, 212, 167, 0.55); }
 .send-btn svg { width: 18px; height: 18px; }
