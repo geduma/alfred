@@ -3,8 +3,14 @@
   const attachBtn = document.getElementById('btn-attach');
   const fileInput = document.getElementById('file-input');
   const cameraBtn = document.getElementById('btn-camera');
+  const cameraInput = document.getElementById('camera-input');
+  const audioInput = document.getElementById('audio-input');
   const attachments = document.getElementById('attachments');
   const MAX_SIZE = 50 * 1024 * 1024;
+
+  function isTouchDevice() {
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  }
 
   function sendError(msg) {
     window.AlfredChat.appendError(msg);
@@ -77,8 +83,28 @@
     files.forEach(readFile);
   });
 
+  /* Native capture (iOS) sends files back through the same agent_file flow.
+     No getUserMedia / secure context required. */
+  [cameraInput, audioInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files || []);
+      input.value = '';
+      files.forEach((file) => {
+        if (file.type && file.type.startsWith('image/hei')) {
+          window.AlfredChat.appendNotify('HEIC photo captured. If Alfred cannot read it, set the iPhone camera format to "Most Compatible" (JPEG).');
+        }
+        readFile(file);
+      });
+    });
+  });
+
   /* ── Camera (mobile only) ── */
   function captureFromCamera() {
+    if (!navigator.mediaDevices) {
+      sendError('Camera requires HTTPS (secure connection).');
+      return;
+    }
     let stream = null;
     const overlay = document.createElement('div');
     overlay.style.cssText =
@@ -136,6 +162,16 @@
   }
 
   if (cameraBtn) {
-    cameraBtn.addEventListener('click', captureFromCamera);
+    cameraBtn.addEventListener('click', () => {
+      if (navigator.mediaDevices) {
+        captureFromCamera();
+        return;
+      }
+      if (cameraInput && isTouchDevice()) {
+        cameraInput.click();
+        return;
+      }
+      sendError('Camera requires HTTPS (secure connection).');
+    });
   }
 })();
