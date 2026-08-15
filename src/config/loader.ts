@@ -60,6 +60,7 @@ const ChannelConfigSchema = z.object({
   config: z.record(z.unknown()),
   permissions: z.object({
     allow_from: z.array(z.string()).optional(),
+    trusted_proxies: z.array(z.string()).optional(),
     groups: z.record(z.object({
       require_mention: z.boolean().optional(),
     })).optional(),
@@ -151,6 +152,7 @@ const MemoryConfigSchema = z.object({
   compaction_threshold: z.number().min(0).max(1).default(0.8),
   compaction_model: z.string().default('auto'),
   summary_sections: z.array(z.string()).default(['decisions', 'preferences', 'pending', 'context']),
+  session_retention_days: z.number().positive().default(30),
   prompt_compression: PromptCompressionConfigSchema.optional(),
   vector_store: VectorStoreConfigSchema.optional(),
   snapshots: SnapshotConfigSchema.optional(),

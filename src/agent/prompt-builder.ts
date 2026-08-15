@@ -6,6 +6,7 @@ import { WORKSPACE_PATHS } from '../utils/workspace';
 const DEFAULT_BASE_PROMPT_PATH = path.resolve(__dirname, '../../system/system-prompt-base.txt');
 const RULES_PATH = path.resolve(__dirname, '../../system/alfred-rules.md');
 const PREFERENCES_PATH = WORKSPACE_PATHS.preferences();
+const MEMORY_PATH = WORKSPACE_PATHS.memoryFile();
 
 export class PromptBuilder {
   private soulLoader: SoulLoader;
@@ -26,10 +27,11 @@ export class PromptBuilder {
   }
 
   async buildSystemPrompt(skillsContext?: string): Promise<string> {
-    const [basePrompt, rules, preferences] = await Promise.all([
+    const [basePrompt, rules, preferences, sharedMemory] = await Promise.all([
       this.loadBasePrompt(),
       this.loadRules(),
       this.loadPreferences(),
+      this.loadSharedMemory(),
     ]);
     const userName = this.getUserName(preferences);
 
@@ -39,6 +41,10 @@ export class PromptBuilder {
       systemPrompt = `## User Identity\nYour user's name is "${userName}". Always address them as "Mr. ${userName}".\n\n---\n\n${systemPrompt}`;
     } else {
       systemPrompt = `## User Identity\nYou do not know the user's name yet. Ask for it on the very first message of every new session. When they tell you, save it immediately to preferences.md using the file_ops tool by updating the user_name field.\n\n---\n\n${systemPrompt}`;
+    }
+
+    if (sharedMemory) {
+      systemPrompt += `\n\n---\n\n## Shared Memory\n${sharedMemory}`;
     }
 
     if (preferences) {
@@ -85,6 +91,15 @@ export class PromptBuilder {
   private async loadPreferences(): Promise<string> {
     try {
       return await fs.promises.readFile(PREFERENCES_PATH, 'utf-8');
+    } catch {
+      return '';
+    }
+  }
+
+  private async loadSharedMemory(): Promise<string> {
+    try {
+      const raw = await fs.promises.readFile(MEMORY_PATH, 'utf-8');
+      return raw.trim() ? raw : '';
     } catch {
       return '';
     }

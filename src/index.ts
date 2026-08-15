@@ -43,6 +43,7 @@ async function ensureWorkspace(): Promise<void> {
     { example: path.resolve(__dirname, '../system/SOUL.md.example'), target: path.join(WORKSPACE_ROOT, 'config', 'SOUL.md') },
     { example: path.resolve(__dirname, '../system/secrets.env.example'), target: path.join(WORKSPACE_ROOT, 'config', 'secrets.env') },
     { example: path.resolve(__dirname, '../system/preferences.md.example'), target: WORKSPACE_PATHS.preferences() },
+    { example: path.resolve(__dirname, '../system/memory.md.example'), target: WORKSPACE_PATHS.memoryFile() },
   ];
 
   for (const { example, target } of pairs) {

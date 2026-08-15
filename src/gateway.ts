@@ -45,6 +45,7 @@ const MAX_TOOL_ITERATIONS = 12;
 const MAX_HALLUCINATED_ROUNDS = 3;
 const MAX_TRACE_BYTES = 65536;
 const SAVE_DEBOUNCE_MS = 5000;
+const SESSION_PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_TOOLS = 3;
 const MAX_ADAPTIVE_ATTEMPTS = 3;
@@ -99,6 +100,7 @@ export class Gateway {
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
   private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
+  private sessionPurgeTimer: ReturnType<typeof setInterval> | null = null;
   private lastAgentJobFire: Map<string, number> = new Map();
   private port: number;
   private host: string;
@@ -129,6 +131,7 @@ export class Gateway {
     at?: string;
   } | null = null;
   private webIpAllowlist: BlockList | null = null;
+  private webTrustedProxies: BlockList | null = null;
 
   constructor(
     config: ConfigLoader,
@@ -144,7 +147,10 @@ export class Gateway {
     this.webChannel = webChannel || null;
     this.port = config.serverConfig.port;
     this.host = config.serverConfig.host;
-    this.sessionStore = new SessionStore();
+    this.sessionStore = new SessionStore({
+      maxVerbatimMessages: config.memoryConfig?.max_verbatim_messages || 20,
+      retentionDays: config.memoryConfig?.session_retention_days || 30,
+    });
     this.jobScheduler = new JobSchedulerTool();
     this.rateLimiter = new RateLimiter();
     this.sessionRepo = new SessionRepository();
@@ -167,15 +173,11 @@ export class Gateway {
     this.buildServices();
   }
 
-  private loadWebIpAllowlist(): void {
-    const allowFrom = this.config.allConfig.channels?.web?.permissions?.allow_from;
-    if (!allowFrom || allowFrom.length === 0) {
-      this.webIpAllowlist = null;
-      return;
-    }
+  private buildBlockList(entries?: string[]): BlockList | null {
+    if (!entries || entries.length === 0) return null;
 
     const blockList = new BlockList();
-    for (const entry of allowFrom) {
+    for (const entry of entries) {
       const value = (entry || '').trim();
       if (!value) continue;
       const slash = value.indexOf('/');
@@ -198,10 +200,16 @@ export class Gateway {
         getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
       }
     }
-    this.webIpAllowlist = blockList;
+    return blockList;
+  }
+
+  private loadWebIpAllowlist(): void {
+    const permissions = this.config.allConfig.channels?.web?.permissions;
+    this.webIpAllowlist = this.buildBlockList(permissions?.allow_from);
+    this.webTrustedProxies = this.buildBlockList(permissions?.trusted_proxies);
     getLogger().info(
-      { allowedIps: allowFrom },
-      'Web channel restricted to allowlist of client IPs'
+      { allowedIps: permissions?.allow_from, trustedProxies: permissions?.trusted_proxies },
+      'Web channel access policy loaded'
     );
   }
 
@@ -210,6 +218,21 @@ export class Gateway {
     if (raw.startsWith('::ffff:')) return raw.slice(7);
     if (raw === '::1') return '127.0.0.1';
     return raw;
+  }
+
+  private resolveClientIp(req: http.IncomingMessage): string {
+    const peerIp = this.normalizeIp(req.socket.remoteAddress || 'unknown');
+    if (this.webTrustedProxies && this.webTrustedProxies.check(peerIp)) {
+      const forwarded = req.headers['x-forwarded-for'];
+      const firstHop = Array.isArray(forwarded)
+        ? forwarded[0]
+        : (forwarded ? forwarded.split(',')[0] : undefined);
+      if (firstHop && firstHop.trim()) return this.normalizeIp(firstHop.trim());
+
+      const realIp = req.headers['x-real-ip'];
+      if (realIp && String(realIp).trim()) return this.normalizeIp(String(realIp).trim());
+    }
+    return peerIp;
   }
 
   private isAllowedWebClient(ip: string): boolean {
@@ -462,7 +485,7 @@ export class Gateway {
     this.wss = new WebSocketServer({ noServer: true });
 
     this.httpServer.on('upgrade', (req, socket, head) => {
-      const clientIp = this.normalizeIp(req.socket.remoteAddress || 'unknown');
+      const clientIp = this.resolveClientIp(req);
       if (!this.isAllowedWebClient(clientIp)) {
         getLogger().warn({ ip: clientIp }, 'WebSocket upgrade rejected: client IP not in web allowlist');
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
@@ -486,6 +509,7 @@ export class Gateway {
 
     this.startedAt = Date.now();
     this.startJobRunner();
+    this.startSessionPurge();
     await this.initServices();
 
     getLogger().info({ port: this.port, host: this.host }, 'Gateway HTTP + WebSocket server started');
@@ -498,7 +522,7 @@ export class Gateway {
   }
 
   private handleStaticRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const clientIp = this.normalizeIp(req.socket.remoteAddress || 'unknown');
+    const clientIp = this.resolveClientIp(req);
     if (!this.isAllowedWebClient(clientIp)) {
       getLogger().warn({ ip: clientIp }, 'HTTP request rejected: client IP not in web allowlist');
       res.writeHead(403, { 'Content-Type': 'text/plain' });
@@ -613,6 +637,7 @@ export class Gateway {
       await Promise.race([
         (async () => {
           this.stopJobRunner();
+          this.stopSessionPurge();
           this.skillLoader.stopWatching();
           if (this.healthMonitor) {
             this.healthMonitor.stop();
@@ -679,6 +704,23 @@ export class Gateway {
       this.jobScheduler.fireDueJobs(this.channelManager, (job) => this.handleAgentJobFire(job));
     }, 30000);
     getLogger().info('Job runner started (30s interval)');
+  }
+
+  private startSessionPurge(): void {
+    const run = (): void => {
+      void this.sessionStore.purgeExpired().catch(() => {});
+    };
+    run();
+    this.sessionPurgeTimer = setInterval(run, SESSION_PURGE_INTERVAL_MS);
+    this.sessionPurgeTimer.unref?.();
+    getLogger().info('Session purge scheduled (every 6h)');
+  }
+
+  private stopSessionPurge(): void {
+    if (this.sessionPurgeTimer) {
+      clearInterval(this.sessionPurgeTimer);
+      this.sessionPurgeTimer = null;
+    }
   }
 
   private async handleAgentJobFire(job: Job): Promise<void> {

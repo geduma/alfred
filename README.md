@@ -171,7 +171,8 @@ Prevents unbounded context growth within a single session. When the conversation
 - **Verbatim window**: Last `max_verbatim_messages` (default: 20) preserved exactly
 - **Summary format**: Structured sections (DECISIONS, PREFERENCES, PENDING, CONTEXT, KEY_FACTS)
 - **Fallback**: If LLM summarization fails, a heuristic extracts key points from recent messages
-- **Persistence**: Full history saved to disk; compacted version sent to LLM
+- **Persistence**: Full history saved to disk; compacted version sent to LLM. On save, sessions with a summary are pruned to the summary + last `max_verbatim_messages` (default: 20)
+- **Retention**: Session files older than `memory.session_retention_days` (default: 30) are automatically deleted at startup and every 6h — sessions are ephemeral, `memory/personality/memory.md` is permanent
 
 ### Layer 2: Prompt Compression (Telegraph English)
 
@@ -190,6 +191,10 @@ Provides cross-session semantic memory via vector search. Every message is embed
 - **Latency added**: ~5μs (search + embedding), offset by 2-4s LLM savings from smaller prompts
 - **Token reduction**: ~46% vs non-RAG sliding window approach
 
+### Layer 3: Shared Memory (cross-channel)
+
+`memory/personality/memory.md` is the single durable memory file injected into every system prompt on every channel (web, Telegram, CLI). Alfred persists durable facts learned in any session there via `file_ops`, so what is learned on one channel is known on all others. Sessions are ephemeral and auto-purged; this file is permanent.
+
 ### Snapshots
 
 Automatic session checkpoints every N messages for long-term memory recall. Snapshots tag vectors in LanceDB, enabling filtering by point-in-time.
@@ -204,6 +209,7 @@ Automatic session checkpoints every N messages for long-term memory recall. Snap
     "compaction_threshold": 0.8,
     "compaction_model": "auto",
     "summary_sections": ["decisions", "preferences", "pending", "context"],
+    "session_retention_days": 30,
     "prompt_compression": {
       "enabled": true,
       "mode": "telegraph",
@@ -443,6 +449,7 @@ Steps performed:
 - **Web UI**: static frontend in `web/` (chat + live metrics dashboard) served by the gateway HTTP server
 - **WebSocket routing**: `/ws` → web client, root → main WS with auth token; same port (`server.port`, default 18789). Both HTTP and `/ws` are gated by an IP/CIDR allowlist via `channels.web.permissions.allow_from`
 - **IP allowlist**: if `allow_from` is set, only those client IPs can load the UI or open a WebSocket (HTTP 403 / upgrade refused otherwise); empty or absent = allow all. Works best with `network_mode: host` (see Deployment)
+- **Reverse proxies**: when accessed through a proxy, Alfred normally only sees the proxy's IP. Set `channels.web.permissions.trusted_proxies` to the proxy's IP/CIDR(s) to have Alfred honor the real client IP from `X-Forwarded-For` (leftmost hop) or `X-Real-IP`, then apply `allow_from` to the real client. Headers from non-trusted peers are ignored (no spoofing)
 - **Metrics via WS**: `metrics` returns runtime state — version/uptime, provider chain + circuit-breaker states, token budget (today/month/per-provider/remaining %), active sessions, web clients, jobs, skills, tools, and health findings
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 

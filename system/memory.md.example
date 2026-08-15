@@ -1,0 +1,8 @@
+# Shared Memory
+
+Single cross-channel memory. Alfred persists durable facts learned in any session
+(identity, preferences, decisions, key facts) here via file_ops. Sessions are
+ephemeral; this file is permanent. Additive, one fact per line.
+
+Example:
+- User prefers early-morning summaries
