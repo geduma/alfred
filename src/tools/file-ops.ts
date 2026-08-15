@@ -7,6 +7,7 @@ import { resolvePath, resolveInWorkspace } from '../utils/workspace';
 
 interface PathRule {
   path: string;
+  realPath: string;
   permissions: 'r' | 'rw';
 }
 
@@ -16,6 +17,20 @@ const DEFAULT_RULES: PathRule[] = [
   { path: resolveInWorkspace('skills'), permissions: 'rw' },
   { path: resolveInWorkspace('config'), permissions: 'r' },
 ];
+
+function realpathPrefix(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    const dir = path.dirname(p);
+    if (dir === p) return p;
+    return path.join(realpathPrefix(dir), path.basename(p));
+  }
+}
+
+function isWithin(base: string, target: string): boolean {
+  return target === base || target.startsWith(base + path.sep);
+}
 
 export class FileOpsTool implements ToolHandler {
   private rules: PathRule[];
@@ -43,6 +58,11 @@ export class FileOpsTool implements ToolHandler {
     if (config?.base_directory) {
       this.rules.push({ path: resolvePath(config.base_directory), permissions: 'rw' });
     }
+    this.rules = this.rules.map((rule) => ({
+      path: rule.path,
+      realPath: realpathPrefix(rule.path),
+      permissions: rule.permissions,
+    }));
     this.maxFileSize = (config?.max_file_size_mb || 100) * 1024 * 1024;
   }
 
@@ -88,25 +108,21 @@ export class FileOpsTool implements ToolHandler {
   }
 
   private resolveSafePath(filePath: string, needsWrite: boolean): string | null {
-    const resolved = path.resolve(filePath);
-    const normalizedPath = resolvePath(resolved);
-    let realPath: string;
-    try {
-      realPath = fs.realpathSync(normalizedPath);
-    } catch {
-      realPath = normalizedPath;
-    }
-    const matchingRule = this.rules.find(rule => realPath.startsWith(rule.path));
+    // Anchor relative paths to the workspace root first, but also accept
+    // paths that were already resolved against the process CWD (e.g. an
+    // agent passing "workspace/files/x" from a repo-style checkout).
+    const candidates = [...new Set([resolvePath(filePath), path.resolve(filePath)])];
 
-    if (!matchingRule) {
-      return null;
-    }
+    for (const normalizedPath of candidates) {
+      const candidateReal = realpathPrefix(normalizedPath);
+      const matchingRule = this.rules.find(rule => isWithin(rule.realPath, candidateReal));
+      if (!matchingRule) continue;
+      if (needsWrite && matchingRule.permissions === 'r') continue;
 
-    if (needsWrite && matchingRule.permissions === 'r') {
-      return null;
+      return normalizedPath;
     }
 
-    return normalizedPath;
+    return null;
   }
 
   private readFile(filePath: string): ToolExecutionResult {
