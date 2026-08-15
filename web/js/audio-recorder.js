@@ -1,7 +1,11 @@
-/* Microphone recorder: MediaRecorder → base64 → agent_audio. */
+/* Microphone recorder: MediaRecorder → base64 → agent_audio.
+   On insecure (HTTP) mobile contexts it falls back to the iOS native
+   voice recorder via a hidden file input; the file is transcribed by the
+   backend through the existing agent_file flow. */
 (function () {
   const bus = window.AlfredBus;
   const btn = document.getElementById('btn-mic');
+  const audioInput = document.getElementById('audio-input');
   const recIndicator = document.getElementById('rec-indicator');
   const recTimer = document.getElementById('rec-timer');
 
@@ -11,26 +15,31 @@
   let startTime = 0;
   let timerInterval = null;
   let cancelled = false;
+  let nativeMode = false;
+  let blocked = false;
 
-  function audioSupport() {
-    return {
-      secure: !!window.isSecureContext,
-      mediaDevices: !!(window.isSecureContext && navigator.mediaDevices),
-      recorder: !!window.MediaRecorder,
-    };
+  function isTouchDevice() {
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   }
 
   function disableMic(reason) {
+    blocked = true;
     btn.disabled = true;
     btn.title = reason;
     btn.setAttribute('aria-label', reason);
   }
 
-  const support = audioSupport();
-  if (!support.secure || !support.mediaDevices) {
-    disableMic('Microphone requires HTTPS (secure connection).');
-  } else if (!support.recorder) {
-    disableMic('Audio recording is not supported in this browser.');
+  if (window.isSecureContext && navigator.mediaDevices && window.MediaRecorder) {
+    // In-page recording available; nothing to do.
+  } else if (audioInput && isTouchDevice()) {
+    // Mobile over HTTP: open the iOS native voice recorder instead.
+    nativeMode = true;
+    btn.title = 'Record voice';
+    btn.setAttribute('aria-label', 'Record voice');
+  } else {
+    disableMic(window.isSecureContext
+      ? 'Audio recording is not supported in this browser.'
+      : 'Microphone requires HTTPS (secure connection).');
   }
 
   function pickMime() {
@@ -141,8 +150,16 @@
   }
 
   btn.addEventListener('click', () => {
-    if (recorder) stop(false);
-    else start();
+    if (blocked) return;
+    if (recorder) {
+      stop(false);
+      return;
+    }
+    if (nativeMode) {
+      if (audioInput) audioInput.click();
+      return;
+    }
+    start();
   });
 
   bus.on('conn', ({ online }) => {

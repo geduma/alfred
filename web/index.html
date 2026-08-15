@@ -60,6 +60,8 @@
           <button id="btn-attach" class="icon-btn" title="Attach file" aria-label="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
           <input type="file" id="file-input" hidden
                  accept=".png,.jpg,.jpeg,.gif,.pdf,.wav,.ogg,.mp3,.m4a,.webm,.txt,.md,.csv,.json,.log">
+          <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+          <input type="file" id="audio-input" accept="audio/*" capture hidden>
           <button id="btn-camera" class="icon-btn mobile-only" title="Camera" aria-label="Camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Tell Alfred..." maxlength="3000"></textarea>
           <button id="btn-send" class="send-btn" disabled aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
