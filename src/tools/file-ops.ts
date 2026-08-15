@@ -5,13 +5,16 @@ import { Tool } from '../types/llm';
 import { getLogger } from '../utils/logger';
 import { resolvePath, resolveInWorkspace } from '../utils/workspace';
 
-interface PathRule {
+interface PathRuleInput {
   path: string;
-  realPath: string;
   permissions: 'r' | 'rw';
 }
 
-const DEFAULT_RULES: PathRule[] = [
+interface PathRule extends PathRuleInput {
+  realPath: string;
+}
+
+const DEFAULT_RULES: PathRuleInput[] = [
   { path: resolveInWorkspace('files'), permissions: 'rw' },
   { path: resolveInWorkspace('memory'), permissions: 'rw' },
   { path: resolveInWorkspace('skills'), permissions: 'rw' },
@@ -50,15 +53,15 @@ export class FileOpsTool implements ToolHandler {
     },
   };
 
-  constructor(config?: { allowed_paths?: PathRule[]; max_file_size_mb?: number; base_directory?: string }) {
-    this.rules = [...DEFAULT_RULES];
+  constructor(config?: { allowed_paths?: PathRuleInput[]; max_file_size_mb?: number; base_directory?: string }) {
+    const inputRules: PathRuleInput[] = [...DEFAULT_RULES];
     if (config?.allowed_paths) {
-      this.rules.push(...config.allowed_paths);
+      inputRules.push(...config.allowed_paths);
     }
     if (config?.base_directory) {
-      this.rules.push({ path: resolvePath(config.base_directory), permissions: 'rw' });
+      inputRules.push({ path: resolvePath(config.base_directory), permissions: 'rw' });
     }
-    this.rules = this.rules.map((rule) => ({
+    this.rules = inputRules.map((rule) => ({
       path: rule.path,
       realPath: realpathPrefix(rule.path),
       permissions: rule.permissions,
