@@ -10,6 +10,8 @@ export interface Skill {
   name: string;
   description: string;
   tools?: string[];
+  unattended?: boolean;
+  approvedActions?: string[];
   instructions: string;
   filePath: string;
 }
@@ -99,6 +101,20 @@ export class SkillLoader {
     }).join('\n\n---\n\n');
   }
 
+  async resolveJobSkill(message: string): Promise<Skill | null> {
+    const skills = await this.loadSkills();
+    const normalized = (message || '').toLowerCase();
+    if (!normalized.trim()) return null;
+
+    for (const skill of skills) {
+      const name = skill.name.toLowerCase().trim();
+      if (name && normalized.includes(name)) {
+        return skill;
+      }
+    }
+    return null;
+  }
+
   invalidateCache(): void {
     this.cachedSkills = null;
   }
@@ -110,6 +126,10 @@ export class SkillLoader {
     const tools = frontmatter?.tools
       ? String(frontmatter.tools).split(',').map(t => t.trim())
       : content.match(/^Tools:\s*(.+)$/m)?.[1]?.split(',').map(t => t.trim());
+    const unattended = this.parseUnattendedFlag(frontmatter?.unattended);
+    const approvedActions = frontmatter?.approved_actions
+      ? String(frontmatter.approved_actions).split(',').map(a => a.trim().toLowerCase()).filter(Boolean)
+      : undefined;
 
     if (!name) {
       getLogger().warn({ file: fileName }, 'Skill file missing title (# heading), skipping');
@@ -124,9 +144,16 @@ export class SkillLoader {
       name: name.trim(),
       description: description ? description.trim() : '',
       tools,
+      unattended,
+      approvedActions: approvedActions && approvedActions.length > 0 ? approvedActions : undefined,
       instructions,
       filePath: fileName,
     };
+  }
+
+  private parseUnattendedFlag(value?: string): boolean | undefined {
+    if (value === undefined || value === '') return undefined;
+    return ['true', 'yes', '1'].includes(String(value).trim().toLowerCase());
   }
 
   private parseFrontmatter(content: string): Record<string, string> | null {

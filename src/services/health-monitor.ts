@@ -18,6 +18,7 @@ export class HealthMonitor {
   private logPath: string;
   private state: ScanState;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private staticFindings: HealthFinding[] = [];
 
   constructor(config: HealthMonitorConfig, notifier: NotificationService, logPath: string) {
     this.config = config;
@@ -25,6 +26,11 @@ export class HealthMonitor {
     this.logPath = logPath;
     this.state = { last_scan_bytes: 0, last_scan_time: new Date().toISOString() };
     this.loadState().then(s => { this.state = s; });
+  }
+
+  addStaticFinding(finding: HealthFinding): void {
+    this.staticFindings.push(finding);
+    getLogger().warn({ category: finding.category, message: finding.message }, 'Static health finding registered');
   }
 
   start(): void {
@@ -47,7 +53,7 @@ export class HealthMonitor {
 
   async check(): Promise<void> {
     try {
-      const findings = await this.scan();
+      const findings = await this.getFindings();
       if (findings.length > 0) {
         const summary = this.buildSummary(findings);
         await this.notifier.sendAlert(
@@ -128,7 +134,8 @@ export class HealthMonitor {
   }
 
   async getFindings(): Promise<HealthFinding[]> {
-    return this.scan();
+    const dynamic = await this.scan();
+    return [...this.staticFindings, ...dynamic];
   }
 
   private categorize(msg: string): string {

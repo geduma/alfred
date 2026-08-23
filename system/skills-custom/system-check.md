@@ -2,6 +2,8 @@
 name: System Check
 description: Proactive check of system health, logs, and database status
 tools: exec, file_ops, health
+unattended: true
+approved_actions: exec, file_ops, health
 ---
 
 ## System Check

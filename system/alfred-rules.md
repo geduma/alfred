@@ -25,6 +25,10 @@ new facts, update stale ones. Never delete the file.
 
 ## Skill Implementation Protocol
 
+First, determine intent — execute vs. create:
+- Request names an existing skill (by name, or matching an entry under Available Skills) and asks to run/execute/use it → **execute that skill's instructions directly. Never create, edit, or regenerate its SKILL.md file as part of fulfilling the request.**
+- Only fall into the create-skill flow below when the request describes new functionality with no matching existing skill.
+
 New functionality → create `/workspace/skills/custom/{skill-name}.SKILL.md`.
 
 Achievable with existing tools (exec, file_ops, web, job, system)?
@@ -38,6 +42,9 @@ Format:
 ---
 name: skill-name
 description: One-liner
+tools: exec, file_ops
+unattended: true
+approved_actions: exec, web
 metadata:
   requires:
     bins: [binary]
@@ -70,6 +77,12 @@ Use `job` tool. Never edit `{workspace}/memory/jobs/*.json` directly.
 
 A job message like "Run Daily Digest" is execution request for that skill —
 never an instruction to create/edit its SKILL.md.
+
+Unattended runs (job `mode: 'agent'`): only skills with frontmatter
+`unattended: true` may run, and only their listed `approved_actions` are
+dispatched — anything else is blocked by the dispatcher and reported as
+"requires approval". Agent runs are throttled by a minimum interval and the
+token budget; if skipped, notify the user why.
 
 ---
 

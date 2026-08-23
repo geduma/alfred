@@ -70,7 +70,7 @@ describe('ExecTool', () => {
   });
 
   test('should capture failure output and exit code', async () => {
-    const tool = new ExecTool();
+    const tool = new ExecTool({ denied_patterns: [] });
     const result = await tool.execute({ command: 'sh -c "echo oops >&2; exit 3"' });
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(3);

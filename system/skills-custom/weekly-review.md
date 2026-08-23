@@ -2,6 +2,8 @@
 name: Weekly Review
 description: Weekly review of decisions, progress, metrics, and context cleanup
 tools: exec, file_ops, memory, health
+unattended: true
+approved_actions: exec, file_ops
 ---
 
 ## Weekly Review
