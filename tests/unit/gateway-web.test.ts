@@ -470,11 +470,25 @@ describe('Gateway trusted proxy header resolution', () => {
     expect(g.isAllowedWebClient(g.resolveClientIp(req))).toBe(true);
   });
 
-  test('should take the leftmost (original client) hop from X-Forwarded-For', async () => {
+  test('should take the rightmost untrusted hop from X-Forwarded-For', async () => {
     await buildGateway(['203.0.113.5'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '10.0.0.1, 172.20.0.1' });
+    expect(g.resolveClientIp(req)).toBe('10.0.0.1');
+  });
+
+  test('should walk past chained trusted proxies to the real client', async () => {
+    await buildGateway(['203.0.113.5'], ['172.20.0.1', '10.0.0.1']);
     const g: any = gateway;
     const req = makeReq('172.20.0.1', { 'x-forwarded-for': '203.0.113.5, 10.0.0.1, 172.20.0.1' });
     expect(g.resolveClientIp(req)).toBe('203.0.113.5');
+  });
+
+  test('should ignore a fake IP prepended by the client behind a trusted proxy', async () => {
+    await buildGateway(['192.168.10.207'], ['172.20.0.1']);
+    const g: any = gateway;
+    const req = makeReq('172.20.0.1', { 'x-forwarded-for': '6.6.6.6, 192.168.10.207' });
+    expect(g.resolveClientIp(req)).toBe('192.168.10.207');
     expect(g.isAllowedWebClient(g.resolveClientIp(req))).toBe(true);
   });
 
@@ -511,5 +525,14 @@ describe('Gateway trusted proxy header resolution', () => {
     const g: any = gateway;
     const req = makeReq('172.20.0.1', { 'x-forwarded-for': '::ffff:192.168.10.207' });
     expect(g.resolveClientIp(req)).toBe('192.168.10.207');
+  });
+
+  test('should ignore forwarding headers entirely when no trusted_proxies are configured', async () => {
+    await buildGateway(['192.168.10.207'], []);
+    const g: any = gateway;
+    expect((gateway as any).webTrustedProxies).toBeNull();
+    expect(g.resolveClientIp(makeReq('10.9.9.9', { 'x-forwarded-for': '192.168.10.207' }))).toBe('10.9.9.9');
+    expect(g.resolveClientIp(makeReq('10.9.9.9', { 'x-real-ip': '192.168.10.207' }))).toBe('10.9.9.9');
+    expect(g.isAllowedWebClient(g.resolveClientIp(makeReq('10.9.9.9', { 'x-forwarded-for': '192.168.10.207' })))).toBe(false);
   });
 });

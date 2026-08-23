@@ -2,6 +2,8 @@
 name: Daily Digest
 description: Morning summary of pending tasks, reminders, and system status
 tools: job, exec, health
+unattended: true
+approved_actions: exec, health
 ---
 
 ## Daily Digest

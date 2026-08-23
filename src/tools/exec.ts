@@ -6,7 +6,8 @@ import { getLogger } from '../utils/logger';
 
 const DEFAULT_DENIED_PATTERNS = [
   'rm -rf', 'dd', 'mkfs', ':(){:|:&', 'fork()', '> /dev/sda',
-  'wget', 'curl', 'bash -c', 'python -c', 'perl -e', 'eval',
+  'wget', 'curl', 'bash -c', 'sh -c', 'zsh -c', 'ksh -c', 'dash -c', 'fish -c',
+  'python -c', 'perl -e', 'node -e', 'ruby -e', 'eval',
   '$(', '`', 'chmod', 'chown', 'sudo', 'passwd',
   'ssh ', 'scp ', 'base64', 'nc ', 'ncat',
   '/dev/tcp', '/dev/udp', '>:', '>>',
@@ -67,6 +68,16 @@ export class ExecTool implements ToolHandler {
     const { program, args } = this.parseCommand(command);
     const fullCommandForPolicy = `${program} ${args.join(' ')}`;
     const sanitizedForPolicy = this.sanitizeCommand(fullCommandForPolicy, env);
+
+    const evasionReason = this.detectShellEvasion(command);
+    if (evasionReason) {
+      getLogger().warn(
+        { command: sanitizedForPolicy, reason: evasionReason },
+        'Command denied: shell metacharacter evasion'
+      );
+      return { success: false, output: '', error: 'Command denied by policy' };
+    }
+
     if (!this.isCommandAllowed(sanitizedForPolicy)) {
       return { success: false, output: '', error: 'Command denied by policy' };
     }
@@ -222,20 +233,89 @@ export class ExecTool implements ToolHandler {
     return sanitized;
   }
 
+  private normalizeWhitespace(cmd: string): string {
+    return cmd.replace(/\s+/g, ' ').trim();
+  }
+
+  private stripAllWhitespace(cmd: string): string {
+    return cmd.replace(/\s+/g, '');
+  }
+
   private normalizeCommandFlags(cmd: string): string {
-    return cmd.replace(/-[a-zA-Z](?:\s+-[a-zA-Z])+/g, m => m.replace(/\s+/g, ''));
+    return this.normalizeWhitespace(cmd)
+      .replace(/-[a-zA-Z](?:\s+-[a-zA-Z])+/g, m => {
+        const letters = m.match(/[a-zA-Z]/g)?.join('') || '';
+        return `-${letters}`;
+      });
+  }
+
+  private detectShellEvasion(cmd: string): string | null {
+    let inSingle = false;
+    let inDouble = false;
+
+    for (let i = 0; i < cmd.length; i++) {
+      const ch = cmd[i];
+      const next = cmd[i + 1] || '';
+
+      if (inSingle) {
+        if (ch === "'") inSingle = false;
+        continue;
+      }
+
+      if (inDouble) {
+        if (ch === '\\') { i++; continue; }
+        if (ch === '"') { inDouble = false; continue; }
+        if (ch === '`') return 'command_substitution_in_double_quotes';
+        if (ch === '$' && /[A-Za-z_{(]/.test(next)) return 'variable_expansion_in_double_quotes';
+        continue;
+      }
+
+      switch (ch) {
+        case "'":
+          inSingle = true;
+          break;
+        case '"':
+          inDouble = true;
+          break;
+        case '\\':
+          i++;
+          break;
+        case ';':
+        case '&':
+        case '|':
+          return `shell_chaining:${ch}`;
+        case '`':
+          return 'command_substitution';
+        case '\n':
+        case '\r':
+          return 'newline_in_command';
+        case '<':
+        case '>':
+          if (next === '(') return 'process_substitution';
+          break;
+        case '$':
+          if ('({'.includes(next) || /[A-Za-z_]/.test(next)) return 'variable_or_command_substitution';
+          break;
+      }
+    }
+
+    if (inSingle || inDouble) return 'unterminated_quote';
+    return null;
   }
 
   private isCommandAllowed(command: string): boolean {
     const normalized = this.normalizeCommandFlags(command);
+    const compact = this.stripAllWhitespace(normalized);
     const lower = normalized.toLowerCase();
+    const lowerCompact = compact.toLowerCase();
 
     for (const pattern of this.deniedPatterns) {
       const p = pattern.toLowerCase();
+      const pCompact = this.stripAllWhitespace(p);
       const isSingleWord = /^[a-z0-9_]+$/.test(p);
       const denied = isSingleWord
-        ? new RegExp(`\\b${p}\\b`).test(lower)
-        : lower.includes(p);
+        ? new RegExp(`\\b${p}\\b`).test(lower) || new RegExp(`\\b${pCompact}\\b`).test(lowerCompact)
+        : lower.includes(p) || lowerCompact.includes(pCompact);
       if (denied) {
         getLogger().warn({ command, pattern }, 'Command denied by pattern');
         return false;

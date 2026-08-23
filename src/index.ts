@@ -12,6 +12,7 @@ import { WebChannel } from './channels/web';
 import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
 import { WORKSPACE_ROOT, WORKSPACE_PATHS } from './utils/workspace';
+import { spendingLimitsWarningActive } from './utils/agent-jobs';
 
 const CONFIG_PATH = process.env.CONFIG_PATH || path.join(WORKSPACE_ROOT, 'config', 'alfred.json');
 
@@ -121,6 +122,19 @@ async function main(): Promise<void> {
   initializeLogger(config.logging);
 
   getLogger().info('Alfred starting...');
+
+  if (spendingLimitsWarningActive(config.llm)) {
+    getLogger().warn(
+      '⚠️ SPENDING LIMITS NOT CONFIGURED — At least one job with mode:\'agent\' is configured, ' +
+      'but the llm.spending_limits section is missing or disabled in alfred.json. ' +
+      'Unattended agent runs can consume tokens without any cap. ' +
+      'Add spending_limits (see system/alfred.json.example) or remove/disable agent-mode jobs.'
+    );
+    console.log('\n⚠️  SPENDING LIMITS NOT CONFIGURED');
+    console.log('   Agent-mode jobs detected, but llm.spending_limits is missing/disabled.');
+    console.log('   Unattended runs can consume tokens without a cap.');
+    console.log('   Configure it in alfred.json → llm.spending_limits (see system/alfred.json.example).\n');
+  }
 
   const promptBuilder = new PromptBuilder();
   try {
