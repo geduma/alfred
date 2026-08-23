@@ -428,12 +428,13 @@ A convenience script that automates the full deployment cycle — also used for 
 Steps performed:
 1. Ensures the workspace directory — creates `~/.alfred` if missing and chowns it to the container's `node` user (UID 1000) so Docker can read/write it (override with `WORKSPACE_DIR` and `ALFRED_UID`; must match the bind mount in `docker-compose.yml`)
 2. `git pull` — fetches latest code from the repository
-3. `docker compose build` — rebuilds the image with new code
-4. `docker compose up -d --force-recreate` — replaces the running container
-5. Post-deploy healthcheck — probes port 18789 (`nc -z localhost 18789`), waits up to `HEALTH_WAIT_SECONDS` (default 60) for the gateway, and exits 1 with the container logs if it never comes up
-6. `docker image prune -f` — cleans up old images
+3. **Bundled skills sync** — rewrites the bundled skills in `~/.alfred/skills/custom/` from `system/skills-custom/` so skill updates ship with every deploy, no manual cleanup needed. Only manifest-tracked files are rewritten; user-authored skills are never touched; previous versions land in `~/.alfred/skills/backups/<timestamp>/`; skills removed upstream move to `backups/<timestamp>/orphans/`. Your database, config and memory are never modified by this step
+4. `docker compose build` — rebuilds the image with new code
+5. `docker compose up -d --force-recreate` — replaces the running container
+6. Post-deploy healthcheck — probes port 18789 (`nc -z localhost 18789`), waits up to `HEALTH_WAIT_SECONDS` (default 60) for the gateway, and exits 1 with the container logs if it never comes up
+7. `docker image prune -f` — cleans up old images
 
-> **Tip:** Run `./deploy.sh` from the repo root (`~/alfred`) on your Raspberry Pi after SSH'ing in. Note the two separate locations: the repo lives in `~/alfred` (code) while the workspace lives in `~/.alfred` (data — config, database, files, logs, memory, skills).
+> **Tip:** Run `./deploy.sh` from the repo root (`~/alfred`) on your Raspberry Pi after SSH'ing in. Note the two separate locations: the repo lives in `~/alfred` (code) while the workspace lives in `~/.alfred` (data — config, database, files, logs, memory, skills). Preview the skills sync without writing anything with `DRY_RUN=1 ./deploy.sh`.
 
 ## Recent Improvements (v2.2)
 

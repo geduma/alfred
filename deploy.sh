@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 COMPOSE_FILE="docker/docker-compose.yml"
 WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/.alfred}"
 ALFRED_UID="${ALFRED_UID:-1000}"
@@ -44,6 +45,15 @@ else
   echo ""
   echo "⚠️  Not a git repository, skipping git pull"
 fi
+
+# 1b. Sync bundled skills into the workspace so deploys ship updated skills
+#     without manual cleanup on the host. Only rewrites files managed by the
+#     bundle (manifest-tracked); user-authored skills and everything under
+#     db/, config/ and memory/ remain untouched.
+echo ""
+echo "♻️  Syncing bundled skills (db/, config/ and memory/ stay untouched)..."
+DRY_RUN="${DRY_RUN:-0}" WORKSPACE_DIR="$WORKSPACE_DIR" ALFRED_UID="$ALFRED_UID" \
+  bash "$SCRIPT_DIR/scripts/sync-bundled-skills.sh"
 
 # 2. Rebuild Docker image.
 #    Uses BuildKit layer cache + npm download cache (--mount=type=cache in the
