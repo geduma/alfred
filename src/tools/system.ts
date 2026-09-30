@@ -105,6 +105,10 @@ export class SystemTool implements ToolHandler {
       sanitized.security.gateway_auth_token = maskKey(sanitized.security.gateway_auth_token);
     }
 
+    if (sanitized.server?.web_auth_token) {
+      sanitized.server.web_auth_token = maskKey(sanitized.server.web_auth_token);
+    }
+
     if (sanitized.channels?.telegram?.config?.bot_token) {
       sanitized.channels.telegram.config.bot_token = maskKey(sanitized.channels.telegram.config.bot_token);
     }

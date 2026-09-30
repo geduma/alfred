@@ -2,12 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { ConfigLoader } from './config/loader';
+import { ensureWebAuthToken } from './security/web-token';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
 import { Gateway } from './gateway';
 import { ChannelManager } from './channels/channel-manager';
 import { TelegramChannel } from './channels/telegram';
 import { CLIChannel } from './channels/cli';
+import { setDirectCommandContext } from './channels/cli-direct-commands';
 import { WebChannel } from './channels/web';
 import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
@@ -25,8 +27,6 @@ const REQUIRED_DIRS = [
   'memory/sessions',
   'memory/jobs',
   'memory/personality',
-  'memory/vectors',
-  'memory/snapshots',
   'skills',
   'skills/custom',
   'skills/files',
@@ -116,6 +116,12 @@ async function main(): Promise<void> {
     console.log(`   Save this if you need external WebSocket clients.\n`);
   }
 
+  const webToken = ensureWebAuthToken(rawConfig, CONFIG_PATH);
+  if (webToken.generated) {
+    console.log(`[ALFRED] Token de acceso web generado: ${webToken.token}`);
+    console.log(`[ALFRED] Recupérelo con: journalctl -u alfred -n 50 | grep 'Token de acceso'\n`);
+  }
+
   const configLoader = new ConfigLoader(CONFIG_PATH);
   const config = configLoader.allConfig;
 
@@ -178,6 +184,11 @@ async function main(): Promise<void> {
   }
 
   gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager, webChannel);
+
+  setDirectCommandContext({
+    configPath: CONFIG_PATH,
+    reload: () => gateway!.reload(),
+  });
 
   channelManager.setMessageHandler(async (msg) => {
     return gateway ? gateway.processMessage(msg) : null;

@@ -1,4 +1,4 @@
-import Database from 'sqlite3';
+import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { getLogger } from '../utils/logger';
@@ -6,66 +6,33 @@ import { SCHEMA_SQL } from './schema';
 
 let dbInstance: Database.Database | null = null;
 
-export function initializeDatabase(dbPath: string): Promise<Database.Database> {
-  return new Promise((resolve, reject) => {
-    const dir = path.dirname(dbPath);
-    fs.promises.mkdir(dir, { recursive: true }).catch(() => {});
+export async function initializeDatabase(dbPath: string): Promise<Database.Database> {
+  const dir = path.dirname(dbPath);
+  await fs.promises.mkdir(dir, { recursive: true }).catch(() => {});
 
-    const db = new Database.Database(dbPath, (err) => {
-      if (err) {
-        reject(err);
-        return;
-      }
+  const db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
+  db.pragma('journal_mode = WAL');
+  db.pragma('wal_autocheckpoint = 1000');
+  db.pragma('auto_vacuum = INCREMENTAL');
 
-      db.run('PRAGMA foreign_keys = ON');
-      db.run('PRAGMA journal_mode = WAL');
-      db.run('PRAGMA wal_autocheckpoint = 1000');
-
-      runSchema(db)
-        .then(() => {
-          dbInstance = db;
-          getLogger().info({ dbPath }, 'Database initialized');
-          resolve(db);
-        })
-        .catch(reject);
-    });
-  });
+  runSchema(db);
+  dbInstance = db;
+  getLogger().info({ dbPath }, 'Database initialized');
+  return db;
 }
 
-async function runSchema(db: Database.Database): Promise<void> {
+function runSchema(db: Database.Database): void {
   let schema = SCHEMA_SQL;
 
   const schemaPath = path.resolve(__dirname, 'schema.sql');
   try {
-    schema = await fs.promises.readFile(schemaPath, 'utf-8');
+    schema = fs.readFileSync(schemaPath, 'utf-8');
   } catch {
     getLogger().debug('schema.sql not found, using embedded schema');
   }
 
-  return new Promise((resolve, reject) => {
-    const statements = schema.split(';').filter(s => s.trim());
-
-    let idx = 0;
-    const runNext = () => {
-      if (idx >= statements.length) {
-        resolve();
-        return;
-      }
-      const stmt = statements[idx++].trim();
-      if (!stmt) {
-        runNext();
-        return;
-      }
-      db.run(stmt, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        runNext();
-      });
-    };
-    runNext();
-  });
+  db.exec(schema);
 }
 
 export function getDatabase(): Database.Database {
@@ -79,21 +46,16 @@ export function isDatabaseInitialized(): boolean {
   return dbInstance !== null;
 }
 
-export function closeDatabase(): Promise<void> {
-  return new Promise((resolve) => {
-    const db = dbInstance;
-    dbInstance = null;
-    if (!db) {
-      resolve();
-      return;
-    }
-    db.close((err) => {
-      if (err) {
-        getLogger().warn({ error: err.message }, 'Failed to close database cleanly');
-      } else {
-        getLogger().info('Database closed');
-      }
-      resolve();
-    });
-  });
+export async function closeDatabase(): Promise<void> {
+  const db = dbInstance;
+  dbInstance = null;
+  if (!db) {
+    return;
+  }
+  try {
+    db.close();
+    getLogger().info('Database closed');
+  } catch (err: any) {
+    getLogger().warn({ error: err.message }, 'Failed to close database cleanly');
+  }
 }

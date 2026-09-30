@@ -16,50 +16,32 @@ export class SessionRepository {
   async getOrCreate(channel: string, userId: string, userName?: string): Promise<SessionRecord> {
     const db = getDatabase();
 
-    return new Promise((resolve, reject) => {
-      db.get(
-        'SELECT * FROM sessions WHERE channel = ? AND user_id = ?',
-        [channel, userId],
-        (err, row: SessionRecord | undefined) => {
-          if (err) { reject(err); return; }
-          if (row) {
-            resolve(row);
-          } else {
-            const id = randomUUID();
-            db.run(
-              'INSERT INTO sessions (id, channel, user_id, user_name) VALUES (?, ?, ?, ?)',
-              [id, channel, userId, userName || null],
-              (err2) => {
-                if (err2) { reject(err2); return; }
-                resolve({
-                  id,
-                  channel,
-                  user_id: userId,
-                  user_name: userName || null,
-                  created_at: new Date().toISOString(),
-                  last_message_at: null,
-                  message_count: 0,
-                  metadata: null,
-                });
-              }
-            );
-          }
-        }
-      );
-    });
+    const row = db
+      .prepare('SELECT * FROM sessions WHERE channel = ? AND user_id = ?')
+      .get(channel, userId) as SessionRecord | undefined;
+    if (row) {
+      return row;
+    }
+
+    const id = randomUUID();
+    db.prepare('INSERT INTO sessions (id, channel, user_id, user_name) VALUES (?, ?, ?, ?)')
+      .run(id, channel, userId, userName || null);
+    return {
+      id,
+      channel,
+      user_id: userId,
+      user_name: userName || null,
+      created_at: new Date().toISOString(),
+      last_message_at: null,
+      message_count: 0,
+      metadata: null,
+    };
   }
 
   async updateActivity(sessionId: string): Promise<void> {
     const db = getDatabase();
-    return new Promise((resolve, reject) => {
-      db.run(
-        `UPDATE sessions SET last_message_at = CURRENT_TIMESTAMP, message_count = message_count + 1 WHERE id = ?`,
-        [sessionId],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    db.prepare(
+      `UPDATE sessions SET last_message_at = CURRENT_TIMESTAMP, message_count = message_count + 1 WHERE id = ?`
+    ).run(sessionId);
   }
 }

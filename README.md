@@ -351,11 +351,11 @@ docker attach alfred-agent    # Access the CLI channel
 
 Volume mapping: `~/.alfred` on the host → `/workspace` inside the container. All data persists across restarts.
 
-> **Web channel on the LAN:** `docker-compose.yml` uses `network_mode: host` (Linux/Raspberry Pi), so the gateway binds `0.0.0.0:18789` directly on the host and you can open the UI at `http://<HOST-LAN-IP>:18789` from any device. Host networking is what lets the container see each client's real IP — required for the `channels.web.permissions.allow_from` IP/CIDR allowlist. Without it, Docker NAT makes every client appear as the bridge gateway IP and the allowlist cannot distinguish devices. Access from an IP outside the allowlist returns HTTP 403 and the WebSocket upgrade is refused.
+> **Web channel on the LAN:** `docker-compose.yml` uses `network_mode: host` (Linux/Raspberry Pi), so the gateway binds `0.0.0.0:18789` directly on the host and you can open the UI at `http://<HOST-LAN-IP>:18789` from any device. Host networking is what lets the container see each client's real IP — required for the `channels.web.permissions.allow_from` IP/CIDR allowlist. Without it, Docker NAT makes every client appear as the bridge gateway IP and the allowlist cannot distinguish devices. Access from an IP outside the allowlist returns HTTP 403 and the WebSocket upgrade is refused. In native (systemd, non-Docker) deployment this workaround is not needed: the process runs directly on the host network interface, so the allowlist sees real client IPs with no extra configuration.
 
 > **Image note:** the build runs `npm ci` in both stages (with dev deps only in the builder) and cleans the npm cache in the final stage (`npm cache clean --force`) so `/root/.npm` doesn't ship in the image. The WhatsApp channel (whatsapp-web.js + system Chromium) was removed entirely — the image is estimated at ~0.5-1.0 GB instead of ~2.5 GB. Confirm with `docker compose build --no-cache` + `docker history --no-trunc`.
 >
-> **Dependency note:** the `sqlite3` package is functional but its upstream repo (`node-sqlite3`) was archived in 2026. Consider migrating to a maintained alternative in a future release.
+> **Dependency note:** SQLite access uses `better-sqlite3` (synchronous API, WAL mode). The retention service (`src/services/retention.ts`) purges old rows on the existing 6h maintenance cycle and runs `PRAGMA incremental_vacuum` (`auto_vacuum = INCREMENTAL`); a one-time `VACUUM` was applied as an explicit migration (`scripts/vacuum-migrate.js`).
 
 ### Local Development
 
@@ -488,12 +488,9 @@ Steps performed:
 ### Accepted Findings (not corrected)
 | Finding | Reason |
 |---------|--------|
-| Timing attack on auth token | Localhost/Docker only — impractical to exploit |
 | API keys in plaintext on disk | Conscious trade-off for simplicity in isolated Docker |
 | SSRF DNS rebinding | Low risk in Docker, complex to mitigate |
 | No channel auth (beyond ACL) | By design — ACL whitelist is sufficient |
-| exec parseCommand rudimentary | Acceptable for current use cases |
-| Hashing embedder (no semantics) | Intentional — zero-dependency, low-power design |
 | Docker image not optimized | Future improvement (multi-stage lite) |
 
 ## Docs

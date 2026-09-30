@@ -346,8 +346,6 @@ describe('Gateway web metrics and latency', () => {
     expect(typeof m.workspace.filesSizeBytes).toBe('number');
     expect(typeof m.workspace.dbSizeBytes).toBe('number');
     expect(typeof m.serverTime).toBe('string');
-    expect(m.rag).toEqual({ enabled: false });
-    expect(m.snapshots).toEqual({ enabled: false });
     expect(Array.isArray(m.skillNames)).toBe(true);
   });
 

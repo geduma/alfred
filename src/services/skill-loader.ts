@@ -206,20 +206,16 @@ export class SkillLoader {
         const content = await fs.promises.readFile(fullPath, 'utf-8');
         const hash = createHash('sha256').update(content).digest('hex');
 
-        await new Promise<void>((resolve, reject) => {
-          db.run(
-            `INSERT INTO skills_cache (name, description, file_path, enabled, last_loaded, hash)
-             VALUES (?, ?, ?, 1, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET
-               description = excluded.description,
-               file_path = excluded.file_path,
-               enabled = 1,
-               last_loaded = excluded.last_loaded,
-               hash = excluded.hash`,
-            [skill.name, skill.description || '', fullPath, now, hash],
-            (err) => err ? reject(err) : resolve()
-          );
-        });
+        db.prepare(
+          `INSERT INTO skills_cache (name, description, file_path, enabled, last_loaded, hash)
+           VALUES (?, ?, ?, 1, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET
+             description = excluded.description,
+             file_path = excluded.file_path,
+             enabled = 1,
+             last_loaded = excluded.last_loaded,
+             hash = excluded.hash`
+        ).run(skill.name, skill.description || '', fullPath, now, hash);
       } catch (error: any) {
         getLogger().debug({ skill: skill.name, error: error.message }, 'Failed to cache skill in DB');
       }

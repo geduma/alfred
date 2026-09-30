@@ -88,8 +88,6 @@
 
   let lastQuery = null;
   let jobs = { total: 0, enabled: 0, nextDue: null };
-  let rag = { enabled: false };
-  let snapshots = { enabled: false };
 
   function lastQueryCard() {
     const nodes = [];
@@ -109,21 +107,8 @@
     return card('Last Query', 'search', nodes);
   }
 
-  function ragCard() {
-    const nodes = [];
-    if (!rag.enabled) {
-      nodes.push(badge('DISABLED', 'muted'));
-      nodes.push(empty('Long-term memory retrieval is not enabled.'));
-    } else {
-      nodes.push(badge('ACTIVE', 'ok'));
-      nodes.push(empty('Memory retrieval enabled.'));
-    }
-    return card('RAG Memory', 'database', nodes);
-  }
-
   function sessionCard() {
     const nodes = [];
-    nodes.push(row('Snapshots', snapshots.enabled ? 'Enabled' : 'Disabled', snapshots.enabled ? badge('ON', 'ok') : badge('OFF', 'muted')));
     nodes.push(empty('Session compression is managed automatically by Alfred.'));
     return card('Session', 'layers', nodes);
   }
@@ -189,7 +174,7 @@
 
   function render() {
     grid.innerHTML = '';
-    [lastQueryCard(), ragCard(), sessionCard(), jobsCard()].forEach((c) => grid.appendChild(c));
+    [lastQueryCard(), sessionCard(), jobsCard()].forEach((c) => grid.appendChild(c));
     if (!prefCardEl) {
       prefCardEl = buildPreferencesCard();
     }
@@ -201,8 +186,6 @@
     if (!m) return;
     if (m.lastQuery) lastQuery = m.lastQuery;
     if (m.jobs) jobs = m.jobs;
-    if (m.rag) rag = m.rag;
-    if (m.snapshots) snapshots = m.snapshots;
     render();
   });
 

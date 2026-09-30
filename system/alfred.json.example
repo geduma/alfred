@@ -159,31 +159,14 @@
     "session_retention_days": 30,
     "prompt_compression": {
       "enabled": true,
-      "mode": "telegraph",
-      "aggressive": false
-    },
-    "vector_store": {
-      "enabled": false,
-      "type": "lancedb",
-      "path": "/workspace/memory/vectors",
-      "embedding": {
-        "type": "hashing",
-        "dimension": 256
-      },
-      "ingest": {
-        "on_message": true,
-        "max_chunk_size": 512
-      },
-      "search": {
-        "top_k": 5,
-        "min_score": 0.5
-      }
-    },
-    "snapshots": {
-      "enabled": false,
-      "auto_snapshot_interval": 50,
-      "max_snapshots_per_session": 20
+      "mode": "telegraph"
     }
+  },
+  "retention": {
+    "tasks_days": 90,
+    "messages_days": 30,
+    "command_log_days": 90,
+    "token_usage_log_days": 400
   },
   "database": {
     "type": "sqlite",
@@ -248,6 +231,7 @@
   },
   "server": {
     "port": 18789,
-    "host": "0.0.0.0"
+    "host": "0.0.0.0",
+    "web_auth_token": "CHANGE_ME"
   }
 }

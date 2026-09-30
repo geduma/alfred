@@ -24,31 +24,18 @@ export class CommandRepository {
     const db = getDatabase();
     const id = randomUUID();
 
-    return new Promise((resolve, reject) => {
-      db.run(
-        `INSERT INTO command_log (id, session_id, user_id, command, result, exit_code, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, params.sessionId, params.userId, params.command, params.result || null, params.exitCode ?? null, params.durationMs ?? null],
-        (err) => {
-          if (err) reject(err);
-          else resolve(id);
-        }
-      );
-    });
+    db.prepare(
+      `INSERT INTO command_log (id, session_id, user_id, command, result, exit_code, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, params.sessionId, params.userId, params.command, params.result || null, params.exitCode ?? null, params.durationMs ?? null);
+    return id;
   }
 
   async getByUser(userId: string, limit: number = 20): Promise<CommandLogRecord[]> {
     const db = getDatabase();
 
-    return new Promise((resolve, reject) => {
-      db.all(
-        'SELECT * FROM command_log WHERE user_id = ? ORDER BY executed_at DESC LIMIT ?',
-        [userId, limit],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows as CommandLogRecord[]);
-        }
-      );
-    });
+    return db
+      .prepare('SELECT * FROM command_log WHERE user_id = ? ORDER BY executed_at DESC LIMIT ?')
+      .all(userId, limit) as CommandLogRecord[];
   }
 }

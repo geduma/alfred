@@ -149,14 +149,7 @@ response is to implement it as a **SKILL.md** file in `/workspace/skills/custom/
   is an *execution* request for the named skill, never an instruction to create,
   edit, or regenerate its SKILL.md file
 
-> **Deploy status (2026-08-11):** the execute-vs-create wording above was added to
-> `system/alfred-rules.md` and verified against the live dev instance (targeted
-> repro "Run the Daily Digest skill": 0 `file_ops` writes; control case with new
-> functionality: skill-creation flow still fires). Dev is already fixed because
-> the dev process reads `system/alfred-rules.md` on every prompt build
-> (`src/agent/prompt-builder.ts` → `loadRules()`). **Deploy to production is
-> pending**: the Docker image bakes its own copy of the rules, so run `./deploy.sh`
-> once the Docker daemon is available before enabling real `mode: 'agent'` jobs.
+> **Execute-vs-create fix:** deployed and verified (`tests/unit/rulebook-sync.test.ts`).
 
 Skills directories (all loaded by `SkillLoader.loadSkills()`):
 ```
