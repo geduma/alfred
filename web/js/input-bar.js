@@ -37,7 +37,7 @@
     sendBtn.classList.toggle('sending', kind === 'sending');
     sendBtn.classList.toggle('error', kind === 'error');
     sendBtn.title = kind === 'sending' ? 'Sending…' : '';
-    statusText.textContent = msg || ('Status: ' + (kind === 'ready' ? 'Ready' : kind.charAt(0).toUpperCase() + kind.slice(1)));
+    statusText.textContent = msg || (kind === 'ready' ? 'Ready' : kind.charAt(0).toUpperCase() + kind.slice(1));
     statusText.classList.toggle('rec-active', kind === 'rec');
     update();
   }
@@ -94,7 +94,7 @@
     offline = !online;
     if (offline) {
       setState('ready', 'Disconnected');
-      statusText.textContent = 'Status: Disconnected';
+      statusText.textContent = 'Disconnected';
     } else {
       setState('ready');
     }

@@ -342,7 +342,10 @@ describe('Gateway web metrics and latency', () => {
     expect(m.avgLatencyMs).toBeNull();
     expect(m.activeModel).toBe('primary');
     expect(m.lastQuery).toBeNull();
-    expect(m.workspace).toEqual({ filesSizeMb: 0, dbSizeMb: 0, sessionsTotal: 0 });
+    expect(m.workspace).toMatchObject({ filesSizeMb: 0, dbSizeMb: 0, sessionsTotal: 0 });
+    expect(typeof m.workspace.filesSizeBytes).toBe('number');
+    expect(typeof m.workspace.dbSizeBytes).toBe('number');
+    expect(typeof m.serverTime).toBe('string');
     expect(m.rag).toEqual({ enabled: false });
     expect(m.snapshots).toEqual({ enabled: false });
     expect(Array.isArray(m.skillNames)).toBe(true);

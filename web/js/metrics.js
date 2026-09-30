@@ -4,8 +4,9 @@
   const statusEl = document.getElementById('metrics-status');
   const bus = window.AlfredBus;
   const REFRESH_MS = 5000;
+  const STALE_MS = 15000;
   let timer = null;
-  let lastOk = false;
+  let lastOkAt = 0;
 
   function setStatus(text, kind) {
     statusEl.textContent = text;
@@ -53,7 +54,7 @@
     return el;
   }
 
-  function row(k, v, badgeEl) {
+  function row(k, v) {
     const el = document.createElement('div');
     el.className = 'row';
     const kEl = document.createElement('span');
@@ -64,7 +65,6 @@
     vEl.textContent = v;
     el.appendChild(kEl);
     el.appendChild(vEl);
-    if (badgeEl) el.appendChild(badgeEl);
     return el;
   }
 
@@ -77,15 +77,17 @@
 
   function fmtTime(sec) {
     if (!Number.isFinite(sec) || sec < 0) return '—';
-    const d = Math.floor(sec / 86400);
-    const h = Math.floor((sec % 86400) / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
+    const s = Math.floor(sec);
+    if (s < 60) return s + 's';
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rest = s % 60;
     const parts = [];
     if (d > 0) parts.push(d + 'd');
     if (h > 0 || d > 0) parts.push(h + 'h');
     if (m > 0 || h > 0 || d > 0) parts.push(m + 'm');
-    parts.push(s + 's');
+    if (d === 0 && h === 0) parts.push(rest + 's');
     return parts.join(' ');
   }
 
@@ -94,8 +96,21 @@
   }
 
   function fmtLatency(ms) {
-    if (!Number.isFinite(ms)) return '—';
-    return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+    if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
+    return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms';
+  }
+
+  function fmtSize(mb, bytes) {
+    if (typeof bytes === 'number' && Number.isFinite(bytes)) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1) + ' MB';
+    }
+    const v = Number(mb) || 0;
+    if (v <= 0) return '0 KB';
+    if (v < 0.1) return Math.max(1, Math.round(v * 1024)) + ' KB';
+    if (v < 10) return v.toFixed(1) + ' MB';
+    return Math.round(v) + ' MB';
   }
 
   function budgetBarClass(pct) {
@@ -105,18 +120,23 @@
   }
 
   function statusCard(m) {
+    const online = (m.webClients || 0) > 0;
     const nodes = [
-      value(check() + 'Ready', m.webClients > 0 ? '' : ''),
-      sub(m.webClients > 0 ? m.webClients + ' client(s) online' : 'No web clients connected'),
+      value(check() + 'Ready'),
+      sub(online ? m.webClients + ' client(s) online' : 'Gateway reachable'),
       row('Uptime', fmtTime(m.uptimeSec)),
       row('Model', m.activeModel || '—'),
       row('Latency', fmtLatency(m.latencyMs ?? m.avgLatencyMs)),
     ];
+    if (m.latencyMs == null && m.avgLatencyMs == null) {
+      nodes.push(sub('Latency appears after the first query.'));
+    }
     return card('Alfred Status', 'activity', nodes);
   }
 
   function budgetCard(m) {
     const b = m.budget || {};
+    const enabled = b.enabled !== false;
     const pct = Math.round(b.remainingPercent ?? 100);
     const used = Math.round(100 - pct);
     const allowed = b.allowed !== false;
@@ -126,16 +146,21 @@
     fill.style.width = Math.min(100, Math.max(0, used)) + '%';
     const bar = document.createElement('div');
     bar.className = 'bar';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuenow', String(used));
     bar.appendChild(fill);
 
     const nodes = [
       value(pct + '%', allowed ? '' : 'err'),
-      sub('Budget remaining'),
+      sub(enabled ? 'Budget remaining' : 'Usage tracked · no limits set'),
       bar,
       row('Used today', fmtNum(b.today) + ' tok'),
       row('Used month', fmtNum(b.thisMonth) + ' tok'),
-      row('Daily limit', fmtNum(b.dailyLimit || 0) + ' tok'),
     ];
+    if (enabled) {
+      nodes.push(row('Daily limit', fmtNum(b.dailyLimit || 0) + ' tok'));
+      if (b.monthlyLimit) nodes.push(row('Monthly limit', fmtNum(b.monthlyLimit) + ' tok'));
+    }
     const byProvider = b.byProvider || {};
     Object.keys(byProvider).forEach((name) => {
       nodes.push(row(name, fmtNum(byProvider[name].tokens) + ' tok'));
@@ -186,7 +211,7 @@
 
   function skillsCard(m) {
     const skills = m.skills || 0;
-    const nodes = [row('Loaded', skills)];
+    const nodes = [row('Loaded', String(skills))];
     const wrap = document.createElement('div');
     wrap.className = 'skill-chips';
     const names = m.skillNames || [];
@@ -198,6 +223,8 @@
         wrap.appendChild(chip);
       });
       nodes.push(wrap);
+    } else {
+      nodes.push(sub('No skills loaded.'));
     }
     return card('Skills', 'tool', nodes);
   }
@@ -208,21 +235,25 @@
     const total = h.findings || 0;
     const nodes = [
       value(fmtNum(total), errors > 0 ? 'err' : ''),
-      sub(errors > 0 ? errors + ' error(s)' : 'Recent findings'),
+      sub(errors > 0 ? errors + ' error(s) need attention' : (total > 0 ? 'Recent findings' : 'No findings')),
     ];
     (h.items || []).slice(0, 4).forEach((f) => {
-      nodes.push(row(f.category || 'finding', f.count + 'x', badge(f.severity || 'warn', f.severity === 'error' ? 'err' : 'warn')));
+      const sev = f.severity === 'error' ? 'err' : 'warn';
+      const line = row(f.category || 'finding', String(f.count) + '×');
+      const b = badge(f.severity || 'warn', sev);
+      line.appendChild(b);
+      nodes.push(line);
     });
-    nodes.push(errors > 0 ? badge(errors + ' error(s)', 'err') : (total > 0 ? badge('warn', 'warn') : badge('clear', 'ok')));
+    nodes.push(errors > 0 ? badge(errors + ' error(s)', 'err') : (total > 0 ? badge('review', 'warn') : badge('clear', 'ok')));
     return card('Health', 'heart', nodes);
   }
 
   function workspaceCard(m) {
     const w = m.workspace || {};
     const nodes = [
-      row('Audio files', (w.filesSizeMb || 0) + ' MB'),
-      row('DB size', (w.dbSizeMb || 0) + ' MB'),
-      row('Sessions', fmtNum(w.sessionsTotal)),
+      row('Audio files', fmtSize(w.filesSizeMb, w.filesSizeBytes)),
+      row('DB size', fmtSize(w.dbSizeMb, w.dbSizeBytes)),
+      row('Active sessions', fmtNum(w.sessionsTotal)),
       row('Web clients', fmtNum(m.webClients)),
     ];
     return card('Workspace', 'folder', nodes);
@@ -245,16 +276,20 @@
   async function refresh() {
     try {
       const res = await AlfredWS.request('metrics', {});
-      render(res.metrics || {});
-      lastOk = true;
-      setStatus('● LIVE · ' + new Date().toLocaleTimeString(), 'ok');
+      const m = res.metrics || {};
+      render(m);
+      lastOkAt = Date.now();
+      const t = m.serverTime ? new Date(m.serverTime) : new Date();
+      const label = isNaN(t.getTime()) ? new Date().toLocaleTimeString() : t.toLocaleTimeString();
+      setStatus('● LIVE · ' + label, 'ok');
     } catch (err) {
+      const ago = lastOkAt ? Math.round((Date.now() - lastOkAt) / 1000) : null;
       if (String(err.message || '').toLowerCase().includes('not connected')) {
-        setStatus('Waiting for connection…', 'stale');
-        lastOk = false;
+        setStatus(ago ? 'Waiting for connection… · last data ' + ago + 's ago' : 'Waiting for connection…', 'stale');
       } else {
-        setStatus('Metrics unavailable: ' + err.message, 'err');
-        lastOk = false;
+        // Keep last rendered cards; only mark stale.
+        const stale = lastOkAt && (Date.now() - lastOkAt > STALE_MS);
+        setStatus('Metrics unavailable: ' + err.message, stale ? 'stale' : 'err');
       }
     }
   }

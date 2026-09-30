@@ -2073,6 +2073,7 @@ export class Gateway {
       this.sendResponse(ws, req.id, {
         metrics: {
           version: this.config.allConfig.agent.version,
+          serverTime: new Date().toISOString(),
           uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
           latencyMs: this.lastLatencyMs,
           avgLatencyMs: this.avgLatencyMs(),
@@ -2106,29 +2107,36 @@ export class Gateway {
     }
   }
 
-  private async collectWorkspaceStats(): Promise<{ filesSizeMb: number; dbSizeMb: number; sessionsTotal: number }> {
-    let filesSizeMb = 0;
-    let dbSizeMb = 0;
+  private async collectWorkspaceStats(): Promise<{ filesSizeMb: number; dbSizeMb: number; sessionsTotal: number; filesSizeBytes: number; dbSizeBytes: number }> {
+    let filesBytes = 0;
+    let dbBytes = 0;
     try {
-      filesSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.files());
+      filesBytes = await this.dirSizeBytes(WORKSPACE_PATHS.files());
     } catch {
       // files dir unavailable
     }
     try {
-      dbSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.db());
+      dbBytes = await this.dirSizeBytes(WORKSPACE_PATHS.db());
     } catch {
       // db dir unavailable
     }
-    return { filesSizeMb, dbSizeMb, sessionsTotal: this.sessions.size };
+    const toMb = (b: number) => Math.round((b / (1024 * 1024)) * 100) / 100;
+    return {
+      filesSizeMb: toMb(filesBytes),
+      dbSizeMb: toMb(dbBytes),
+      sessionsTotal: this.sessions.size,
+      filesSizeBytes: filesBytes,
+      dbSizeBytes: dbBytes,
+    };
   }
 
-  private async dirSizeMb(dir: string): Promise<number> {
+  private async dirSizeBytes(dir: string): Promise<number> {
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
     let total = 0;
     for (const entry of entries) {
       const fp = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        total += await this.dirSizeMb(fp);
+        total += await this.dirSizeBytes(fp);
       } else if (entry.isFile()) {
         try {
           const stat = await fs.promises.stat(fp);
@@ -2138,7 +2146,7 @@ export class Gateway {
         }
       }
     }
-    return Math.round(total / (1024 * 1024));
+    return total;
   }
 
   private handleToolList(ws: WebSocket): void {
