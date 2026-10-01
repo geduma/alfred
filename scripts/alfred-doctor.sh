@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# alfred-doctor — read-only health check for a native (systemd) Alfred install.
+# alfred-doctor — read-only health check for Alfred installs.
 #
-# Reviews: systemd service, code, port, config, recent logs, workspace sizes,
-# and host resources. Makes NO changes (never restarts or edits anything).
+# Works on native Linux (systemd), Docker, or manual starts. Detects
+# capabilities (systemctl, journalctl, /dev/tcp, log file) instead of
+# branching per OS. Makes NO changes (never restarts or edits anything).
 #
 # Usage:
 #   bash scripts/alfred-doctor.sh
@@ -27,11 +28,29 @@ FAILURES=0
 ok()   { OK=$((OK + 1)); printf '  ✅ %s\n' "$*"; }
 warn() { WARNINGS=$((WARNINGS + 1)); printf '  ⚠️  %s\n' "$*" >&2; }
 fail() { FAILURES=$((FAILURES + 1)); printf '  ❌ %s\n' "$*" >&2; }
+skip() { printf '  ➖ %s\n' "$*"; }
 section() { printf '\n== %s ==\n' "$*"; }
+has_systemctl() { command -v systemctl >/dev/null 2>&1; }
+is_docker() { [ -f /.dockerenv ] || [ -n "${DOCKER_CONTAINER:-}" ]; }
+
+scan_log_text() {
+  LOGS="$1"
+  ERRORS="$(printf '%s' "$LOGS" | grep -cE '"level":(40|50)' || true)"
+  [ "$ERRORS" -gt 0 ] && warn "$ERRORS warn/error log lines found" || ok "no warn/error (level 40/50) lines found"
+  for pat in "Invalid web allowlist" "CLI channel closed" "CLI channel disabled" "Failed to start" "Failed to initialize" "Health alert logged" "Telegram"; do
+    n="$(printf '%s' "$LOGS" | grep -cF "$pat" || true)"
+    [ "$n" -gt 0 ] && printf '  … %sx %s\n' "$n" "$pat"
+  done
+  printf '%s' "$LOGS" | grep -E '"level":(40|50)' | tail -5 | cut -c1-220
+}
 
 section "1/8 service ($SERVICE_NAME)"
-if ! command -v systemctl >/dev/null 2>&1; then
-  warn "systemctl not found: skipping service checks (manual start?)"
+if ! has_systemctl; then
+  if is_docker; then
+    skip "no systemctl in container (check with: docker logs / quick action Doctor)"
+  else
+    skip "no systemctl (manual start? check with: ps aux | grep node, curl port $PORT)"
+  fi
 else
   STATE="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
   [ "$STATE" = "active" ] && ok "service is active" || fail "service state: ${STATE:-unknown}"
@@ -63,14 +82,20 @@ if git -C "$REPO_ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
 fi
 
 section "3/8 gateway port ($PORT)"
-if timeout 1 bash -c "</dev/tcp/127.0.0.1/${PORT}" 2>/dev/null; then
+HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
+[ -z "$HTTP_CODE" ] && HTTP_CODE="???"
+TCP_OK=0
+if command -v timeout >/dev/null 2>&1 && timeout 1 bash -c "</dev/tcp/127.0.0.1/${PORT}" 2>/dev/null; then
+  TCP_OK=1
+fi
+if [ "$TCP_OK" = "1" ]; then
   ok "gateway reachable on 127.0.0.1:$PORT"
+elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "404" ]; then
+  ok "gateway responding (http $HTTP_CODE; TCP probe unavailable, using HTTP)"
 else
   fail "gateway NOT reachable on 127.0.0.1:$PORT"
 fi
-HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
-[ -z "$HTTP_CODE" ] && HTTP_CODE="???"
-printf '  http / -> %s (403 = web allowlist is working, connection refused = gateway down)\n' "$HTTP_CODE"
+printf '  http / -> %s (200/403 = gateway up; connection refused = gateway down)\n' "$HTTP_CODE"
 
 section "4/8 config ($CONFIG_PATH)"
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -100,28 +125,37 @@ EOF
     warn "web allow_from has no LAN CIDR: LAN/nginx clients will get 403 (use 192.168.10.0/24)"
   fi
   if python3 -c "import json; d=json.load(open('$CONFIG_PATH')); ch=d.get('channels',{}).get('cli',{}); exit(0 if ch.get('enabled') else 1)" 2>/dev/null; then
-    warn "channels.cli is enabled: harmless since the no-TTY guard, but prefer enabled=false on systemd hosts"
+    if has_systemctl; then
+      warn "channels.cli is enabled: harmless since the no-TTY guard, but prefer enabled=false on systemd hosts"
+    else
+      skip "channels.cli is enabled (fine for docker/manual; disable on systemd hosts)"
+    fi
   else
     ok "channels.cli is disabled (recommended for systemd)"
   fi
+  if grep -q 'YOUR_' "$CONFIG_PATH" 2>/dev/null; then
+    warn "config still contains placeholder(s) (YOUR_...): set trusted_proxies and telegram allow_from to real values"
+  fi
 fi
 
-section "5/8 recent errors (journalctl since $SINCE)"
-if ! command -v journalctl >/dev/null 2>&1; then
-  warn "journalctl not found: skipping log scan"
-else
+section "5/8 recent errors (logs since $SINCE)"
+LOGS=""
+LOGS_SRC=""
+if command -v journalctl >/dev/null 2>&1; then
   LOGS="$(journalctl -u "$SERVICE_NAME" --since "$SINCE" --no-pager -o cat 2>/dev/null || true)"
-  if [ -z "$LOGS" ]; then
-    warn "no journal entries since $SINCE"
-  else
-    ERRORS="$(printf '%s' "$LOGS" | grep -cE '"level":(40|50)' || true)"
-    [ "$ERRORS" -gt 0 ] && warn "$ERRORS warn/error log lines since $SINCE" || ok "no warn/error (level 40/50) lines since $SINCE"
-    for pat in "Invalid web allowlist" "CLI channel closed" "CLI channel disabled" "Failed to start" "Failed to initialize" "Health alert logged" "Telegram"; do
-      n="$(printf '%s' "$LOGS" | grep -cF "$pat" || true)"
-      [ "$n" -gt 0 ] && printf '  … %sx %s\n' "$n" "$pat"
-    done
-    printf '%s' "$LOGS" | grep -E '"level":(40|50)' | tail -5 | cut -c1-220
-  fi
+  [ -n "$LOGS" ] && LOGS_SRC="journalctl"
+fi
+if [ -z "$LOGS_SRC" ] && [ -f "$WORKSPACE_DIR/logs/alfred.log" ]; then
+  LOGS="$(tail -n 2000 "$WORKSPACE_DIR/logs/alfred.log" 2>/dev/null || true)"
+  [ -n "$LOGS" ] && LOGS_SRC="log file (tail 2000)"
+fi
+if [ -z "$LOGS_SRC" ]; then
+  skip "no journal entries and no log file ($WORKSPACE_DIR/logs/alfred.log)"
+elif [ -z "$LOGS" ]; then
+  warn "no log entries found ($LOGS_SRC)"
+else
+  printf '  source: %s\n' "$LOGS_SRC"
+  scan_log_text "$LOGS"
 fi
 
 section "6/8 workspace sizes"
@@ -177,7 +211,7 @@ printf '  %s\n' "$(uptime)"
 if command -v free >/dev/null 2>&1; then
   free -h | head -2 | sed 's/^/  /'
 else
-  vm_stat 2>/dev/null | head -4 | sed 's/^/  /' || warn "memory info unavailable (no free/vm_stat)"
+  vm_stat 2>/dev/null | head -4 | sed 's/^/  /' || skip "memory info unavailable (no free/vm_stat)"
 fi
 df -h / /home 2>/dev/null | sed 's/^/  /'
 if [ -n "${MAINPID:-}" ] && [ "$MAINPID" != "0" ] && [ -d "/proc/$MAINPID" ]; then
