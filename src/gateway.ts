@@ -41,6 +41,7 @@ import { WORKSPACE_PATHS } from './utils/workspace';
 import { spendingLimitsWarningActive } from './utils/agent-jobs';
 import { PREFERENCE_KEYS, readPreferences, writePreference } from './services/preferences-store';
 import { extractPreferencesFromMessage } from './services/preference-extractor';
+import { listQuickActions, runQuickAction } from './services/quick-actions';
 
 interface GatewayRequest {
   type: 'req';
@@ -1146,6 +1147,12 @@ export class Gateway {
         case 'tool_list':
           this.handleToolList(ws);
           break;
+        case 'quick_actions_list':
+          this.handleQuickActionsList(ws, req);
+          break;
+        case 'quick_action':
+          await this.handleQuickAction(ws, req);
+          break;
         case 'metrics':
           await this.handleMetrics(ws, req);
           break;
@@ -2229,6 +2236,41 @@ export class Gateway {
       }
     }
     return total;
+  }
+
+  private handleQuickActionsList(ws: WebSocket, req: GatewayRequest): void {
+    this.sendResponse(ws, req.id, { actions: listQuickActions() });
+  }
+
+  private async handleQuickAction(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const action = String(req.params?.action || '').trim().toLowerCase();
+    if (!action) {
+      this.sendError(ws, req.id, 'Action is required');
+      return;
+    }
+    const sessionId = String((req.params?.sessionId as string) || 'web-user');
+    const rateLimit = this.config.security?.rate_limiting;
+    if (rateLimit) {
+      if (!this.rateLimiter.checkUser(sessionId, rateLimit.requests_per_user_per_hour || 100)) {
+        this.sendError(ws, req.id, 'Rate limit exceeded for user');
+        return;
+      }
+      if (!this.rateLimiter.checkChannel('ws', rateLimit.requests_per_channel_per_hour || 1000)) {
+        this.sendError(ws, req.id, 'Rate limit exceeded for channel');
+        return;
+      }
+    }
+    try {
+      const result = await runQuickAction(action);
+      if (!result.ok) {
+        this.sendError(ws, req.id, result.output);
+        return;
+      }
+      this.sendResponse(ws, req.id, result);
+    } catch (error: any) {
+      getLogger().warn({ error: error?.message, action }, 'Quick action failed');
+      this.sendError(ws, req.id, `Quick action failed: ${error?.message || error}`);
+    }
   }
 
   private handleToolList(ws: WebSocket): void {

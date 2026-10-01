@@ -5,6 +5,7 @@ import { ToolHandler, ToolExecutionResult } from '../types/tool';
 import { Tool } from '../types/llm';
 import { ConfigLoader } from '../config/loader';
 import { WORKSPACE_PATHS } from '../utils/workspace';
+import { runDoctor } from '../services/doctor';
 
 const exec = promisify(execCallback);
 const LOG_PATH = WORKSPACE_PATHS.alfredLog();
@@ -15,11 +16,11 @@ export class SystemTool implements ToolHandler {
 
   tool: Tool = {
     name: 'system',
-    description: 'Alfred status, config, logs, health diagnostics, or config hot-reload',
+    description: 'Alfred status, config, logs, health diagnostics, doctor check, or config hot-reload',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['info', 'config', 'logs', 'health', 'reload'] },
+        action: { type: 'string', enum: ['info', 'config', 'logs', 'health', 'doctor', 'reload'] },
         filter: { type: 'string', description: 'Log filter (keyword/severity)' },
         lines: { type: 'number', description: 'Log lines (default: 20, max: 100)' },
       },
@@ -47,6 +48,8 @@ export class SystemTool implements ToolHandler {
         return this.getLogs(params);
       case 'health':
         return this.health();
+      case 'doctor':
+        return this.doctor();
       case 'reload':
         return this.reload();
       default:
@@ -175,6 +178,15 @@ export class SystemTool implements ToolHandler {
       return (stdout || '').trim() || 'N/A';
     } catch {
       return 'N/A';
+    }
+  }
+
+  private async doctor(): Promise<ToolExecutionResult> {
+    try {
+      const r = await runDoctor();
+      return { success: r.status !== 'error', output: r.output, duration_ms: r.durationMs };
+    } catch (error: any) {
+      return { success: false, output: '', error: `Doctor failed: ${error.message}` };
     }
   }
 
