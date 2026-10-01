@@ -1,13 +1,16 @@
 # Alfred — Personal AI Assistant
 
-Multi-channel, LLM-agnostic AI assistant with persistent personality, web access, file operations, and job scheduling. Runs in a single Docker container.
+Multi-channel, LLM-agnostic AI assistant with persistent personality, web access, file operations, and job scheduling. Runs natively with Node.js (systemd service), or in a single Docker container.
 
 ## Requirements
 
-- **Docker** with **Compose v2** (`docker compose`, not the legacy `docker-compose` v1)
-- **64-bit Linux (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store ships prebuilt binaries only for 64-bit platforms (`arm64`/`x86_64`), so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
-- **RAM/swap**: building the image runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).
-- First build takes several minutes (downloads npm packages).
+- **Node.js >= 22** and **npm >= 10** (`node --version`)
+- **Linux** for the service install (Raspberry Pi OS 64-bit recommended; `systemd` for autostart). macOS/Windows: code install only, no service management.
+- **Build tools for `better-sqlite3`** on ARM (`python3`, `make`, `g++`) — `deploy-native.sh` prints the exact `apt` command if `npm ci` fails for this reason.
+- **64-bit OS (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store ships prebuilt binaries only for 64-bit platforms (`arm64`/`x86_64`), so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
+- **RAM/swap**: installing runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).
+- First install takes several minutes (downloads npm packages).
+- Docker alternative: **Docker** with **Compose v2** for the container path (`./deploy.sh --docker`).
 
 ## Quick Start
 
@@ -16,11 +19,10 @@ Multi-channel, LLM-agnostic AI assistant with persistent personality, web access
 git clone https://github.com/geduma/alfred.git
 cd alfred
 
-# 2. Deploy with a single command
-#    ./deploy.sh: creates the workspace directory (~/.alfred) and fixes its
-#    permissions, pulls the latest code, builds the image, starts the container,
-#    and health-checks the gateway. Requires Docker Compose v2; the first build
-#    takes several minutes.
+# 2. Deploy with a single command (native)
+#    ./deploy.sh: checks Node >= 22, pulls the latest code, runs npm ci +
+#    build, creates the workspace (~/.alfred), syncs bundled skills,
+#    installs the alfred systemd service, and health-checks the gateway.
 ./deploy.sh
 
 # 3. Edit the auto-created configuration with your API keys
@@ -30,28 +32,28 @@ cd alfred
 vim ~/.alfred/config/alfred.json
 
 # 4. Apply the changes (no rebuild needed)
-docker compose -f docker/docker-compose.yml restart alfred
+sudo systemctl restart alfred
 #    or trigger a hot-reload: "Alfred, reload the configuration"
 
-# 5. Access the interactive CLI channel
-docker attach alfred-agent
+# 5. Access the interactive CLI channel from the repo root
+node system/alfred-cli.js
 
 # 6. Send a test message from Telegram or type in the CLI
 #    Alfred will respond using the configured LLM
 ```
 
-> **Workspace location:** Alfred keeps its **data** in `~/.alfred` on the host, mounted into the container as `/workspace`. This is *separate* from the cloned repo (`~/alfred`), so updating the code never touches your data. The full folder tree (`config`, `files`, `db`, `logs`, `memory/*`, `skills/*`) and the config templates are auto-created by Alfred on first startup.
+> **Workspace location:** Alfred keeps its **data** in `~/.alfred` (config, database, files, logs, memory, skills) — *separate* from the cloned repo (`~/alfred`), so updating the code never touches your data. The full folder tree and the config templates are auto-created on first startup. Override with `WORKSPACE=/custom/path` (plus `CONFIG_PATH`). With Docker (`./deploy.sh --docker`), `~/.alfred` is mounted into the container as `/workspace`.
 
-> **Permission note:** the container runs as the `node` user (UID 1000). `deploy.sh` creates `~/.alfred` if missing and chowns it to UID 1000 automatically (a no-op when your user is already UID 1000, the default on Raspberry Pi OS). If your user has a different UID, `sudo` will prompt once during `./deploy.sh`.
+> **Permission note (Docker only):** the container runs as the `node` user (UID 1000). `deploy-docker.sh` creates `~/.alfred` if missing and chowns it to UID 1000 automatically (a no-op when your user is already UID 1000, the default on Raspberry Pi OS). If your user has a different UID, `sudo` will prompt once. The native deploy needs no chown — it runs as your user.
 
-### Development Mode (without Docker)
+### Development Mode
 
 ```bash
 npm install
-npm run dev
+WORKSPACE=./workspace npm run dev
 ```
 
-> **Note:** The config file (`workspace/config/alfred.json`) can use `/workspace/...` paths — Alfred resolves them to `./workspace/...` locally. Set `WORKSPACE=./custom-path` to use a different data directory.
+> **Note:** The default workspace is `~/.alfred` (same as production), so always set `WORKSPACE=./workspace` (or any custom path) for dev — otherwise you will touch production data. The config file can use `/workspace/...` paths — Alfred resolves them against the active workspace root.
 
 ## Channels
 
@@ -406,29 +408,47 @@ When hot-reload is triggered, Alfred:
 When you modify TypeScript source, `system/`, or `docker/Dockerfile`:
 
 ```bash
-# Quick deploy (git pull + build + restart)
+# Quick deploy native (default: git pull + npm ci + build + skills + service restart)
 ./deploy.sh
 
-# Or manually:
-git pull
-docker compose -f docker/docker-compose.yml build
-docker compose -f docker/docker-compose.yml up -d --force-recreate
+# Docker path
+./deploy.sh --docker
+
+# Or manually (native):
+git pull && npm ci && npm run build && sudo systemctl restart alfred
 ```
 
-The volume `~/.alfred` persists across rebuilds — your config, database, files, and logs are never lost.
+Your data in `~/.alfred` persists across rebuilds and redeploys — your config, database, files, and logs are never lost.
 
-### deploy.sh
+### Deploy scripts
 
-A convenience script that automates the full deployment cycle — also used for first-time setup:
+`./deploy.sh` is a dispatcher: no args runs the native deploy, `--docker` runs the container deploy. Both sub-scripts also run directly (`./deploy-native.sh`, `./deploy-docker.sh`) with no arguments.
+
+Native (`deploy-native.sh`) — also used for first-time setup:
 
 ```bash
 ./deploy.sh
 ```
 
 Steps performed:
+1. Prechecks — Node.js >= 22 and npm (hard fail with a clear message); git, systemctl/sudo (soft: degraded with instructions instead of failing)
+2. `git pull` — fetches latest code (skipped outside a git checkout; a failed pull warns and continues with local code)
+3. `npm ci` + `npm run build` — deterministic install from the lockfile, then compile
+4. **Bundled skills sync** — rewrites the bundled skills in `~/.alfred/skills/custom/` from `system/skills-custom/` so skill updates ship with every deploy, no manual cleanup needed. Only manifest-tracked files are rewritten; user-authored skills are never touched; previous versions land in `~/.alfred/skills/backups/<timestamp>/`; skills removed upstream move to `backups/<timestamp>/orphans/`. Your database, config and memory are never modified by this step
+5. `systemd` service — installs/enables/restarts the `alfred` unit from `system/alfred.service` (skipped with manual start instructions when systemd, root/sudo, or Linux itself is unavailable)
+6. Post-deploy healthcheck — probes 127.0.0.1:18789 via bash `/dev/tcp` (no `nc`/`curl` needed), waits up to `HEALTH_WAIT_SECONDS` (default 60), and exits 1 pointing at `journalctl -u alfred` if the gateway never comes up
+7. Next-steps summary — which config files to edit, where to find the web token, service commands
+
+Docker (`deploy-docker.sh`) — previous behavior, unchanged:
+
+```bash
+./deploy.sh --docker
+```
+
+Steps performed:
 1. Ensures the workspace directory — creates `~/.alfred` if missing and chowns it to the container's `node` user (UID 1000) so Docker can read/write it (override with `WORKSPACE_DIR` and `ALFRED_UID`; must match the bind mount in `docker-compose.yml`)
 2. `git pull` — fetches latest code from the repository
-3. **Bundled skills sync** — rewrites the bundled skills in `~/.alfred/skills/custom/` from `system/skills-custom/` so skill updates ship with every deploy, no manual cleanup needed. Only manifest-tracked files are rewritten; user-authored skills are never touched; previous versions land in `~/.alfred/skills/backups/<timestamp>/`; skills removed upstream move to `backups/<timestamp>/orphans/`. Your database, config and memory are never modified by this step
+3. **Bundled skills sync** — same guarantees as above
 4. `docker compose build` — rebuilds the image with new code
 5. `docker compose up -d --force-recreate` — replaces the running container
 6. Post-deploy healthcheck — probes port 18789 (`nc -z localhost 18789`), waits up to `HEALTH_WAIT_SECONDS` (default 60) for the gateway, and exits 1 with the container logs if it never comes up
@@ -458,7 +478,7 @@ Steps performed:
 - **Bundled skills**: `daily-digest.skill.md`, `weekly-review.skill.md`, `system-check.skill.md`, `voice-notes.skill.md` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans the skills root, the custom subdir, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files); `job mode:'agent'` lets scheduled jobs run skills proactively (unattended, min-interval + budget guards)
 
 ### Ops & Resilience (no breaking changes)
-- **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
+- **Healthcheck**: both deploy scripts probe the gateway port post-deploy (Docker: `nc -z`; native: bash `/dev/tcp`, no extra deps; `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
 - **Provider agnosticism kept**: no code references any specific vendor; routing/cost/cache strategies remain documentation-only
 
 ## Recent Improvements (v2.1)

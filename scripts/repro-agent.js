@@ -1,9 +1,22 @@
 #!/usr/bin/env node
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const WebSocket = require('ws');
 
-const CONFIG_PATH = process.env.ALFRED_CONFIG || path.resolve(process.cwd(), 'workspace/config/alfred.json');
+function defaultConfigPath() {
+  if (process.env.WORKSPACE) {
+    return path.join(path.resolve(process.env.WORKSPACE), 'config', 'alfred.json');
+  }
+  try {
+    if (fs.existsSync('/workspace/config/alfred.json')) return '/workspace/config/alfred.json';
+  } catch {
+    // fall through to home default
+  }
+  return path.join(os.homedir(), '.alfred', 'config', 'alfred.json');
+}
+
+const CONFIG_PATH = process.env.ALFRED_CONFIG || process.env.CONFIG_PATH || defaultConfigPath();
 const HOST = process.env.ALFRED_HOST || 'localhost';
 const PORT = process.env.ALFRED_PORT || '18789';
 const MESSAGE = process.env.ALFRED_MESSAGE || 'Run the Daily Digest skill';
