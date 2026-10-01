@@ -116,7 +116,7 @@ describe('ExecTool evasion hardening', () => {
       expect(ok.output).toBe('deploy|prod');
     });
 
-    test('allows dollar-free text that merely mentions percent signs', async () => {
+    test('allows disk-usage inspection commands without shell metacharacters', async () => {
       const ok = await tool.execute({ command: 'df -h' });
       expect(ok.success).toBe(true);
     });

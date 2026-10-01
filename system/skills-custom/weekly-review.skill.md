@@ -1,7 +1,7 @@
 ---
 name: Weekly Review
 description: Weekly review of decisions, progress, metrics, and context cleanup
-tools: exec, file_ops, memory, health
+tools: exec, file_ops, health
 unattended: true
 permissions:
   tools: [exec, file_ops, health]

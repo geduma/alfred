@@ -77,6 +77,7 @@ describe('JobSchedulerTool', () => {
     expect(job).toBeDefined();
 
     job!.next_fire = new Date(Date.now() - 1000).toISOString();
+    fs.writeFileSync(path.join(testDir, `${job!.id}.json`), JSON.stringify(job));
 
     const sent: Array<[string, string, string, any]> = [];
     const channelManager = {
@@ -133,6 +134,7 @@ describe('JobSchedulerTool', () => {
     const jobs = await (tool as any).loadAllJobs() as Job[];
     const job = jobs.find((j: Job) => j.message === 'Run the System Check skill');
     job!.next_fire = new Date(Date.now() - 1000).toISOString();
+    fs.writeFileSync(path.join(testDir, `${job!.id}.json`), JSON.stringify(job));
 
     const channelManager = { sendMessage: jest.fn() };
     const onJobFire = jest.fn();
@@ -156,6 +158,7 @@ describe('JobSchedulerTool', () => {
     const jobs = await (tool as any).loadAllJobs() as Job[];
     const job = jobs.find((j: Job) => j.message === 'Orphan agent job');
     job!.next_fire = new Date(Date.now() - 1000).toISOString();
+    fs.writeFileSync(path.join(testDir, `${job!.id}.json`), JSON.stringify(job));
 
     const sent: string[] = [];
     const channelManager = {
@@ -182,6 +185,7 @@ describe('JobSchedulerTool', () => {
     const jobs = await (tool as any).loadAllJobs() as Job[];
     const job = jobs.find((j: Job) => j.message === 'Once agent');
     job!.next_fire = new Date(Date.now() - 1000).toISOString();
+    fs.writeFileSync(path.join(testDir, `${job!.id}.json`), JSON.stringify(job));
 
     let duringCallback = false;
     const channelManager = { sendMessage: jest.fn() };

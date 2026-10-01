@@ -112,10 +112,10 @@ A personal AI agent with a personality (SOUL.md) that operates as a digital butl
 
 ### F5.8 Modular Skills (v1.5)
 - **ID:** F-SKILL-001
-- **Description:** Skills defined in SKILL.md with YAML frontmatter
+- **Description:** Skills defined in single-file `*.skill.md` with YAML frontmatter
 - **Loading:** No recompilation, from /workspace/skills/
 - **Discovery:** Automatic via skill_loader tool
-- **Secrets:** Credentials are stored in `workspace/config/secrets.env` (auto-created from template), never in the SKILL.md
+- **Secrets:** Credentials are stored in `workspace/config/secrets.env` (auto-created from template), never in the `.skill.md`
 - **Protocol:** Documented in `system/alfred-rules.md` → "Secrets Management Protocol"
 
 ### F5.9 Secrets Management (v2.0)
@@ -194,7 +194,7 @@ A personal AI agent with a personality (SOUL.md) that operates as a digital butl
 - [x] Security: rate limiter, auth, ACL
 
 ### v1.5 — September 2026
-- [ ] Skills loader (SKILL.md parser)
+- [ ] Skills loader (`*.skill.md` parser)
 - [ ] Web dashboard (Vue/React)
 - [ ] Advanced audit logging
 - [ ] OpenAI and Gemini as active providers

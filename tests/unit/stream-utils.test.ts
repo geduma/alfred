@@ -1,4 +1,4 @@
-import { accumulateStream, LLMStreamTimeoutError, LLMStreamAbortedError } from '../../src/agent/providers/stream-utils';
+import { accumulateStream, LLMStreamAbortedError } from '../../src/agent/providers/stream-utils';
 
 function abortableSleep(signal: AbortSignal, ms: number): Promise<void> {
   return new Promise((resolve, reject) => {

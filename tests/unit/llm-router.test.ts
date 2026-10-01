@@ -34,7 +34,6 @@ function buildConfig() {
       job: { enabled: false, config: {} },
       system: { enabled: false, config: {} },
       health: { enabled: false, config: {} },
-      memory: { enabled: false, config: {} },
     },
     database: { type: 'sqlite', config: { path: '/tmp/llm-router-test/alfred.db' } },
     logging: { level: 'silent', format: 'json', targets: ['console'], config: {} },

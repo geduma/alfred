@@ -31,7 +31,6 @@ function buildConfig() {
       job: { enabled: false, config: {} },
       system: { enabled: true, config: {} },
       health: { enabled: false, config: {} },
-      memory: { enabled: false, config: {} },
     },
     database: { type: 'sqlite', config: { path: '/tmp/gateway-web-test/alfred.db' } },
     logging: { level: 'silent', format: 'json', targets: ['console'], config: {} },
@@ -68,7 +67,7 @@ describe('Gateway web audio', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
 
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
@@ -153,7 +152,7 @@ describe('Gateway web file upload', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
 
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
@@ -246,7 +245,7 @@ describe('Gateway preferences', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
 
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
@@ -322,7 +321,7 @@ describe('Gateway web metrics and latency', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
 
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
@@ -388,7 +387,7 @@ describe('Gateway web client IP allowlist', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
   };
@@ -450,7 +449,7 @@ describe('Gateway trusted proxy header resolution', () => {
 
     const config = new ConfigLoader(configPath);
     const fakeRouter: any = { call: jest.fn() };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
   };
