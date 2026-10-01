@@ -14,10 +14,6 @@ export function setDirectCommandContext(ctx: DirectCommandContext): void {
   context = ctx;
 }
 
-export function getDirectCommandContext(): DirectCommandContext | null {
-  return context;
-}
-
 async function handleWebToken(args: string): Promise<string> {
   if (!context) throw new Error('Direct commands are not initialized');
   if (args === 'rotate') {

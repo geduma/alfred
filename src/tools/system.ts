@@ -95,7 +95,7 @@ export class SystemTool implements ToolHandler {
       return key.slice(0, 4) + '****' + key.slice(-4);
     };
 
-    for (const [_, provider] of Object.entries(sanitized.providers) as any) {
+    for (const provider of Object.values(sanitized.providers) as any) {
       if (provider.config?.api_key) {
         provider.config.api_key = maskKey(provider.config.api_key);
       }

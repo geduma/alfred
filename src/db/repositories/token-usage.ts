@@ -1,14 +1,5 @@
 import { getDatabase } from '../index';
 
-export interface TokenUsageRow {
-  id: number;
-  date: string;
-  provider: string;
-  tokens_used: number;
-  is_paid: number;
-  created_at: string;
-}
-
 export interface ProviderUsageSummary {
   tokens: number;
   requests: number;
