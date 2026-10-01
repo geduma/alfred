@@ -608,3 +608,85 @@ describe('LLMRouter circuit breaker behavior', () => {
     });
   });
 });
+
+describe('LLMRouter budget reason + source', () => {
+  let testDir: string;
+  let configPath: string;
+  let createProvider: jest.Mock;
+
+  beforeEach(async () => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-router-budget-'));
+    configPath = path.join(testDir, 'alfred.json');
+    fs.writeFileSync(configPath, JSON.stringify(buildConfig(), null, 2), 'utf-8');
+
+    const { ProviderFactory } = require('../../src/agent/providers/factory');
+    createProvider = ProviderFactory.createProvider;
+    createProvider.mockReset();
+  });
+
+  afterEach(() => {
+    jest.resetModules();
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  const dailyBlocked = { allowed: false, reason: 'daily_limit', remainingPercent: 0, dailyRemainingPercent: 0, monthlyRemainingPercent: 50 };
+  const monthlyBlocked = { allowed: false, reason: 'monthly_limit', remainingPercent: 0, dailyRemainingPercent: 50, monthlyRemainingPercent: 0 };
+  const allowedBudget = { allowed: true, remainingPercent: 100, dailyRemainingPercent: 100, monthlyRemainingPercent: 100 };
+
+  test('block_all carries the daily_limit reason', async () => {
+    createProvider.mockResolvedValue({ validateConfig: async () => true, call: jest.fn() });
+    const cfg = buildConfig();
+    (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_all' };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+    jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(dailyBlocked as any);
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] }))
+      .rejects.toMatchObject({ code: 'BUDGET_BLOCKED', reason: 'daily_limit' });
+  });
+
+  test('block_paid_providers with only paid providers carries the monthly reason', async () => {
+    createProvider.mockResolvedValue({
+      validateConfig: async () => true,
+      call: jest.fn().mockResolvedValue({ content: 'paid', stop_reason: 'end_turn' }),
+    });
+    const cfg = buildConfig();
+    cfg.providers.primary.type = 'anthropic';
+    (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000, monthly_token_limit: 100000, warn_threshold: 0.8, on_limit_reached: 'block_paid_providers' };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+    jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(monthlyBlocked as any);
+
+    await expect(router.call({ messages: [{ role: 'user', content: 'hi' }] }))
+      .rejects.toMatchObject({ code: 'BUDGET_BLOCKED', reason: 'monthly_limit' });
+  });
+
+  test('records the call source in usage tracking', async () => {
+    const fakeProvider = {
+      validateConfig: async () => true,
+      call: jest.fn().mockResolvedValue({ content: 'ok', stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: 50 } }),
+    };
+    createProvider.mockResolvedValue(fakeProvider);
+    const cfg = buildConfig();
+    (cfg as any).llm.spending_limits = { enabled: true, daily_token_limit: 1000000, monthly_token_limit: 10000000, warn_threshold: 0.8, on_limit_reached: 'block_all' };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const config = new ConfigLoader(configPath);
+    const { LLMRouter } = require('../../src/agent/llm-router');
+    const router = new LLMRouter(config);
+    await router.initialize();
+    jest.spyOn(router.getBudgetTracker(), 'checkBudget').mockResolvedValue(allowedBudget as any);
+    const trackSpy = jest.spyOn(router.getBudgetTracker(), 'trackUsage');
+
+    await router.call({ messages: [{ role: 'user', content: 'hi' }], source: 'fast_probe' });
+    expect(trackSpy).toHaveBeenCalledWith({ input_tokens: 100, output_tokens: 50 }, 'primary', 'fast_probe');
+  });
+});

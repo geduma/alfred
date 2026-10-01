@@ -15,13 +15,13 @@ export class SystemTool implements ToolHandler {
 
   tool: Tool = {
     name: 'system',
-    description: 'Get Alfred\'s internal status, configuration, logs, container health diagnostics, or trigger config hot-reload',
+    description: 'Alfred status, config, logs, health diagnostics, or config hot-reload',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['info', 'config', 'logs', 'health', 'reload'] },
-        filter: { type: 'string', description: 'Filter logs by keyword or severity (info, warn, error)' },
-        lines: { type: 'number', description: 'Number of log lines to return (default: 20, max: 100)' },
+        filter: { type: 'string', description: 'Log filter (keyword/severity)' },
+        lines: { type: 'number', description: 'Log lines (default: 20, max: 100)' },
       },
       required: ['action'],
     },

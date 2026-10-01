@@ -65,7 +65,7 @@ export class PromptBuilder {
   private getUserName(preferencesRaw: string): string | null {
     if (!preferencesRaw) return null;
     for (const line of preferencesRaw.split('\n')) {
-      const match = line.match(/^user_name:\s*(.+)$/i);
+      const match = line.match(/^(?:user_name|name):\s*(.+)$/i);
       if (match) return match[1].trim();
     }
     return null;

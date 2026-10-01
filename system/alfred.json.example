@@ -17,8 +17,8 @@
     },
     "spending_limits": {
       "enabled": true,
-      "daily_token_limit": 500000,
-      "monthly_token_limit": 10000000,
+      "daily_token_limit": 2000000,
+      "monthly_token_limit": 30000000,
       "warn_threshold": 0.8,
       "on_limit_reached": "block_paid_providers"
     }

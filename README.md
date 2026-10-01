@@ -134,7 +134,7 @@ Interaction: `initial` covers the window until the first token; `idle` governs g
 
 ### Spending limits
 
-Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request and checked against daily/monthly caps:
+Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request (labeled by source: `interactive`, `fast_probe`, `agent`/`job` rounds, `compaction`, retries) and checked against daily/monthly caps:
 
 ```json
 {
@@ -142,13 +142,15 @@ Optional section — if absent, spending control is disabled (v2.1 behavior unch
     "enabled": true,
     "warn_threshold": 0.8,
     "on_limit_reached": "block_paid_providers",
-    "daily_token_limit": 500000,
-    "monthly_token_limit": 10000000
+    "daily_token_limit": 2000000,
+    "monthly_token_limit": 30000000
   }
 }
 ```
 
-Providers can be marked `"paid": true` so `block_paid_providers` excludes only the paid ones from the fallback chain. When the budget is exhausted the gateway replies with a degraded message, warns you (Telegram/web) at the threshold, and Alfred can report the budget via the `health` tool (`health budget` / `health status`). If remaining usage drops below 20%, context compaction is tightened for that request.
+Sizing: one LLM call carries ~6k tokens (full context + tools), and a single user message fans out into several calls (fast-path probe, agent-loop rounds, retries, background jobs). 500k/day ≈ 80 calls — too tight for daily use. Minimums: 2M daily / 30M monthly; below that Alfred warns at startup. Windows are calendar day/month in server-local time.
+
+Providers can be marked `"paid": true` so `block_paid_providers` excludes only the paid ones from the fallback chain. When the budget is exhausted the gateway replies with a degraded message naming the exact period (daily/monthly), warns you (Telegram/web) at the threshold, and Alfred can report the budget via the `health` tool (`health budget` / `health status`, now with per-source breakdown). If remaining usage drops below 20%, context compaction is tightened for that request.
 
 ### Web server
 
@@ -276,8 +278,10 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 ## Personality System
 
 - **SOUL.md** — Core identity. Only the user may edit it.
-- **preferences.md** — Dynamic preferences (language, tone, style). Managed by Alfred via `file_ops` when you request changes.
+- **preferences.md** (`~/.alfred/memory/personality/preferences.md`, keys: language, tone, formality, verbosity, user_name, voice_replies) — the single canonical store for identity and behavior prefs. The agent writes it via `file_ops`, and the gateway also persists explicit statements automatically ("me llamo X", "háblame en español"). `memory.md` holds narrative facts only, never identity.
 - **alfred-rules.md** — Rulebook describing file access permissions, personality protocol, skill implementation protocol, and secrets management protocol. Injected into every system prompt.
+
+Example: _"Respond in English and be more concise"_ → Alfred adds `language: english` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences. Verify with: `cat ~/.alfred/memory/personality/preferences.md`.
 
 Example: _"Respond in English and be more concise"_ → Alfred adds `language: english` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences.
 

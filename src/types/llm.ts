@@ -20,6 +20,8 @@ export interface LLMCallParams {
   top_p?: number;
   system?: string;
   onEvent?: (event: LLMStreamEvent) => void;
+  /** Labels the call for token accounting (e.g. 'interactive', 'fast_probe', 'compaction', 'job'). */
+  source?: string;
 }
 
 export interface Message {

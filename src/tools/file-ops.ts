@@ -41,7 +41,7 @@ export class FileOpsTool implements ToolHandler {
 
   tool: Tool = {
     name: 'file_ops',
-    description: 'Read/write/edit/list files in the workspace with permission control',
+    description: 'Workspace files: read/write/edit/list (permission-checked)',
     inputSchema: {
       type: 'object',
       properties: {

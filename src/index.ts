@@ -147,6 +147,20 @@ async function main(): Promise<void> {
     console.log('   Configure it in alfred.json → llm.spending_limits (see system/alfred.json.example).\n');
   }
 
+  const configuredLimits = config.llm.spending_limits;
+  if (configuredLimits?.enabled) {
+    const tinyDaily = (configuredLimits.daily_token_limit || 0) < 200000;
+    const tinyMonthly = (configuredLimits.monthly_token_limit || 0) < 2000000;
+    if (tinyDaily || tinyMonthly) {
+      getLogger().warn(
+        { daily: configuredLimits.daily_token_limit, monthly: configuredLimits.monthly_token_limit },
+        '⚠️ SPENDING LIMITS VERY LOW — a single request carries the full context window plus tools ' +
+        'and agent loops multiply calls per message. Expect premature budget blocks. ' +
+        'Suggested minimums: daily 2000000, monthly 30000000 (see system/alfred.json.example).'
+      );
+    }
+  }
+
   const promptBuilder = new PromptBuilder();
   try {
     await promptBuilder.loadSoul(configLoader.personalityFile);

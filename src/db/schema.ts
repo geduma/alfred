@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS token_usage_log (
   provider TEXT NOT NULL,
   tokens_used INTEGER NOT NULL,
   is_paid INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'interactive',
   created_at TEXT NOT NULL
 );
 

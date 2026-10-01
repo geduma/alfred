@@ -64,12 +64,16 @@ export function nextContextBudget(current: number, requested: number | null): nu
   return Math.max(MIN_CONTEXT_BUDGET, next);
 }
 
+export type BudgetBlockReason = 'daily_limit' | 'monthly_limit';
+
 export class BudgetBlockedError extends Error {
   readonly code = 'BUDGET_BLOCKED';
+  readonly reason?: BudgetBlockReason;
 
-  constructor(message: string) {
+  constructor(message: string, reason?: BudgetBlockReason) {
     super(message);
     this.name = 'BudgetBlockedError';
+    this.reason = reason;
   }
 }
 

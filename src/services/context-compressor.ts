@@ -187,6 +187,7 @@ export class ContextCompressor {
           messages: [{ role: 'user', content: fullPrompt }],
           system: 'You are a context compression engine. Output only the structured summary.',
           max_tokens: 2048,
+          source: 'compaction',
         });
         return response.content;
       } catch (error: any) {
