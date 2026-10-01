@@ -23,9 +23,17 @@ npm run dev          # Development with hot-reload (tsx watch)
 npm start            # Production
 npm test             # Jest
 npm run lint         # ESLint
+npm run deploy       # Native deploy (default): npm ci + build + ~/.alfred + systemd + healthcheck
+npm run deploy:native # Same as above, explicit
+npm run deploy:docker # Docker deploy: image build + recreate + healthcheck
 npm run docker:build # docker compose build
 npm run docker:up    # docker compose up -d
 ```
+
+> **Workspace default:** `WORKSPACE_ROOT` resolves as `$WORKSPACE` →
+> `/workspace` (Docker) → `~/.alfred` (native default, no exports needed).
+> Dev must run with `WORKSPACE=./workspace` (or any custom path) to avoid
+> touching production data in `~/.alfred`.
 
 ## Project Structure
 
@@ -353,7 +361,7 @@ The gateway serves a static web UI (`web/`) and exposes a WebSocket on the same 
 - **Web client**: push-only via `WebChannel` — registers on connect, receives broadcasts (`{ type: 'notify', event: 'message' }`); the `agent` method responds via the `agent_complete` event, so the frontend uses fire-and-forget `AlfredWS.send`
 - **Metrics API**: `metrics` returns runtime state (version/uptime, provider chain + circuit-breaker states, token budget, active sessions, web clients, jobs, skills, tools, health findings); the frontend polls it every 5s
 - **Config**: `server.port` (default 18789, `0` for ephemeral/test), `server.host` (default `0.0.0.0`)
-- **Docker**: `web/` copied in both builder and runtime stages; `deploy.sh` post-deploy healthcheck probes port 18789 (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exit 1 with logs on failure)
+- **Docker**: `web/` copied in both builder and runtime stages; post-deploy healthchecks probe port 18789 (Docker script: `nc -z`; native script: bash `/dev/tcp`; `HEALTH_WAIT_SECONDS` default 60, exit 1 with logs on failure)
 
 Key files: `src/gateway.ts`, `src/channels/web.ts`, `web/`, `src/config/loader.ts`
 
@@ -397,6 +405,11 @@ so a fresh volume boots without manual edits.
 - Jest with `ts-jest`, logger silenced via `tests/jest.setup.ts`
 - Run: `npm test`
 - Verify: `npx tsc --noEmit`, `npm run lint`, `npm run build`
+
+## Deploy
+
+- Native (default, RPi, Linux only): `./deploy.sh` (dispatcher, same as `./deploy-native.sh`)
+- Docker: `./deploy.sh --docker` (same as `./deploy-docker.sh`) — required path on Windows/macOS
 
 ## Docker
 

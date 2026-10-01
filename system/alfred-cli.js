@@ -2,9 +2,22 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const readline = require('readline');
 
-const configPath = process.env.CONFIG_PATH || '/workspace/config/alfred.json';
+function defaultConfigPath() {
+  if (process.env.WORKSPACE) {
+    return path.join(path.resolve(process.env.WORKSPACE), 'config', 'alfred.json');
+  }
+  try {
+    if (fs.existsSync('/workspace/config/alfred.json')) return '/workspace/config/alfred.json';
+  } catch {
+    // fall through to home default
+  }
+  return path.join(os.homedir(), '.alfred', 'config', 'alfred.json');
+}
+
+const configPath = process.env.CONFIG_PATH || defaultConfigPath();
 const wsPort = 18789;
 
 function loadToken() {
@@ -27,7 +40,7 @@ async function main() {
   try {
     WebSocket = require('ws');
   } catch {
-    console.error('❌ "ws" module not found. Run this script from within the Alfred container.');
+    console.error('❌ "ws" module not found. Run "npm ci" in the Alfred repo, then retry from the repo root.');
     process.exit(1);
   }
 

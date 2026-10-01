@@ -13,7 +13,7 @@
 - Searches the internet
 - Understands your tone (SOUL.md)
 - Uses any LLM (Ollama cloud, Anthropic, OpenAI, etc.)
-- Everything in ONE Docker container
+- Runs natively with Node.js (or in ONE Docker container)
 
 ---
 
@@ -24,18 +24,21 @@
 git clone https://github.com/geduma/alfred.git
 cd alfred
 
-# 2. Deploy (single command)
-#    deploy.sh creates the workspace (~/.alfred) and fixes its permissions,
-#    pulls, builds, starts the container, and health-checks the gateway.
+# 2. Deploy native (single command: prechecks + pull + npm ci + build +
+#    ~/.alfred workspace + skills sync + systemd service + gateway healthcheck)
 ./deploy.sh
 
 # 3. Edit the auto-created config with your API keys + Telegram token
 vim ~/.alfred/config/alfred.json
 
 # 4. Apply the config and chat
-docker compose -f docker/docker-compose.yml restart alfred
-docker attach alfred-agent
+sudo systemctl restart alfred
+node system/alfred-cli.js
 ```
+
+Windows/macOS must use Docker: `./deploy.sh --docker`, then
+`docker compose -f docker/docker-compose.yml restart alfred` and
+`docker attach alfred-agent`. Native deploy (`./deploy.sh`) is Linux-only.
 
 ---
 

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 const DOCKER_DEFAULT = '/workspace';
@@ -11,7 +12,7 @@ function detectRoot(): string {
     return DOCKER_DEFAULT;
   }
 
-  return path.resolve(process.cwd(), 'workspace');
+  return path.join(os.homedir(), '.alfred');
 }
 
 export const WORKSPACE_ROOT = detectRoot();

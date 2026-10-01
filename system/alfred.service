@@ -1,0 +1,18 @@
+[Unit]
+Description=Alfred AI Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO_ROOT@
+Environment=WORKSPACE=@WORKSPACE_DIR@
+Environment=CONFIG_PATH=@WORKSPACE_DIR@/config/alfred.json
+Environment=NODE_ENV=production
+ExecStart=@NODE_BIN@ dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
