@@ -15,12 +15,21 @@ export interface SkillTrigger {
   cooldown_hours?: number;
 }
 
+export interface SkillPermissions {
+  tools?: string[];
+  file_ops?: { paths?: string[]; modes?: string[] };
+  web?: { domains?: string[] };
+  exec?: { allowed_commands?: string[] };
+  requires_secrets?: string[];
+}
+
 export interface Skill {
   name: string;
   description: string;
   tools?: string[];
   unattended?: boolean;
   approvedActions?: string[];
+  permissions?: SkillPermissions;
   trigger?: SkillTrigger;
   instructions: string;
   filePath: string;
@@ -157,6 +166,7 @@ export class SkillLoader {
       tools,
       unattended,
       approvedActions: approvedActions && approvedActions.length > 0 ? approvedActions : undefined,
+      permissions: this.parsePermissions(content),
       trigger,
       instructions,
       filePath: fileName,
@@ -186,6 +196,77 @@ export class SkillLoader {
       notify_if: nested.notify_if || flat.trigger_notify_if || undefined,
       cooldown_hours: Number.isFinite(cooldown) && cooldown > 0 ? cooldown : undefined,
     };
+  }
+
+  private parsePermissions(content: string): SkillPermissions | undefined {
+    if (!content.startsWith('---\n')) return undefined;
+    const end = content.indexOf('\n---\n', 4);
+    if (end < 0) return undefined;
+    const lines = content.slice(4, end).split('\n');
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^permissions:\s*$/.test(lines[i])) {
+        start = i;
+        break;
+      }
+    }
+    if (start < 0) return undefined;
+
+    const perms: SkillPermissions = {};
+    let section: string | null = null;
+    let sectionIndent = 0;
+    let found = false;
+    for (let i = start + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\S/.test(line)) break;
+      if (!line.trim() || line.trim().startsWith('#')) continue;
+      const indent = line.length - line.trimStart().length;
+      const idx = line.indexOf(':');
+      if (idx < 0) continue;
+      const key = line.slice(indent, idx).trim();
+      const rawValue = line.slice(idx + 1).trim();
+      if (!key) continue;
+      if (section === null || indent <= sectionIndent) {
+        if (rawValue) {
+          this.assignPermissionList(perms, key, rawValue);
+          found = true;
+        } else {
+          section = key;
+          sectionIndent = indent;
+        }
+        continue;
+      }
+      if (section && rawValue) {
+        this.assignPermissionSubkey(perms, section, key, rawValue);
+        found = true;
+      }
+    }
+    return found ? perms : undefined;
+  }
+
+  private splitPermissionList(value: string): string[] {
+    const inner = value.trim().replace(/^\[/, '').replace(/\]$/, '');
+    return inner.split(',').map(v => v.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  }
+
+  private assignPermissionList(perms: SkillPermissions, key: string, rawValue: string): void {
+    const list = this.splitPermissionList(rawValue);
+    if (key === 'tools') perms.tools = list;
+    else if (key === 'requires_secrets') perms.requires_secrets = list;
+  }
+
+  private assignPermissionSubkey(perms: SkillPermissions, section: string, key: string, rawValue: string): void {
+    const list = this.splitPermissionList(rawValue);
+    if (section === 'file_ops' && (key === 'paths' || key === 'modes')) {
+      perms.file_ops = perms.file_ops || {};
+      perms.file_ops[key] = list;
+    } else if (section === 'web' && key === 'domains') {
+      perms.web = perms.web || {};
+      perms.web.domains = list;
+    } else if (section === 'exec' && key === 'allowed_commands') {
+      perms.exec = perms.exec || {};
+      perms.exec.allowed_commands = list;
+    }
   }
 
   private parseTriggerBlock(content: string): Record<string, string> {

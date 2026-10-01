@@ -3,7 +3,11 @@ name: Daily Digest
 description: Morning summary of pending tasks, reminders, and system status
 tools: job, exec, health
 unattended: true
-approved_actions: exec, health
+permissions:
+  tools: [exec, health]
+  exec:
+    allowed_commands: [cat, ls, grep, head, tail]
+  requires_secrets: []
 ---
 
 ## Daily Digest

@@ -3,7 +3,14 @@ name: System Check
 description: Proactive check of system health, logs, and database status
 tools: exec, file_ops, health
 unattended: true
-approved_actions: exec, file_ops, health
+permissions:
+  tools: [exec, file_ops, health]
+  file_ops:
+    paths: [/workspace/files/]
+    modes: [read]
+  exec:
+    allowed_commands: [cat, grep, tail, head, ls, df, du, pgrep]
+  requires_secrets: []
 ---
 
 ## System Check

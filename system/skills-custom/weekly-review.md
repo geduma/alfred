@@ -3,7 +3,14 @@ name: Weekly Review
 description: Weekly review of decisions, progress, metrics, and context cleanup
 tools: exec, file_ops, memory, health
 unattended: true
-approved_actions: exec, file_ops
+permissions:
+  tools: [exec, file_ops, health]
+  file_ops:
+    paths: [/workspace/memory/personality/, /workspace/files/]
+    modes: [read, write]
+  exec:
+    allowed_commands: [cat, ls, grep, head]
+  requires_secrets: []
 ---
 
 ## Weekly Review

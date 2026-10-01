@@ -5,6 +5,8 @@ import fs from 'fs';
 import { createHash } from 'crypto';
 import { safeTokenCompare } from './utils/secure-compare';
 import { isWebTokenConfigured } from './security/web-token';
+import { checkUnattendedPolicy } from './agent/skill-policy';
+import { SkillPermissions } from './services/skill-loader';
 import { BlockList } from 'net';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
@@ -65,6 +67,9 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 interface UnattendedGate {
   unattendedAllowlist: Set<string>;
   skillName?: string;
+  strict?: boolean;
+  permissions?: SkillPermissions;
+  noManifest?: boolean;
 }
 
 const MAX_SESSIONS = 100;
@@ -79,7 +84,6 @@ const MAX_ADAPTIVE_ATTEMPTS = 3;
 const MIN_OUTPUT_TOKENS = 512;
 const AGENT_JOB_MIN_INTERVAL_MS = 30 * 60 * 1000;
 const AGENT_JOB_MIN_REMAINING_PERCENT = 10;
-const UNATTENDED_GATED_TOOLS = new Set(['exec', 'file_ops', 'web']);
 const MAX_WEB_AUDIO_BYTES = 50 * 1024 * 1024;
 const MAX_WEB_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_TEXT_PREFIX_BYTES = 8192;
@@ -849,7 +853,7 @@ export class Gateway {
     return false;
   }
 
-  private async resolveUnattendedGate(jobMessage: string): Promise<UnattendedGate> {
+  private async resolveUnattendedGate(jobMessage: string, strict = false): Promise<UnattendedGate> {
     try {
       const skill = await this.skillLoader.resolveJobSkill(jobMessage);
       if (!skill) {
@@ -857,24 +861,36 @@ export class Gateway {
           { skip_reason: 'no_skill_matched' },
           'Unattended gate: agent-mode job does not reference any known skill; all gated actions will be blocked'
         );
-        return { unattendedAllowlist: new Set() };
+        return { unattendedAllowlist: new Set(), strict, noManifest: strict || undefined };
       }
       if (!skill.unattended) {
         getLogger().warn(
           { skill: skill.name, skip_reason: 'not_unattended' },
           'Unattended gate: skill lacks unattended:true in frontmatter; all gated actions will be blocked'
         );
-        return { unattendedAllowlist: new Set(), skillName: skill.name };
+        return { unattendedAllowlist: new Set(), skillName: skill.name, strict, noManifest: strict || undefined };
+      }
+      if (skill.permissions) {
+        getLogger().info(
+          { skill: skill.name, tools: skill.permissions.tools },
+          'Unattended gate: agent-mode job resolved structured manifest'
+        );
+        return { unattendedAllowlist: new Set(), skillName: skill.name, strict, permissions: skill.permissions };
       }
       const allowlist = new Set((skill.approvedActions || []).map(a => a.toLowerCase()));
-      getLogger().info(
-        { skill: skill.name, approved: Array.from(allowlist) },
-        'Unattended gate: agent-mode job resolved approved actions'
+      getLogger().warn(
+        { skill: skill.name, approved: Array.from(allowlist), code: 'deprecated_skill_manifest_format' },
+        'Unattended gate: agent-mode job uses legacy manifest format'
       );
-      return { unattendedAllowlist: allowlist, skillName: skill.name };
+      return {
+        unattendedAllowlist: allowlist,
+        skillName: skill.name,
+        strict,
+        noManifest: strict && allowlist.size === 0 ? true : undefined,
+      };
     } catch (error: any) {
       getLogger().warn({ error: error.message }, 'Unattended gate resolution failed; failing closed');
-      return { unattendedAllowlist: new Set() };
+      return { unattendedAllowlist: new Set(), strict, noManifest: strict || undefined };
     }
   }
 
@@ -1281,12 +1297,11 @@ export class Gateway {
           }
         }
 
-        if (source === 'job' && UNATTENDED_GATED_TOOLS.has(toolCall.function.name)) {
-          const allowed = unattendedGate?.unattendedAllowlist;
-          const skillName = unattendedGate?.skillName;
-          if (!allowed || !allowed.has(toolCall.function.name)) {
+        if (source === 'job') {
+          const verdict = checkUnattendedPolicy(toolCall.function.name, args, unattendedGate);
+          if (!verdict.allowed) {
             getLogger().warn(
-              { runId, round, toolName: toolCall.function.name, skill: skillName, skip_reason: 'unapproved_action' },
+              { runId, round, toolName: toolCall.function.name, skill: unattendedGate?.skillName, skip_reason: 'unapproved_action' },
               'Unattended gate blocked tool call'
             );
             this.writeAgentTrace({
@@ -1296,13 +1311,13 @@ export class Gateway {
               source,
               skip_reason: 'unapproved_action',
               toolName: toolCall.function.name,
-              skill: skillName,
+              skill: unattendedGate?.skillName,
               arguments: toolCall.function.arguments,
             });
             blockedUnattendedActions.add(toolCall.function.name);
             const blockedMsg: Message = {
               role: 'tool',
-              content: `Blocked by unattended-run policy: "${toolCall.function.name}" is not an approved action${skillName ? ` for skill "${skillName}"` : ''} (requires approval).`,
+              content: `Blocked by unattended-run policy: ${verdict.reason}.`,
               tool_call_id: toolCall.id,
             };
             session.messages.push(blockedMsg);
@@ -1898,7 +1913,7 @@ export class Gateway {
     content: string;
     sessionId: string;
     metadata?: Record<string, unknown>;
-  }): Promise<{ content: string | null; blockedActions: string[] }> {
+  }, strictUnattended = false): Promise<{ content: string | null; blockedActions: string[] }> {
     const isJobTriggered = params.metadata?.source === 'job';
     const setup = await this.setupSessionContext(params);
     if (!('session' in setup)) {
@@ -1910,7 +1925,7 @@ export class Gateway {
       this.pushUserMessage(session, params.content);
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
 
-      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content) : undefined;
+      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content, strictUnattended) : undefined;
 
       const { content, blockedActions } = await this.runAgentLoop(
         session, finalSystem, contextMessages, ingestParams,
@@ -2061,7 +2076,7 @@ export class Gateway {
       content: task.input,
       sessionId: task.session_id ?? `${task.origin_channel}_${task.origin_chat_id ?? 'unknown'}`,
       metadata: unattended ? { source: 'job', taskId: task.id } : { taskId: task.id },
-    });
+    }, task.kind === 'proactive_check');
   }
 
   private async handleMetrics(ws: WebSocket, req: GatewayRequest): Promise<void> {
