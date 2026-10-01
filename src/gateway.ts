@@ -241,8 +241,12 @@ export class Gateway {
       }
       try {
         blockList.addAddress(value);
-      } catch (error: any) {
-        getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
+      } catch {
+        try {
+          blockList.addAddress(value, value.includes(':') ? 'ipv6' : 'ipv4');
+        } catch (error: any) {
+          getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
+        }
       }
     }
     return blockList;

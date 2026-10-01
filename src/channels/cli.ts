@@ -14,6 +14,18 @@ export class CLIChannel implements Channel {
   }
 
   async start(): Promise<void> {
+    if (process.env.ALFRED_NO_CLI === '1') {
+      getLogger().info('CLI channel disabled via ALFRED_NO_CLI, skipping interactive prompt');
+      this.running = false;
+      return;
+    }
+    if (!process.stdin.isTTY) {
+      getLogger().info(
+        'CLI channel disabled (stdin is not a TTY, e.g. systemd service). Use node system/alfred-cli.js for interactive CLI.'
+      );
+      this.running = false;
+      return;
+    }
     this.running = true;
 
     this.rl = readline.createInterface({
@@ -74,14 +86,20 @@ export class CLIChannel implements Channel {
     });
 
     this.rl.on('close', () => {
-      if (this.running) {
-        getLogger().info('CLI channel closed by user (Ctrl+C)');
-        this.exit(0);
+      if (!this.running) return;
+      if (!process.stdin.isTTY) {
+        getLogger().info('CLI input closed (non-TTY), keeping gateway alive');
+        this.running = false;
+        this.rl = null;
+        return;
       }
+      getLogger().info('CLI channel closed by user (Ctrl+C)');
+      this.exit(0);
     });
   }
 
   signalReady(): void {
+    if (!this.rl) return;
     console.log('\n╔═══════════════════════════════════════════╗');
     console.log('║   ✅ Alfred is running!                   ║');
     console.log('║   WebSocket: ws://127.0.0.1:18789          ║');

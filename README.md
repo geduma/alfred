@@ -59,9 +59,9 @@ WORKSPACE=./workspace npm run dev
 
 | Channel | Access |
 |---|---|
-| **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
+| **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`). Under the native `systemd` service stdin is not a TTY, so the in-process CLI prompt auto-disables (no restart loop) — use `node system/alfred-cli.js` from the repo root for interactive CLI instead. The unit also sets `ALFRED_NO_CLI=1` as a second guard |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
-| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. Reachable from other LAN devices via the host IP. Access is restricted to `channels.web.permissions.allow_from` (IP/CIDR allowlist) in `alfred.json` — leave it empty to allow everyone; on Docker, host networking is required so the container sees real client IPs |
+| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. Reachable from other LAN devices via the host IP. Access is restricted to `channels.web.permissions.allow_from` (IP/CIDR allowlist) in `alfred.json` — leave it empty to allow everyone; on Docker, host networking is required so the container sees real client IPs. For a LAN behind a reverse proxy, add your subnet (e.g. `192.168.10.0/24`) to `allow_from`, list the proxy in `trusted_proxies`, and forward `X-Forwarded-For`/`X-Real-IP` from the proxy. `::1` needs no entry — it normalizes to `127.0.0.1` |
 
 ## Configuration
 
@@ -455,6 +455,17 @@ Steps performed:
 7. `docker image prune -f` — cleans up old images
 
 > **Tip:** Run `./deploy.sh` from the repo root (`~/alfred`) on your Raspberry Pi after SSH'ing in. Note the two separate locations: the repo lives in `~/alfred` (code) while the workspace lives in `~/.alfred` (data — config, database, files, logs, memory, skills). Preview the skills sync without writing anything with `DRY_RUN=1 ./deploy.sh`.
+
+### Health check (`alfred-doctor.sh`)
+
+Read-only diagnostic for native installs — checks the systemd unit (active state, restart count, `ALFRED_NO_CLI`), Node/dist, gateway port, `alfred.json` validity (channels, web allowlist, Telegram token presence), recent `journalctl` errors, workspace sizes, and host resources (load, RAM, disk, temp). It changes nothing.
+
+```bash
+bash scripts/alfred-doctor.sh
+# overrides: SERVICE_NAME=alfred WORKSPACE_DIR=~/.alfred PORT=18789 SINCE="30 min ago"
+```
+
+Exit codes: `0` ok, `1` warnings, `2` failures.
 
 ## Recent Improvements (v2.2)
 

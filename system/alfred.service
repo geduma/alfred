@@ -10,6 +10,7 @@ WorkingDirectory=@REPO_ROOT@
 Environment=WORKSPACE=@WORKSPACE_DIR@
 Environment=CONFIG_PATH=@WORKSPACE_DIR@/config/alfred.json
 Environment=NODE_ENV=production
+Environment=ALFRED_NO_CLI=1
 ExecStart=@NODE_BIN@ dist/index.js
 Restart=always
 RestartSec=5
