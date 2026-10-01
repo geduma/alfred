@@ -4,9 +4,10 @@ import os from 'os';
 import { ConfigLoader } from '../../src/config/loader';
 import { Gateway } from '../../src/gateway';
 import { ToolHandler } from '../../src/types/tool';
-import { Message, ToolCall } from '../../src/types/llm';
+import { Message } from '../../src/types/llm';
 import { TokenBudgetTracker } from '../../src/services/token-budget';
 import { WORKSPACE_PATHS } from '../../src/utils/workspace';
+import { initializeDatabase, closeDatabase, getDatabase } from '../../src/db';
 
 function buildConfig() {
   return {
@@ -33,7 +34,6 @@ function buildConfig() {
       job: { enabled: false, config: {} },
       system: { enabled: true, config: {} },
       health: { enabled: false, config: {} },
-      memory: { enabled: false, config: {} },
     },
     database: { type: 'sqlite', config: { path: '/tmp/gateway-test/alfred.db' } },
     logging: { level: 'silent', format: 'json', targets: ['console'], config: {} },
@@ -77,7 +77,7 @@ describe('Gateway runAgentLoop', () => {
     const config = new ConfigLoader(configPath);
     routerCall = jest.fn();
     const fakeRouter: any = { call: routerCall };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
 
     gateway = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
@@ -118,6 +118,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'test-user', metadata: {} },
+      'run_persist',
       () => {}
     );
 
@@ -167,6 +168,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'telegram', userId: 'user-9', metadata: { chat_id: 12345 } },
+      'run_context',
       () => {}
     );
 
@@ -203,6 +205,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'u', metadata: {} },
+      'run_bad_args',
       () => {}
     );
 
@@ -406,6 +409,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'u', metadata: {} },
+      'run_413',
       () => {}
     );
 
@@ -444,6 +448,7 @@ describe('Gateway runAgentLoop', () => {
       'system prompt',
       session.messages,
       { channel: 'cli', userId: 'u', metadata: {} },
+      'run_nolimit',
       () => {}
     );
 
@@ -470,6 +475,7 @@ describe('Gateway runAgentLoop', () => {
         'system prompt',
         session.messages,
         { channel: 'cli', userId: 'u', metadata: {} },
+        'run_conn',
         () => {}
       )
     ).rejects.toThrow('Connection refused');
@@ -479,6 +485,7 @@ describe('Gateway runAgentLoop', () => {
 
   describe('agent-mode job firing', () => {
     let processSpy: jest.SpyInstance;
+    let jobDbDir: string;
 
     const allowBudget = () => {
       (gateway as any).llmRouter.getBudgetTracker = () => ({
@@ -494,30 +501,36 @@ describe('Gateway runAgentLoop', () => {
       ...overrides,
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      jobDbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-loop-jobs-'));
+      await initializeDatabase(path.join(jobDbDir, 'test.db'));
       allowBudget();
       processSpy = jest.spyOn(gateway, 'processMessage').mockResolvedValue('Good morning ☀️');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       processSpy.mockRestore();
       (gateway as any).lastAgentJobFire.clear();
+      await closeDatabase();
+      fs.rmSync(jobDbDir, { recursive: true, force: true });
     });
 
-    test('should route an agent job through processMessage with a dedicated session and send the reply to the channel', async () => {
+    test('should enqueue an agent job as a scheduled_job task instead of answering directly', async () => {
       await (gateway as any).handleAgentJobFire(makeJob());
 
-      expect(processSpy).toHaveBeenCalledTimes(1);
-      expect(processSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
-        channel: 'telegram',
-        userId: 'u1',
-        content: 'Run the Daily Digest skill',
-        sessionId: 'telegram_u1_jobs',
-        metadata: { source: 'job', jobId: 'job_digest' },
-      }));
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).not.toHaveBeenCalled();
 
-      expect((gateway as any).channelManager.sendMessage)
-        .toHaveBeenCalledWith('telegram', 'u1', 'Good morning ☀️', { chat_id: 42 });
+      const rows = getDatabase().prepare('SELECT * FROM tasks').all() as any[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        origin_channel: 'telegram',
+        origin_chat_id: '42',
+        session_id: 'telegram_u1_jobs',
+        kind: 'scheduled_job',
+        input: 'Run the Daily Digest skill',
+        status: 'pending',
+      });
     });
 
     test('should skip an agent job when the min interval has not elapsed', async () => {
@@ -600,7 +613,7 @@ describe('Gateway runAgentLoop', () => {
     });
 
     const fakeRouter: any = { call: routerCall, getBudgetTracker: () => tracker };
-    const fakePromptBuilder: any = { buildPrompt: jest.fn(), reload: jest.fn() };
+    const fakePromptBuilder: any = { buildSystemPrompt: jest.fn(), reload: jest.fn() };
     const fakeChannelManager: any = { startAll: jest.fn(), stopAll: jest.fn(), sendMessage: jest.fn() };
     const g = new Gateway(config, fakeRouter, fakePromptBuilder, fakeChannelManager);
 

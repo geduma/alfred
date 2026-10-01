@@ -2,6 +2,8 @@ FROM node:22-alpine AS builder
 
 WORKDIR /build
 
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund
@@ -32,7 +34,7 @@ COPY web/ ./web/
 RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
     chmod +x /usr/local/bin/alfred-cli
 
-RUN mkdir -p /workspace/{db,files,skills,config,logs,memory/{sessions,jobs,personality,vectors,snapshots}}
+RUN mkdir -p /workspace/{db,files,skills,config,logs,memory/{sessions,jobs,personality}}
 
 RUN chown -R node:node /app /workspace
 

@@ -1,6 +1,7 @@
 import * as readline from 'readline';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
+import { handleDirectCommand } from './cli-direct-commands';
 import { getLogger } from '../utils/logger';
 
 export class CLIChannel implements Channel {
@@ -31,6 +32,23 @@ export class CLIChannel implements Channel {
       if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
         console.log('\n👋 Goodbye.\n');
         this.exit(0);
+        return;
+      }
+
+      try {
+        const direct = await handleDirectCommand(trimmed);
+        if (direct !== null) {
+          console.log(`\n${direct}\n`);
+          if (this.running) {
+            this.rl?.prompt();
+          }
+          return;
+        }
+      } catch (error: any) {
+        console.error(`\n❌ Error: ${error.message}\n`);
+        if (this.running) {
+          this.rl?.prompt();
+        }
         return;
       }
 

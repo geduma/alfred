@@ -2,7 +2,9 @@
 # Sync bundled skills from system/skills-custom/ into the workspace skills dir.
 #
 # Guarantees:
-#   - Only overwrites files whose names exist in the bundle (system/skills-custom/*.md).
+#   - Only overwrites files whose names exist in the bundle (system/skills-custom/*.skill.md).
+#     (The find below matches '*.md' to also pick up pre-rename bundled files on
+#     already-deployed workspaces; those become orphans via the manifest flow.)
 #   - Never touches user-authored skills outside the bundle.
 #   - Backs up any differing/previous version under skills/backups/<ts>/ before writing.
 #   - Keeps a manifest (skills/.bundled-manifest) of managed files; files that leave

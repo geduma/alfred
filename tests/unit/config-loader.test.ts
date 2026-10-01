@@ -37,7 +37,6 @@ function buildConfig() {
       job: { enabled: true, config: {} },
       system: { enabled: true, config: {} },
       health: { enabled: false, config: {} },
-      memory: { enabled: false, config: {} },
     },
     database: { type: 'sqlite', config: { path: '/workspace/db/alfred.db' } },
     logging: { level: 'info', format: 'json', targets: ['console'], config: {} },

@@ -2,12 +2,17 @@ import fs from 'fs';
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { ConfigLoader } from './config/loader';
+import { ensureWebAuthToken } from './security/web-token';
 import { LLMRouter } from './agent/llm-router';
 import { PromptBuilder } from './agent/prompt-builder';
 import { Gateway } from './gateway';
 import { ChannelManager } from './channels/channel-manager';
+import { Conductor } from './agent/conductor';
+import { Executor } from './agent/executor';
+import { TaskRepository } from './db/repositories/tasks';
 import { TelegramChannel } from './channels/telegram';
 import { CLIChannel } from './channels/cli';
+import { setDirectCommandContext } from './channels/cli-direct-commands';
 import { WebChannel } from './channels/web';
 import { initializeDatabase, closeDatabase } from './db/index';
 import { initializeLogger, getLogger } from './utils/logger';
@@ -25,8 +30,6 @@ const REQUIRED_DIRS = [
   'memory/sessions',
   'memory/jobs',
   'memory/personality',
-  'memory/vectors',
-  'memory/snapshots',
   'skills',
   'skills/custom',
   'skills/files',
@@ -96,6 +99,8 @@ async function copyDefaultSkills(): Promise<void> {
 }
 
 let gateway: Gateway | null = null;
+let conductor: Conductor | null = null;
+let executor: Executor | null = null;
 
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════╗');
@@ -114,6 +119,12 @@ async function main(): Promise<void> {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(rawConfig, null, 2), 'utf-8');
     console.log(`\n🔑 Gateway auth token auto-generated: ${newToken}`);
     console.log(`   Save this if you need external WebSocket clients.\n`);
+  }
+
+  const webToken = ensureWebAuthToken(rawConfig, CONFIG_PATH);
+  if (webToken.generated) {
+    console.log(`[ALFRED] Token de acceso web generado: ${webToken.token}`);
+    console.log(`[ALFRED] Recupérelo con: journalctl -u alfred -n 50 | grep 'Token de acceso'\n`);
   }
 
   const configLoader = new ConfigLoader(CONFIG_PATH);
@@ -179,8 +190,18 @@ async function main(): Promise<void> {
 
   gateway = new Gateway(configLoader, llmRouter, promptBuilder, channelManager, webChannel);
 
+  const taskRepository = new TaskRepository();
+  const getEcosystem = () => configLoader.ecosystem;
+  conductor = new Conductor({ gateway, tasks: taskRepository, channelManager, getEcosystem });
+  executor = new Executor({ gateway, tasks: taskRepository, getEcosystem });
+
+  setDirectCommandContext({
+    configPath: CONFIG_PATH,
+    reload: () => gateway!.reload(),
+  });
+
   channelManager.setMessageHandler(async (msg) => {
-    return gateway ? gateway.processMessage(msg) : null;
+    return conductor ? conductor.handleMessage(msg) : null;
   });
 
   const dbPath = configLoader.database.config.path;
@@ -194,6 +215,8 @@ async function main(): Promise<void> {
   try {
     await gateway.start();
     getLogger().info('Alfred is ready');
+    conductor?.start();
+    executor?.start();
     channelManager.signalReady();
   } catch (error: any) {
     getLogger().fatal({ error: error.message }, 'Failed to start gateway');
@@ -204,6 +227,8 @@ async function main(): Promise<void> {
 async function shutdown(reason = 'signal'): Promise<void> {
   getLogger().info({ reason }, 'Shutting down...');
   try {
+    conductor?.stop();
+    executor?.stop();
     if (gateway) {
       await gateway.stop();
     }

@@ -6,12 +6,31 @@ import { isDatabaseInitialized, getDatabase } from '../db';
 
 const SUPPORTED_SUBDIRS = ['system', 'web', 'files'];
 
+export interface SkillTrigger {
+  type: 'schedule' | 'condition';
+  cron?: string;
+  check_tool?: string;
+  check_command?: string;
+  notify_if?: string;
+  cooldown_hours?: number;
+}
+
+export interface SkillPermissions {
+  tools?: string[];
+  file_ops?: { paths?: string[]; modes?: string[] };
+  web?: { domains?: string[] };
+  exec?: { allowed_commands?: string[] };
+  requires_secrets?: string[];
+}
+
 export interface Skill {
   name: string;
   description: string;
   tools?: string[];
   unattended?: boolean;
   approvedActions?: string[];
+  permissions?: SkillPermissions;
+  trigger?: SkillTrigger;
   instructions: string;
   filePath: string;
 }
@@ -130,6 +149,7 @@ export class SkillLoader {
     const approvedActions = frontmatter?.approved_actions
       ? String(frontmatter.approved_actions).split(',').map(a => a.trim().toLowerCase()).filter(Boolean)
       : undefined;
+    const trigger = this.parseTrigger(content, frontmatter);
 
     if (!name) {
       getLogger().warn({ file: fileName }, 'Skill file missing title (# heading), skipping');
@@ -146,6 +166,8 @@ export class SkillLoader {
       tools,
       unattended,
       approvedActions: approvedActions && approvedActions.length > 0 ? approvedActions : undefined,
+      permissions: this.parsePermissions(content),
+      trigger,
       instructions,
       filePath: fileName,
     };
@@ -154,6 +176,120 @@ export class SkillLoader {
   private parseUnattendedFlag(value?: string): boolean | undefined {
     if (value === undefined || value === '') return undefined;
     return ['true', 'yes', '1'].includes(String(value).trim().toLowerCase());
+  }
+
+  private parseTrigger(content: string, frontmatter: Record<string, string> | null): SkillTrigger | undefined {
+    const nested = this.parseTriggerBlock(content);
+    const flat = frontmatter || {};
+    const type = (nested.type || flat.trigger_type || '').trim();
+    if (type !== 'schedule' && type !== 'condition') return undefined;
+
+    if (type === 'schedule') {
+      return { type, cron: nested.cron || flat.trigger_cron || undefined };
+    }
+
+    const cooldown = Number(nested.cooldown_hours || flat.trigger_cooldown_hours || '');
+    return {
+      type,
+      check_tool: nested.check_tool || flat.trigger_check_tool || undefined,
+      check_command: nested.check_command || flat.trigger_check_command || undefined,
+      notify_if: nested.notify_if || flat.trigger_notify_if || undefined,
+      cooldown_hours: Number.isFinite(cooldown) && cooldown > 0 ? cooldown : undefined,
+    };
+  }
+
+  private parsePermissions(content: string): SkillPermissions | undefined {
+    if (!content.startsWith('---\n')) return undefined;
+    const end = content.indexOf('\n---\n', 4);
+    if (end < 0) return undefined;
+    const lines = content.slice(4, end).split('\n');
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^permissions:\s*$/.test(lines[i])) {
+        start = i;
+        break;
+      }
+    }
+    if (start < 0) return undefined;
+
+    const perms: SkillPermissions = {};
+    let section: string | null = null;
+    let sectionIndent = 0;
+    let found = false;
+    for (let i = start + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\S/.test(line)) break;
+      if (!line.trim() || line.trim().startsWith('#')) continue;
+      const indent = line.length - line.trimStart().length;
+      const idx = line.indexOf(':');
+      if (idx < 0) continue;
+      const key = line.slice(indent, idx).trim();
+      const rawValue = line.slice(idx + 1).trim();
+      if (!key) continue;
+      if (section === null || indent <= sectionIndent) {
+        if (rawValue) {
+          this.assignPermissionList(perms, key, rawValue);
+          found = true;
+        } else {
+          section = key;
+          sectionIndent = indent;
+        }
+        continue;
+      }
+      if (section && rawValue) {
+        this.assignPermissionSubkey(perms, section, key, rawValue);
+        found = true;
+      }
+    }
+    return found ? perms : undefined;
+  }
+
+  private splitPermissionList(value: string): string[] {
+    const inner = value.trim().replace(/^\[/, '').replace(/\]$/, '');
+    return inner.split(',').map(v => v.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  }
+
+  private assignPermissionList(perms: SkillPermissions, key: string, rawValue: string): void {
+    const list = this.splitPermissionList(rawValue);
+    if (key === 'tools') perms.tools = list;
+    else if (key === 'requires_secrets') perms.requires_secrets = list;
+  }
+
+  private assignPermissionSubkey(perms: SkillPermissions, section: string, key: string, rawValue: string): void {
+    const list = this.splitPermissionList(rawValue);
+    if (section === 'file_ops' && (key === 'paths' || key === 'modes')) {
+      perms.file_ops = perms.file_ops || {};
+      perms.file_ops[key] = list;
+    } else if (section === 'web' && key === 'domains') {
+      perms.web = perms.web || {};
+      perms.web.domains = list;
+    } else if (section === 'exec' && key === 'allowed_commands') {
+      perms.exec = perms.exec || {};
+      perms.exec.allowed_commands = list;
+    }
+  }
+
+  private parseTriggerBlock(content: string): Record<string, string> {
+    if (!content.startsWith('---\n')) return {};
+    const end = content.indexOf('\n---\n', 4);
+    if (end < 0) return {};
+    const lines = content.slice(4, end).split('\n');
+    const nested: Record<string, string> = {};
+    let inside = false;
+    for (const line of lines) {
+      if (!inside) {
+        if (/^trigger:\s*$/.test(line)) inside = true;
+        continue;
+      }
+      if (/^\S/.test(line)) break;
+      const idx = line.indexOf(':');
+      if (idx > 0) {
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+        if (key) nested[key] = value;
+      }
+    }
+    return nested;
   }
 
   private parseFrontmatter(content: string): Record<string, string> | null {
@@ -206,20 +342,16 @@ export class SkillLoader {
         const content = await fs.promises.readFile(fullPath, 'utf-8');
         const hash = createHash('sha256').update(content).digest('hex');
 
-        await new Promise<void>((resolve, reject) => {
-          db.run(
-            `INSERT INTO skills_cache (name, description, file_path, enabled, last_loaded, hash)
-             VALUES (?, ?, ?, 1, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET
-               description = excluded.description,
-               file_path = excluded.file_path,
-               enabled = 1,
-               last_loaded = excluded.last_loaded,
-               hash = excluded.hash`,
-            [skill.name, skill.description || '', fullPath, now, hash],
-            (err) => err ? reject(err) : resolve()
-          );
-        });
+        db.prepare(
+          `INSERT INTO skills_cache (name, description, file_path, enabled, last_loaded, hash)
+           VALUES (?, ?, ?, 1, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET
+             description = excluded.description,
+             file_path = excluded.file_path,
+             enabled = 1,
+             last_loaded = excluded.last_loaded,
+             hash = excluded.hash`
+        ).run(skill.name, skill.description || '', fullPath, now, hash);
       } catch (error: any) {
         getLogger().debug({ skill: skill.name, error: error.message }, 'Failed to cache skill in DB');
       }

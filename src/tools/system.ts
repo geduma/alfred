@@ -95,7 +95,7 @@ export class SystemTool implements ToolHandler {
       return key.slice(0, 4) + '****' + key.slice(-4);
     };
 
-    for (const [_, provider] of Object.entries(sanitized.providers) as any) {
+    for (const provider of Object.values(sanitized.providers) as any) {
       if (provider.config?.api_key) {
         provider.config.api_key = maskKey(provider.config.api_key);
       }
@@ -103,6 +103,10 @@ export class SystemTool implements ToolHandler {
 
     if (sanitized.security?.gateway_auth_token) {
       sanitized.security.gateway_auth_token = maskKey(sanitized.security.gateway_auth_token);
+    }
+
+    if (sanitized.server?.web_auth_token) {
+      sanitized.server.web_auth_token = maskKey(sanitized.server.web_auth_token);
     }
 
     if (sanitized.channels?.telegram?.config?.bot_token) {

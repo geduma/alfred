@@ -14,7 +14,8 @@ describe('FileOpsTool path resolution', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
+    fs.rmSync(resolveInWorkspace('files'), { recursive: true, force: true });
+    fs.rmSync(resolveInWorkspace('memory'), { recursive: true, force: true });
   });
 
   test('should resolve workspace-relative paths from a foreign CWD', async () => {

@@ -140,13 +140,11 @@ export class HealthMonitor {
 
   private categorize(msg: string): string {
     const lower = msg.toLowerCase();
-    if (lower.includes('vector store') || lower.includes('embedding') || lower.includes('embedder')) return 'vector_store';
     if (lower.includes('provider') || lower.includes('llm') || lower.includes('anthropic') || lower.includes('openai')) return 'llm_provider';
     if (lower.includes('telegram')) return 'telegram';
     if (lower.includes('database') || lower.includes('sqlite') || lower.includes('db')) return 'database';
     if (lower.includes('tool') || lower.includes('exec')) return 'tool_execution';
     if (lower.includes('session')) return 'session';
-    if (lower.includes('snapshot')) return 'snapshot';
     if (lower.includes('job')) return 'job_scheduler';
     return 'other';
   }

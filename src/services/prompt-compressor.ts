@@ -79,7 +79,6 @@ export class PromptCompressor {
     this.config = {
       enabled: true,
       mode: 'telegraph',
-      aggressive: false,
       ...config,
     };
   }
@@ -102,10 +101,6 @@ export class PromptCompressor {
     result = this.removeAuxiliaries(result);
     result = this.removeArticles(result);
     result = this.condenseWhitespace(result);
-
-    if (cfg.aggressive) {
-      result = this.aggressivePass(result);
-    }
 
     const saved = Math.round((1 - result.length / originalLength) * 100);
     getLogger().debug({ savedPercent: saved, originalBytes: originalLength, compressedBytes: result.length }, 'Prompt compressed');
@@ -137,17 +132,6 @@ export class PromptCompressor {
 
   private removeArticles(text: string): string {
     return text.replace(ARTICLE_PATTERN, '');
-  }
-
-  private aggressivePass(text: string): string {
-    text = text.replace(/\b(that|which|whom|whose)\b/gi, '');
-    text = text.replace(/\b(will|shall)\b\s+be\b/gi, 'will');
-    text = text.replace(/\b(could|would|should|might|may)\s+have\b/gi, '$1');
-    text = text.replace(/\bthere is\b/gi, '');
-    text = text.replace(/\bthere are\b/gi, '');
-    text = text.replace(/\bit is\b/gi, '');
-    text = text.replace(/\bit was\b/gi, '');
-    return text;
   }
 
   private condenseWhitespace(text: string): string {

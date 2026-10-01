@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { z } from 'zod';
-import { AlfredConfig, ChannelConfig, DatabaseConfig, LoggingConfig, SecurityConfig, ToolSpecificConfig, VoiceConfig } from '../types/config';
+import { AlfredConfig, ChannelConfig, DatabaseConfig, EcosystemConfig, LoggingConfig, RetentionConfig, SecurityConfig, ToolSpecificConfig, VoiceConfig } from '../types/config';
 import { LLMConfig, ProviderConfig } from '../types/llm';
 import { resolvePath } from '../utils/workspace';
 
@@ -111,39 +111,6 @@ const SecurityConfigSchema = z.object({
 const PromptCompressionConfigSchema = z.object({
   enabled: z.boolean().default(true),
   mode: z.enum(['telegraph', 'off']).default('telegraph'),
-  aggressive: z.boolean().optional(),
-});
-
-const EmbeddingConfigSchema = z.object({
-  type: z.enum(['ollama', 'openai', 'openai-compatible', 'hashing']).default('hashing'),
-  model: z.string().default('nomic-embed-text'),
-  dimension: z.number().positive().default(768),
-  config: z.object({
-    api_url: z.string().optional(),
-    api_key: z.string().optional(),
-  }).optional(),
-  provider_ref: z.string().optional(),
-});
-
-const VectorStoreConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  type: z.literal('lancedb').default('lancedb'),
-  path: z.string().default('/workspace/memory/vectors'),
-  embedding: EmbeddingConfigSchema,
-  ingest: z.object({
-    on_message: z.boolean().default(true),
-    max_chunk_size: z.number().positive().default(512),
-  }),
-  search: z.object({
-    top_k: z.number().positive().default(5),
-    min_score: z.number().min(0).max(1).default(0.5),
-  }),
-});
-
-const SnapshotConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  auto_snapshot_interval: z.number().positive().default(50),
-  max_snapshots_per_session: z.number().positive().default(20),
 });
 
 const MemoryConfigSchema = z.object({
@@ -154,8 +121,6 @@ const MemoryConfigSchema = z.object({
   summary_sections: z.array(z.string()).default(['decisions', 'preferences', 'pending', 'context']),
   session_retention_days: z.number().positive().default(30),
   prompt_compression: PromptCompressionConfigSchema.optional(),
-  vector_store: VectorStoreConfigSchema.optional(),
-  snapshots: SnapshotConfigSchema.optional(),
 });
 
 const HealthMonitorConfigSchema = z.object({
@@ -170,6 +135,7 @@ const HealthMonitorConfigSchema = z.object({
 const ServerConfigSchema = z.object({
   port: z.number().int().nonnegative().default(18789),
   host: z.string().default('0.0.0.0'),
+  web_auth_token: z.string().default('CHANGE_ME'),
 }).optional();
 
 const VoiceProviderConfigSchema = z.object({
@@ -199,6 +165,22 @@ const VoiceConfigSchema = z.object({
   tts: VoiceTtsConfigSchema.optional(),
 }).optional();
 
+const RetentionConfigSchema = z.object({
+  tasks_days: z.number().positive().default(90),
+  messages_days: z.number().positive().default(30),
+  command_log_days: z.number().positive().default(90),
+  token_usage_log_days: z.number().positive().default(400),
+}).optional();
+
+const EcosystemConfigSchema = z.object({
+  executor_poll_interval_ms: z.number().positive().default(5000),
+  conductor_poll_interval_ms: z.number().positive().default(3000),
+  sync_fast_path_timeout_ms: z.number().positive().default(8000),
+  max_task_attempts: z.number().int().positive().default(2),
+  orphan_reap_on_startup: z.boolean().default(true),
+  proactive_notify_to: z.object({ channel: z.string().min(1), chat_id: z.string().min(1) }).optional(),
+}).optional();
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
@@ -213,6 +195,8 @@ const AlfredConfigSchema = z.object({
   tools: z.record(z.string(), ToolConfigSchema),
   database: DatabaseConfigSchema,
   memory: MemoryConfigSchema.optional(),
+  retention: RetentionConfigSchema,
+  ecosystem: EcosystemConfigSchema,
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
   health_monitor: HealthMonitorConfigSchema.optional(),
@@ -246,10 +230,6 @@ export class ConfigLoader {
     if (this.config.logging.config.file_path) {
       this.config.logging.config.file_path = resolvePath(this.config.logging.config.file_path);
     }
-    const vs = this.config.memory?.vector_store;
-    if (vs?.path) {
-      vs.path = resolvePath(vs.path);
-    }
 
     this.validateProviderChain();
     return this.config;
@@ -266,10 +246,6 @@ export class ConfigLoader {
     this.config.database.config.path = resolvePath(this.config.database.config.path);
     if (this.config.logging.config.file_path) {
       this.config.logging.config.file_path = resolvePath(this.config.logging.config.file_path);
-    }
-    const vs = this.config.memory?.vector_store;
-    if (vs?.path) {
-      vs.path = resolvePath(vs.path);
     }
 
     this.validateProviderChain();
@@ -336,6 +312,27 @@ export class ConfigLoader {
     return this.config.memory;
   }
 
+  get retention(): RetentionConfig {
+    return {
+      tasks_days: 90,
+      messages_days: 30,
+      command_log_days: 90,
+      token_usage_log_days: 400,
+      ...this.config.retention,
+    };
+  }
+
+  get ecosystem(): EcosystemConfig {
+    return {
+      executor_poll_interval_ms: 5000,
+      conductor_poll_interval_ms: 3000,
+      sync_fast_path_timeout_ms: 8000,
+      max_task_attempts: 2,
+      orphan_reap_on_startup: true,
+      ...this.config.ecosystem,
+    };
+  }
+
   get agentName(): string {
     return this.config.agent.name;
   }
@@ -369,10 +366,11 @@ export class ConfigLoader {
     return this.config.voice;
   }
 
-  get serverConfig(): { port: number; host: string } {
+  get serverConfig(): { port: number; host: string; web_auth_token?: string } {
     return {
       port: this.config.server?.port ?? 18789,
       host: this.config.server?.host ?? '0.0.0.0',
+      web_auth_token: this.config.server?.web_auth_token,
     };
   }
 }

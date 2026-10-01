@@ -4,6 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import { createHash } from 'crypto';
 import { safeTokenCompare } from './utils/secure-compare';
+import { isWebTokenConfigured } from './security/web-token';
+import { checkUnattendedPolicy } from './agent/skill-policy';
+import { SkillPermissions } from './services/skill-loader';
 import { BlockList } from 'net';
 import { ConfigLoader } from './config/loader';
 import { LLMRouter } from './agent/llm-router';
@@ -18,17 +21,19 @@ import { JobSchedulerTool, Job } from './tools/job-scheduler';
 import { Message, LLMResponse, LLMStreamEvent } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
-import { VectorStoreManager } from './services/vector-store/index';
-import { SnapshotManager } from './services/snapshot';
 import { approximateSystemPromptTokens, estimateTokenCount, estimateMessagesTokens } from './utils/token-counter';
 import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET, isBudgetBlockedError } from './utils/provider-errors';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
+import { RetentionService } from './services/retention';
+import { Watcher } from './services/watcher';
 import { RateLimiter } from './security/rate-limiter';
 import { SkillLoader } from './services/skill-loader';
 import { SessionRepository } from './db/repositories/sessions';
 import { MessageRepository } from './db/repositories/messages';
 import { CommandRepository } from './db/repositories/commands';
+import { TaskRepository } from './db/repositories/tasks';
+import { Task } from './types/task';
 import { isDatabaseInitialized } from './db/index';
 import { SystemTool } from './tools/system';
 import { VoiceService } from './services/voice';
@@ -42,9 +47,29 @@ interface GatewayRequest {
   params: Record<string, unknown>;
 }
 
+export class FastPathTimeout extends Error {
+  constructor(ms: number) {
+    super(`Fast path timed out after ${ms}ms`);
+    this.name = 'FastPathTimeout';
+  }
+}
+
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new FastPathTimeout(ms)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 interface UnattendedGate {
   unattendedAllowlist: Set<string>;
   skillName?: string;
+  strict?: boolean;
+  permissions?: SkillPermissions;
+  noManifest?: boolean;
 }
 
 const MAX_SESSIONS = 100;
@@ -59,7 +84,6 @@ const MAX_ADAPTIVE_ATTEMPTS = 3;
 const MIN_OUTPUT_TOKENS = 512;
 const AGENT_JOB_MIN_INTERVAL_MS = 30 * 60 * 1000;
 const AGENT_JOB_MIN_REMAINING_PERCENT = 10;
-const UNATTENDED_GATED_TOOLS = new Set(['exec', 'file_ops', 'web']);
 const MAX_WEB_AUDIO_BYTES = 50 * 1024 * 1024;
 const MAX_WEB_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_TEXT_PREFIX_BYTES = 8192;
@@ -107,7 +131,7 @@ export class Gateway {
   private sessions: Map<string, StoredSession> = new Map();
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
-  private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
+  private watcher: Watcher;
   private sessionPurgeTimer: ReturnType<typeof setInterval> | null = null;
   private lastAgentJobFire: Map<string, number> = new Map();
   private port: number;
@@ -115,14 +139,14 @@ export class Gateway {
   private startedAt: number = 0;
   private contextCompressor: ContextCompressor;
   private promptCompressor: PromptCompressor;
-  private vectorStore: VectorStoreManager | null = null;
-  private snapshotManager: SnapshotManager | null = null;
+  private retentionService: RetentionService;
   private healthMonitor: HealthMonitor | null = null;
   private rateLimiter: RateLimiter;
   private skillLoader: SkillLoader;
   private sessionRepo: SessionRepository;
   private messageRepo: MessageRepository;
   private commandRepo: CommandRepository;
+  private taskRepository: TaskRepository;
   private dbSessionIds: Map<string, string> = new Map();
   private wsSessions: Map<WebSocket, string> = new Map();
   private connectionLimits: Map<string, { count: number; resetAt: number }> = new Map();
@@ -164,12 +188,25 @@ export class Gateway {
     this.sessionRepo = new SessionRepository();
     this.messageRepo = new MessageRepository();
     this.commandRepo = new CommandRepository();
+    this.taskRepository = new TaskRepository();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
     this.loadProviderBudgets();
     this.refreshProviderBudgets();
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
+    this.retentionService = new RetentionService(config.retention);
     this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
+    this.watcher = new Watcher({
+      tasks: this.taskRepository,
+      skillLoader: this.skillLoader,
+      jobScheduler: this.jobScheduler,
+      channelManager: this.channelManager,
+      getHealthMonitor: () => this.healthMonitor,
+      getSeverityThreshold: () => this.config.healthMonitor?.severity_threshold ?? 'warn',
+      onJobFire: (job) => this.handleAgentJobFire(job),
+      runCheck: (command) => this.runCheckCommand(command),
+      getEcosystem: () => this.config.ecosystem,
+    });
 
     const voiceConfig = config.allConfig.voice;
     if (voiceConfig?.enabled) {
@@ -270,6 +307,43 @@ export class Gateway {
     }
   }
 
+  checkWebUpgrade(
+    requestUrl: string,
+    clientIp: string
+  ): { allowed: boolean; isWeb: boolean; reason?: string } {
+    let pathname = '/';
+    let token: string | null = null;
+    try {
+      const parsed = new URL(requestUrl, 'http://localhost');
+      pathname = parsed.pathname;
+      token = parsed.searchParams.get('token');
+    } catch {
+      pathname = (requestUrl || '/').split('?')[0];
+    }
+
+    if (pathname !== '/ws') {
+      if (!this.isAllowedWebClient(clientIp)) {
+        return { allowed: false, isWeb: false, reason: 'ip_denied' };
+      }
+      return { allowed: true, isWeb: false };
+    }
+
+    if (!this.isAllowedWebClient(clientIp)) {
+      return { allowed: false, isWeb: true, reason: 'ip_denied' };
+    }
+    const expected = this.config.serverConfig.web_auth_token;
+    if (!isWebTokenConfigured(expected)) {
+      return { allowed: false, isWeb: true, reason: 'token_not_configured' };
+    }
+    if (!token) {
+      return { allowed: false, isWeb: true, reason: 'missing_token' };
+    }
+    if (!safeTokenCompare(token, expected)) {
+      return { allowed: false, isWeb: true, reason: 'invalid_token' };
+    }
+    return { allowed: true, isWeb: true };
+  }
+
   setTools(tools: ToolHandler[]): void {
     this.tools = tools;
     this.cachedToolSchemas = null;
@@ -281,28 +355,12 @@ export class Gateway {
     return createTools(
       this.config,
       this.healthMonitor,
-      this.vectorStore,
-      this.snapshotManager,
       this.llmRouter.getBudgetTracker(),
       this.llmRouter
     );
   }
 
   private buildServices(): void {
-    const vectorStoreConfig = this.config.memoryConfig?.vector_store;
-    if (vectorStoreConfig?.enabled) {
-      this.vectorStore = new VectorStoreManager(vectorStoreConfig, this.config.providers);
-    } else {
-      this.vectorStore = null;
-    }
-
-    const snapshotConfig = this.config.memoryConfig?.snapshots;
-    if (snapshotConfig?.enabled) {
-      this.snapshotManager = new SnapshotManager(snapshotConfig);
-    } else {
-      this.snapshotManager = null;
-    }
-
     const healthConfig = this.config.healthMonitor;
     if (healthConfig?.enabled) {
       const notifier = new NotificationService(healthConfig, this.channelManager);
@@ -524,17 +582,16 @@ export class Gateway {
 
     this.httpServer.on('upgrade', (req, socket, head) => {
       const clientIp = this.resolveClientIp(req);
-      if (!this.isAllowedWebClient(clientIp)) {
-        getLogger().warn({ ip: clientIp }, 'WebSocket upgrade rejected: client IP not in web allowlist');
+      const decision = this.checkWebUpgrade(req.url || '/', clientIp);
+      if (!decision.allowed) {
+        getLogger().warn({ ip: clientIp, reason: decision.reason }, 'WebSocket upgrade rejected');
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      const url = req.url || '/';
-      const isWeb = url === '/ws' || url.startsWith('/ws?') || url.startsWith('/ws/');
       this.wss!.handleUpgrade(req, socket, head, (ws) => {
-        if (isWeb) {
+        if (decision.isWeb) {
           (ws as any).webClient = true;
           getLogger().debug('Web client upgrade accepted (path-routed /ws)');
         }
@@ -601,19 +658,6 @@ export class Gateway {
   }
 
   private async initServices(): Promise<void> {
-    if (this.vectorStore) {
-      try {
-        await this.vectorStore.initialize();
-        getLogger().info('Vector store initialized');
-      } catch (error: any) {
-        getLogger().warn(
-          { error: { message: error.message, code: error.code, stack: error.stack } },
-          'Vector store init failed, RAG disabled'
-        );
-        this.vectorStore = null;
-      }
-    }
-
     if (this.healthMonitor) {
       this.healthMonitor.start();
     }
@@ -654,13 +698,6 @@ export class Gateway {
       this.healthMonitor.stop();
       this.healthMonitor = null;
     }
-    if (this.vectorStore) {
-      try {
-        await this.vectorStore.close();
-      } catch { /* ignore */ }
-      this.vectorStore = null;
-    }
-    this.snapshotManager = null;
 
     this.buildServices();
     await this.initServices();
@@ -682,9 +719,6 @@ export class Gateway {
           }
           await this.flushPendingSaves();
           this.rateLimiter.stop();
-          if (this.vectorStore) {
-            await this.vectorStore.close();
-          }
           if (this.webChannel) {
             await this.webChannel.stop();
           }
@@ -738,15 +772,18 @@ export class Gateway {
   }
 
   private startJobRunner(): void {
-    this.jobRunnerTimer = setInterval(() => {
-      this.jobScheduler.fireDueJobs(this.channelManager, (job) => this.handleAgentJobFire(job));
-    }, 30000);
-    getLogger().info('Job runner started (30s interval)');
+    this.watcher.start();
   }
 
   private startSessionPurge(): void {
     const run = (): void => {
       void this.sessionStore.purgeExpired().catch(() => {});
+      try {
+        this.retentionService.updateConfig(this.config.retention);
+        this.retentionService.run();
+      } catch {
+        // retention must never break the maintenance cycle
+      }
     };
     run();
     this.sessionPurgeTimer = setInterval(run, SESSION_PURGE_INTERVAL_MS);
@@ -762,25 +799,20 @@ export class Gateway {
   }
 
   private async handleAgentJobFire(job: Job): Promise<void> {
-    const { channel, user_id, chat_id } = job.created_by;
-    const metadata = chat_id !== undefined ? { chat_id } : undefined;
-
     if (await this.skipAgentJob(job)) {
       return;
     }
 
-    const content = await this.processMessage({
-      channel,
-      userId: user_id,
-      userName: undefined,
-      content: job.message,
-      sessionId: `${channel}_${user_id}_jobs`,
-      metadata: { source: 'job', jobId: job.id },
+    const { channel, user_id, chat_id } = job.created_by;
+    await this.taskRepository.create({
+      origin_channel: channel,
+      origin_chat_id: chat_id !== undefined ? String(chat_id) : user_id,
+      session_id: `${channel}_${user_id}_jobs`,
+      kind: 'scheduled_job',
+      input: job.message,
+      max_attempts: this.config.ecosystem.max_task_attempts,
     });
-
-    if (content) {
-      await this.channelManager.sendMessage(channel, user_id, content, metadata);
-    }
+    getLogger().info({ jobId: job.id }, 'Agent job enqueued as task');
   }
 
   private async skipAgentJob(job: Job): Promise<boolean> {
@@ -821,7 +853,7 @@ export class Gateway {
     return false;
   }
 
-  private async resolveUnattendedGate(jobMessage: string): Promise<UnattendedGate> {
+  private async resolveUnattendedGate(jobMessage: string, strict = false): Promise<UnattendedGate> {
     try {
       const skill = await this.skillLoader.resolveJobSkill(jobMessage);
       if (!skill) {
@@ -829,32 +861,53 @@ export class Gateway {
           { skip_reason: 'no_skill_matched' },
           'Unattended gate: agent-mode job does not reference any known skill; all gated actions will be blocked'
         );
-        return { unattendedAllowlist: new Set() };
+        return { unattendedAllowlist: new Set(), strict, noManifest: strict || undefined };
       }
       if (!skill.unattended) {
         getLogger().warn(
           { skill: skill.name, skip_reason: 'not_unattended' },
           'Unattended gate: skill lacks unattended:true in frontmatter; all gated actions will be blocked'
         );
-        return { unattendedAllowlist: new Set(), skillName: skill.name };
+        return { unattendedAllowlist: new Set(), skillName: skill.name, strict, noManifest: strict || undefined };
+      }
+      if (skill.permissions) {
+        getLogger().info(
+          { skill: skill.name, tools: skill.permissions.tools },
+          'Unattended gate: agent-mode job resolved structured manifest'
+        );
+        return { unattendedAllowlist: new Set(), skillName: skill.name, strict, permissions: skill.permissions };
       }
       const allowlist = new Set((skill.approvedActions || []).map(a => a.toLowerCase()));
-      getLogger().info(
-        { skill: skill.name, approved: Array.from(allowlist) },
-        'Unattended gate: agent-mode job resolved approved actions'
+      getLogger().warn(
+        { skill: skill.name, approved: Array.from(allowlist), code: 'deprecated_skill_manifest_format' },
+        'Unattended gate: agent-mode job uses legacy manifest format'
       );
-      return { unattendedAllowlist: allowlist, skillName: skill.name };
+      return {
+        unattendedAllowlist: allowlist,
+        skillName: skill.name,
+        strict,
+        noManifest: strict && allowlist.size === 0 ? true : undefined,
+      };
     } catch (error: any) {
       getLogger().warn({ error: error.message }, 'Unattended gate resolution failed; failing closed');
-      return { unattendedAllowlist: new Set() };
+      return { unattendedAllowlist: new Set(), strict, noManifest: strict || undefined };
     }
   }
 
   private stopJobRunner(): void {
-    if (this.jobRunnerTimer) {
-      clearInterval(this.jobRunnerTimer);
-      this.jobRunnerTimer = null;
+    this.watcher.stop();
+  }
+
+  private async runCheckCommand(command: string): Promise<string> {
+    const tool = this.tools.find(t => t.tool.name === 'exec');
+    if (!tool) {
+      throw new Error('exec tool is not available for condition checks');
     }
+    const result = await tool.execute({ command });
+    if (!result.success) {
+      throw new Error(result.error || 'condition check command failed');
+    }
+    return result.output;
   }
 
   private async prepareContext(
@@ -878,7 +931,7 @@ export class Gateway {
   private async prepareContextInner(
     session: StoredSession,
     systemPrompt: string,
-    currentMessage?: string,
+    _currentMessage?: string,
     skipCompression = false
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
@@ -902,33 +955,7 @@ export class Gateway {
 
     this.ensureToolResponses(session.messages);
 
-    let contextMessages: Message[] = messages;
-    let ragTokens = 0;
-
-    if (this.vectorStore && currentMessage) {
-      try {
-        const results = await this.vectorStore.search(currentMessage, undefined, { excludeSessionId: session.id });
-        if (results.length > 0) {
-          const ragContext = results
-            .map(r => {
-              const label = r.metadata.role === 'user' ? 'User' : r.metadata.role === 'assistant' ? 'Assistant' : 'Tool';
-              return `[${label} — ${new Date(r.metadata.timestamp).toLocaleDateString()}]\n${r.text}`;
-            })
-            .join('\n\n');
-
-          ragTokens = estimateTokenCount(ragContext);
-
-          contextMessages = [
-            { role: 'user', content: `[RAG CONTEXT — Retrieved from long-term memory]\n${ragContext}` },
-            ...messages,
-          ];
-
-          getLogger().debug({ chunkCount: results.length, ragTokens }, 'RAG context injected');
-        }
-      } catch (error: any) {
-        getLogger().warn({ error: error.message }, 'RAG search failed, continuing without');
-      }
-    }
+    const contextMessages: Message[] = messages;
 
     const compressedSystemPrompt = skipCompression
       ? systemPrompt
@@ -941,7 +968,6 @@ export class Gateway {
         systemTokens: systemPromptTokens,
         toolTokens: extraTokens,
         messagesTokens: estimateMessagesTokens(contextMessages),
-        ragTokens,
         totalEstimateTokens: systemPromptTokens + extraTokens + estimateMessagesTokens(contextMessages),
         messageCount: contextMessages.length,
       },
@@ -990,38 +1016,6 @@ export class Gateway {
       return this.skillLoader.getSkillsContext(skills);
     } catch {
       return '';
-    }
-  }
-
-  private async ingestMessage(session: StoredSession, msg: Message, params: { channel: string; userId: string }): Promise<void> {
-    if (!this.vectorStore) return;
-    const ingestConfig = this.config.memoryConfig?.vector_store?.ingest;
-    if (ingestConfig && ingestConfig.on_message === false) return;
-    if (!msg.content || msg.content.trim().length < 10) return;
-
-    try {
-      await this.vectorStore.ingest(msg.content, {
-        sessionId: session.id,
-        channel: params.channel,
-        userId: params.userId,
-        timestamp: new Date().toISOString(),
-        role: msg.role,
-        messageId: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      });
-    } catch {
-      // silent — ingestion failure should not break the conversation flow
-    }
-  }
-
-  private async checkAutoSnapshot(session: StoredSession): Promise<void> {
-    if (!this.snapshotManager) return;
-
-    if (this.snapshotManager.shouldAutoSnapshot(session.id, session.messages.length)) {
-      try {
-        await this.snapshotManager.create(session);
-      } catch (error: any) {
-        getLogger().warn({ error: error.message }, 'Auto-snapshot failed');
-      }
     }
   }
 
@@ -1195,7 +1189,7 @@ export class Gateway {
     _onEvent: (event: string, payload: any) => void,
     onLLMEvent?: (event: LLMStreamEvent) => void,
     unattendedGate?: UnattendedGate
-  ): Promise<{ content: string; toolCalls: any[]; usage: any; model?: string }> {
+  ): Promise<{ content: string; toolCalls: any[]; usage: any; model?: string; blockedActions: string[] }> {
     let finalSystem = systemPrompt;
     let messages = contextMessages;
     let finalContent = '';
@@ -1254,7 +1248,6 @@ export class Gateway {
         tool_calls: parsedToolCalls,
       };
       session.messages.push(assistantToolMsg);
-      await this.ingestMessage(session, assistantToolMsg, ingestParams);
 
       let roundBad = false;
 
@@ -1304,12 +1297,11 @@ export class Gateway {
           }
         }
 
-        if (source === 'job' && UNATTENDED_GATED_TOOLS.has(toolCall.function.name)) {
-          const allowed = unattendedGate?.unattendedAllowlist;
-          const skillName = unattendedGate?.skillName;
-          if (!allowed || !allowed.has(toolCall.function.name)) {
+        if (source === 'job') {
+          const verdict = checkUnattendedPolicy(toolCall.function.name, args, unattendedGate);
+          if (!verdict.allowed) {
             getLogger().warn(
-              { runId, round, toolName: toolCall.function.name, skill: skillName, skip_reason: 'unapproved_action' },
+              { runId, round, toolName: toolCall.function.name, skill: unattendedGate?.skillName, skip_reason: 'unapproved_action' },
               'Unattended gate blocked tool call'
             );
             this.writeAgentTrace({
@@ -1319,17 +1311,16 @@ export class Gateway {
               source,
               skip_reason: 'unapproved_action',
               toolName: toolCall.function.name,
-              skill: skillName,
+              skill: unattendedGate?.skillName,
               arguments: toolCall.function.arguments,
             });
             blockedUnattendedActions.add(toolCall.function.name);
             const blockedMsg: Message = {
               role: 'tool',
-              content: `Blocked by unattended-run policy: "${toolCall.function.name}" is not an approved action${skillName ? ` for skill "${skillName}"` : ''} (requires approval).`,
+              content: `Blocked by unattended-run policy: ${verdict.reason}.`,
               tool_call_id: toolCall.id,
             };
             session.messages.push(blockedMsg);
-            await this.ingestMessage(session, blockedMsg, ingestParams);
             return;
           }
         }
@@ -1343,7 +1334,6 @@ export class Gateway {
             const result = await tool.execute(execArgs);
             const toolMsg: Message = { role: 'tool', content: result.output, tool_call_id: toolCall.id };
             session.messages.push(toolMsg);
-            await this.ingestMessage(session, toolMsg, ingestParams);
             if (toolCall.function.name === 'exec') {
               await this.logExecCommand(session, ingestParams.userId, args, result);
             }
@@ -1415,7 +1405,7 @@ export class Gateway {
       getLogger().warn({ runId, blocked: Array.from(blockedUnattendedActions) }, 'Unattended run completed with blocked actions');
     }
 
-    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage, model: finalModel };
+    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage, model: finalModel, blockedActions: Array.from(blockedUnattendedActions) };
   }
 
   private async callWithAdaptiveRetry(
@@ -1750,7 +1740,6 @@ export class Gateway {
         : systemPrompt;
 
       const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, text);
-      await this.ingestMessage(session, userMsg, ingestParams);
 
       const startedAt = Date.now();
       const { content, toolCalls, usage, model } = await this.runAgentLoop(
@@ -1779,8 +1768,6 @@ export class Gateway {
       const assistantMsg: Message = { role: 'assistant', content: finalContent };
       session.messages.push(assistantMsg);
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', finalContent);
-      await this.ingestMessage(session, assistantMsg, ingestParams);
-      await this.checkAutoSnapshot(session);
       this.debounceSave(session);
       await this.checkBudgetAlert();
 
@@ -1916,16 +1903,74 @@ export class Gateway {
     sessionId: string;
     metadata?: Record<string, unknown>;
   }): Promise<string | null> {
+    return (await this.processMessageFull(params)).content;
+  }
+
+  async processMessageFull(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }, strictUnattended = false): Promise<{ content: string | null; blockedActions: string[] }> {
+    const isJobTriggered = params.metadata?.source === 'job';
+    const setup = await this.setupSessionContext(params);
+    if (!('session' in setup)) {
+      return { content: setup.text, blockedActions: [] };
+    }
+    const { session, runId, ingestParams } = setup;
+
+    try {
+      this.pushUserMessage(session, params.content);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+
+      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content, strictUnattended) : undefined;
+
+      const { content, blockedActions } = await this.runAgentLoop(
+        session, finalSystem, contextMessages, ingestParams,
+        runId,
+        () => {},
+        undefined,
+        unattendedGate
+      );
+
+      const assistantMsg: Message = { role: 'assistant', content };
+      session.messages.push(assistantMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
+      this.debounceSave(session);
+      await this.checkBudgetAlert();
+      return { content, blockedActions };
+    } catch (error: any) {
+      getLogger().error({ error: error.message, runId }, 'Message processing failed');
+      if (isBudgetBlockedError(error)) {
+        return { content: this.buildDegradedMessage(), blockedActions: [] };
+      }
+      return { content: `I'm sorry. An error occurred: ${error.message}`, blockedActions: [] };
+    }
+  }
+
+  private async setupSessionContext(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<
+    | { session: StoredSession; runId: string; ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> } }
+    | { text: string }
+  > {
     const isJobTriggered = params.metadata?.source === 'job';
     const rateLimit = this.config.security?.rate_limiting;
     if (rateLimit && !isJobTriggered) {
       if (!this.rateLimiter.checkUser(params.userId, rateLimit.requests_per_user_per_hour || 100)) {
         getLogger().warn({ userId: params.userId }, 'Rate limit exceeded for user');
-        return 'Rate limit exceeded. Please wait before sending another message.';
+        return { text: 'Rate limit exceeded. Please wait before sending another message.' };
       }
       if (!this.rateLimiter.checkChannel(params.channel, rateLimit.requests_per_channel_per_hour || 1000)) {
         getLogger().warn({ channel: params.channel }, 'Rate limit exceeded for channel');
-        return 'Rate limit exceeded for this channel. Please wait.';
+        return { text: 'Rate limit exceeded for this channel. Please wait.' };
       }
     }
 
@@ -1952,50 +1997,86 @@ export class Gateway {
       void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
       const content = this.buildDegradedMessage(degraded.reason);
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
-      return content;
+      return { text: content };
     }
 
+    return { session, runId, ingestParams };
+  }
+
+  private pushUserMessage(session: StoredSession, content: string): void {
+    const userMsg: Message = { role: 'user', content };
+    session.messages.push(userMsg);
+    void this.persistMessage(this.dbSessionIds.get(session.id), 'user', content);
+  }
+
+  private async buildPromptContext(
+    session: StoredSession,
+    content: string
+  ): Promise<{ messages: Message[]; systemPrompt: string }> {
+    const [systemPrompt, skillsContext] = await Promise.all([
+      this.promptBuilder.buildSystemPrompt(),
+      this.loadSkillsContext(),
+    ]);
+
+    const finalSkillsPrompt = skillsContext
+      ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
+      : systemPrompt;
+
+    const { messages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, content);
+    return { messages, systemPrompt: finalSystem };
+  }
+
+  async tryFastPath(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ completed: boolean; text?: string }> {
+    const setup = await this.setupSessionContext(params);
+    if (!('session' in setup)) {
+      return { completed: true, text: setup.text };
+    }
+    const { session } = setup;
+    const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+
+    let probe: LLMResponse;
     try {
-      const userMsg: Message = { role: 'user', content: params.content };
-      session.messages.push(userMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
-      const [systemPrompt, skillsContext] = await Promise.all([
-        this.promptBuilder.buildSystemPrompt(),
-        this.loadSkillsContext(),
-      ]);
-
-      const finalSkillsPrompt = skillsContext
-        ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
-        : systemPrompt;
-
-      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, params.content);
-      await this.ingestMessage(session, userMsg, ingestParams);
-
-      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content) : undefined;
-
-      const { content } = await this.runAgentLoop(
-        session, finalSystem, contextMessages, ingestParams,
-        runId,
-        () => {},
-        undefined,
-        unattendedGate
+      probe = await withTimeout(
+        this.callWithAdaptiveRetry(session, contextMessages, finalSystem, undefined),
+        this.config.ecosystem.sync_fast_path_timeout_ms
       );
-
-      const assistantMsg: Message = { role: 'assistant', content };
-      session.messages.push(assistantMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
-      await this.ingestMessage(session, assistantMsg, ingestParams);
-      await this.checkAutoSnapshot(session);
-      this.debounceSave(session);
-      await this.checkBudgetAlert();
-      return content;
     } catch (error: any) {
-      getLogger().error({ error: error.message, runId }, 'Message processing failed');
-      if (isBudgetBlockedError(error)) {
-        return this.buildDegradedMessage();
+      if (error instanceof FastPathTimeout) {
+        return { completed: false };
       }
-      return `I'm sorry. An error occurred: ${error.message}`;
+      return { completed: true, text: (await this.processMessage(params)) ?? undefined };
     }
+
+    if ((probe.tool_calls || []).length > 0) {
+      return { completed: false };
+    }
+
+    const text = probe.content || '';
+    this.pushUserMessage(session, params.content);
+    const assistantMsg: Message = { role: 'assistant', content: text };
+    session.messages.push(assistantMsg);
+    void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', text);
+    this.debounceSave(session);
+    await this.checkBudgetAlert();
+    return { completed: true, text };
+  }
+
+  async executeTask(task: Task): Promise<{ content: string | null; blockedActions: string[] }> {
+    const unattended = task.kind !== 'user_request';
+    return this.processMessageFull({
+      channel: task.origin_channel,
+      userId: task.origin_chat_id ?? 'unknown',
+      content: task.input,
+      sessionId: task.session_id ?? `${task.origin_channel}_${task.origin_chat_id ?? 'unknown'}`,
+      metadata: unattended ? { source: 'job', taskId: task.id } : { taskId: task.id },
+    }, task.kind === 'proactive_check');
   }
 
   private async handleMetrics(ws: WebSocket, req: GatewayRequest): Promise<void> {
@@ -2073,6 +2154,7 @@ export class Gateway {
       this.sendResponse(ws, req.id, {
         metrics: {
           version: this.config.allConfig.agent.version,
+          serverTime: new Date().toISOString(),
           uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
           latencyMs: this.lastLatencyMs,
           avgLatencyMs: this.avgLatencyMs(),
@@ -2096,8 +2178,6 @@ export class Gateway {
           tools: this.tools.length,
           health,
           workspace,
-          rag: { enabled: !!this.vectorStore },
-          snapshots: { enabled: !!this.snapshotManager },
         },
       });
     } catch (error: any) {
@@ -2106,29 +2186,36 @@ export class Gateway {
     }
   }
 
-  private async collectWorkspaceStats(): Promise<{ filesSizeMb: number; dbSizeMb: number; sessionsTotal: number }> {
-    let filesSizeMb = 0;
-    let dbSizeMb = 0;
+  private async collectWorkspaceStats(): Promise<{ filesSizeMb: number; dbSizeMb: number; sessionsTotal: number; filesSizeBytes: number; dbSizeBytes: number }> {
+    let filesBytes = 0;
+    let dbBytes = 0;
     try {
-      filesSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.files());
+      filesBytes = await this.dirSizeBytes(WORKSPACE_PATHS.files());
     } catch {
       // files dir unavailable
     }
     try {
-      dbSizeMb = await this.dirSizeMb(WORKSPACE_PATHS.db());
+      dbBytes = await this.dirSizeBytes(WORKSPACE_PATHS.db());
     } catch {
       // db dir unavailable
     }
-    return { filesSizeMb, dbSizeMb, sessionsTotal: this.sessions.size };
+    const toMb = (b: number) => Math.round((b / (1024 * 1024)) * 100) / 100;
+    return {
+      filesSizeMb: toMb(filesBytes),
+      dbSizeMb: toMb(dbBytes),
+      sessionsTotal: this.sessions.size,
+      filesSizeBytes: filesBytes,
+      dbSizeBytes: dbBytes,
+    };
   }
 
-  private async dirSizeMb(dir: string): Promise<number> {
+  private async dirSizeBytes(dir: string): Promise<number> {
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
     let total = 0;
     for (const entry of entries) {
       const fp = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        total += await this.dirSizeMb(fp);
+        total += await this.dirSizeBytes(fp);
       } else if (entry.isFile()) {
         try {
           const stat = await fs.promises.stat(fp);
@@ -2138,7 +2225,7 @@ export class Gateway {
         }
       }
     }
-    return Math.round(total / (1024 * 1024));
+    return total;
   }
 
   private handleToolList(ws: WebSocket): void {

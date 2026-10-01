@@ -59,21 +59,35 @@
   }
 
   function fmtLatency(ms) {
-    if (!Number.isFinite(ms)) return '—';
-    return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+    if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
+    return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms';
+  }
+
+  function fmtAgo(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    const s = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
   }
 
   function fmtDateTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const ago = fmtAgo(iso);
+    return ago ? time + ' (' + ago + ')' : time;
   }
 
   let lastQuery = null;
   let jobs = { total: 0, enabled: 0, nextDue: null };
-  let rag = { enabled: false };
-  let snapshots = { enabled: false };
 
   function lastQueryCard() {
     const nodes = [];
@@ -93,21 +107,8 @@
     return card('Last Query', 'search', nodes);
   }
 
-  function ragCard() {
-    const nodes = [];
-    if (!rag.enabled) {
-      nodes.push(badge('DISABLED', 'muted'));
-      nodes.push(empty('Long-term memory retrieval is not enabled.'));
-    } else {
-      nodes.push(badge('ACTIVE', 'ok'));
-      nodes.push(empty('Memory retrieval enabled.'));
-    }
-    return card('RAG Memory', 'database', nodes);
-  }
-
   function sessionCard() {
     const nodes = [];
-    nodes.push(row('Snapshots', snapshots.enabled ? 'Enabled' : 'Disabled', snapshots.enabled ? badge('ON', 'ok') : badge('OFF', 'muted')));
     nodes.push(empty('Session compression is managed automatically by Alfred.'));
     return card('Session', 'layers', nodes);
   }
@@ -173,7 +174,7 @@
 
   function render() {
     grid.innerHTML = '';
-    [lastQueryCard(), ragCard(), sessionCard(), jobsCard()].forEach((c) => grid.appendChild(c));
+    [lastQueryCard(), sessionCard(), jobsCard()].forEach((c) => grid.appendChild(c));
     if (!prefCardEl) {
       prefCardEl = buildPreferencesCard();
     }
@@ -185,8 +186,6 @@
     if (!m) return;
     if (m.lastQuery) lastQuery = m.lastQuery;
     if (m.jobs) jobs = m.jobs;
-    if (m.rag) rag = m.rag;
-    if (m.snapshots) snapshots = m.snapshots;
     render();
   });
 

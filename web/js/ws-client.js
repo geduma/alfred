@@ -2,16 +2,51 @@
 (function (global) {
   let ws = null;
   let idCounter = 1;
+  let quickFails = 0;
+  let openedOnce = false;
   const pending = new Map();
   const listeners = {};
+  function getToken() {
+    let token = null;
+    try {
+      token = sessionStorage.getItem('alfred_ws_token');
+    } catch {
+      token = null;
+    }
+    if (!token) {
+      try {
+        token = prompt('Token de acceso de Alfred:') || '';
+      } catch {
+        token = '';
+      }
+      if (token) {
+        try {
+          sessionStorage.setItem('alfred_ws_token', token);
+        } catch {
+          // private mode: keep it in memory for this page only
+        }
+      }
+    }
+    return token || '';
+  }
+  function forgetToken() {
+    try {
+      sessionStorage.removeItem('alfred_ws_token');
+    } catch {
+      // ignore
+    }
+  }
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    return `${proto}://${location.host}/ws`;
+    const token = getToken();
+    return `${proto}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   }
 
   function connect() {
     ws = new WebSocket(wsUrl());
     ws.onopen = () => {
+      openedOnce = true;
+      quickFails = 0;
       setStatus(true);
       emit('open');
     };
@@ -19,6 +54,13 @@
       setStatus(false);
       emit('close');
       rejectAll('Connection closed');
+      if (!openedOnce) {
+        quickFails += 1;
+        if (quickFails >= 3) {
+          forgetToken();
+          quickFails = 0;
+        }
+      }
       setTimeout(connect, 3000);
     };
     ws.onerror = () => { /* handled via close */ };

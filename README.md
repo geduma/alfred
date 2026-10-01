@@ -281,9 +281,9 @@ Example: _"Respond in English and be more concise"_ → Alfred adds `language: e
 
 ## Skills & Secrets
 
-Alfred can implement new functionality as **SKILL.md** files in `/workspace/skills/custom/` — markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task. `SkillLoader` also scans `/workspace/skills/system/`, `/workspace/skills/web/`, and `/workspace/skills/files/`; duplicate names resolve with precedence **custom > root > system > web > files**.
+Alfred can implement new functionality as **`.skill.md`** files in `/workspace/skills/custom/` — single-file markdown documents that instruct Alfred how to orchestrate his tools (`exec`, `file_ops`, `web`, `job`, `system`) to fulfill a task. Every skill is one file named `<kebab-case>.skill.md` (lowercase, so skills are visually recognizable; the loader also accepts plain `.md` for backwards compatibility with user-authored skills). When you ask Alfred for new functionality with no matching existing skill, his default response is to auto-create such a file. `SkillLoader` also scans `/workspace/skills/system/`, `/workspace/skills/web/`, and `/workspace/skills/files/`; duplicate names resolve with precedence **custom > root > system > web > files**.
 
-On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (daily-digest, weekly-review, system-check — written in English) into `/workspace/skills/custom/` without overwriting existing files.
+On first startup Alfred auto-copies bundled skills from `system/skills-custom/` (`daily-digest.skill.md`, `weekly-review.skill.md`, `system-check.skill.md`, `voice-notes.skill.md` — written in English) into `/workspace/skills/custom/` without overwriting existing files.
 
 ### Proactive skills via agent-mode jobs
 
@@ -291,7 +291,7 @@ A job with `mode: 'agent'` routes its message through the agent when it fires, s
 
 **Cost warning:** without `spending_limits` configured (opt-in in `alfred.json`), the only brake against a misconfigured proactive job is the minimum interval between agent firings (`AGENT_JOB_MIN_INTERVAL_MS`, 30 minutes). Configure `spending_limits` if you want a hard cap on spend; otherwise `mode: 'agent'` jobs rely on the interval alone.
 
-**Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the SKILL.md. This file is auto-created from a template on first startup.
+**Skill credentials** (API keys, tokens, passwords) are stored separately in `workspace/config/secrets.env` — never hardcoded in the `.skill.md`. This file is auto-created from a template on first startup.
 
 - Alfred **reads** secrets when executing skills, but **never modifies** them
 - To add a credential: edit `secrets.env` manually, then ask Alfred to use the skill
@@ -351,11 +351,11 @@ docker attach alfred-agent    # Access the CLI channel
 
 Volume mapping: `~/.alfred` on the host → `/workspace` inside the container. All data persists across restarts.
 
-> **Web channel on the LAN:** `docker-compose.yml` uses `network_mode: host` (Linux/Raspberry Pi), so the gateway binds `0.0.0.0:18789` directly on the host and you can open the UI at `http://<HOST-LAN-IP>:18789` from any device. Host networking is what lets the container see each client's real IP — required for the `channels.web.permissions.allow_from` IP/CIDR allowlist. Without it, Docker NAT makes every client appear as the bridge gateway IP and the allowlist cannot distinguish devices. Access from an IP outside the allowlist returns HTTP 403 and the WebSocket upgrade is refused.
+> **Web channel on the LAN:** `docker-compose.yml` uses `network_mode: host` (Linux/Raspberry Pi), so the gateway binds `0.0.0.0:18789` directly on the host and you can open the UI at `http://<HOST-LAN-IP>:18789` from any device. Host networking is what lets the container see each client's real IP — required for the `channels.web.permissions.allow_from` IP/CIDR allowlist. Without it, Docker NAT makes every client appear as the bridge gateway IP and the allowlist cannot distinguish devices. Access from an IP outside the allowlist returns HTTP 403 and the WebSocket upgrade is refused. In native (systemd, non-Docker) deployment this workaround is not needed: the process runs directly on the host network interface, so the allowlist sees real client IPs with no extra configuration.
 
 > **Image note:** the build runs `npm ci` in both stages (with dev deps only in the builder) and cleans the npm cache in the final stage (`npm cache clean --force`) so `/root/.npm` doesn't ship in the image. The WhatsApp channel (whatsapp-web.js + system Chromium) was removed entirely — the image is estimated at ~0.5-1.0 GB instead of ~2.5 GB. Confirm with `docker compose build --no-cache` + `docker history --no-trunc`.
 >
-> **Dependency note:** the `sqlite3` package is functional but its upstream repo (`node-sqlite3`) was archived in 2026. Consider migrating to a maintained alternative in a future release.
+> **Dependency note:** SQLite access uses `better-sqlite3` (synchronous API, WAL mode). The retention service (`src/services/retention.ts`) purges old rows on the existing 6h maintenance cycle and runs `PRAGMA incremental_vacuum` (`auto_vacuum = INCREMENTAL`); a one-time `VACUUM` was applied as an explicit migration (`scripts/vacuum-migrate.js`).
 
 ### Local Development
 
@@ -455,7 +455,7 @@ Steps performed:
 - **Live updates**: web clients receive message broadcasts via `WebChannel`; `agent_complete` events drive the chat UI
 
 ### Daily Life Agent
-- **Bundled skills**: `daily-digest`, `weekly-review`, `system-check` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans the skills root, the custom subdir, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files); `job mode:'agent'` lets scheduled jobs run skills proactively (unattended, min-interval + budget guards)
+- **Bundled skills**: `daily-digest.skill.md`, `weekly-review.skill.md`, `system-check.skill.md`, `voice-notes.skill.md` (English) in `system/skills-custom/`, auto-copied to `workspace/skills/custom/` on first startup (copy-if-missing); `SkillLoader` scans the skills root, the custom subdir, and the `system`/`web`/`files` subdirs (dedup precedence custom > root > system > web > files); `job mode:'agent'` lets scheduled jobs run skills proactively (unattended, min-interval + budget guards)
 
 ### Ops & Resilience (no breaking changes)
 - **Healthcheck**: `deploy.sh` probes the gateway port post-deploy (`nc -z`, `HEALTH_WAIT_SECONDS` default 60, exits 1 with logs on failure)
@@ -488,12 +488,9 @@ Steps performed:
 ### Accepted Findings (not corrected)
 | Finding | Reason |
 |---------|--------|
-| Timing attack on auth token | Localhost/Docker only — impractical to exploit |
 | API keys in plaintext on disk | Conscious trade-off for simplicity in isolated Docker |
 | SSRF DNS rebinding | Low risk in Docker, complex to mitigate |
 | No channel auth (beyond ACL) | By design — ACL whitelist is sufficient |
-| exec parseCommand rudimentary | Acceptable for current use cases |
-| Hashing embedder (no semantics) | Intentional — zero-dependency, low-power design |
 | Docker image not optimized | Future improvement (multi-stage lite) |
 
 ## Docs

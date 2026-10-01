@@ -62,46 +62,11 @@ export interface MemoryConfig {
   summary_sections: string[];
   session_retention_days?: number;
   prompt_compression?: PromptCompressionConfig;
-  vector_store?: VectorStoreConfig;
-  snapshots?: SnapshotConfig;
 }
 
 export interface PromptCompressionConfig {
   enabled: boolean;
   mode: 'telegraph' | 'off';
-  aggressive?: boolean;
-}
-
-export interface EmbeddingConfig {
-  type: 'ollama' | 'openai' | 'openai-compatible' | 'hashing';
-  model: string;
-  dimension: number;
-  config?: {
-    api_url?: string;
-    api_key?: string;
-  };
-  provider_ref?: string;
-}
-
-export interface VectorStoreConfig {
-  enabled: boolean;
-  type: 'lancedb';
-  path: string;
-  embedding: EmbeddingConfig;
-  ingest: {
-    on_message: boolean;
-    max_chunk_size: number;
-  };
-  search: {
-    top_k: number;
-    min_score: number;
-  };
-}
-
-export interface SnapshotConfig {
-  enabled: boolean;
-  auto_snapshot_interval: number;
-  max_snapshots_per_session: number;
 }
 
 export interface VoiceProviderConfig {
@@ -131,6 +96,22 @@ export interface VoiceConfig {
   tts?: VoiceTtsConfig;
 }
 
+export interface RetentionConfig {
+  tasks_days: number;
+  messages_days: number;
+  command_log_days: number;
+  token_usage_log_days: number;
+}
+
+export interface EcosystemConfig {
+  executor_poll_interval_ms: number;
+  conductor_poll_interval_ms: number;
+  sync_fast_path_timeout_ms: number;
+  max_task_attempts: number;
+  orphan_reap_on_startup: boolean;
+  proactive_notify_to?: { channel: string; chat_id: string };
+}
+
 export interface AlfredConfig {
   agent: {
     name: string;
@@ -145,6 +126,8 @@ export interface AlfredConfig {
   tools: Record<string, ToolSpecificConfig>;
   database: DatabaseConfig;
   memory?: MemoryConfig;
+  retention?: RetentionConfig;
+  ecosystem?: EcosystemConfig;
   logging: LoggingConfig;
   security: SecurityConfig;
   health_monitor?: import('./notification').HealthMonitorConfig;
@@ -152,5 +135,6 @@ export interface AlfredConfig {
   server?: {
     port?: number;
     host?: string;
+    web_auth_token?: string;
   };
 }

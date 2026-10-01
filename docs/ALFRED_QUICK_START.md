@@ -87,7 +87,7 @@ Edit `~/.alfred/config/alfred.json`:
 ✅ Web UI at `http://YOUR_HOST:18789`
 
 ### v1.5
-✅ Custom skills — SKILL.md via `file_ops`
+✅ Custom skills — auto-created `*.skill.md` via `file_ops`
 
 ### v2.0
 ✅ Embeddings + semantic search (LanceDB RAG)  
@@ -153,7 +153,7 @@ Edit `/workspace/config/SOUL.md` to change it.
 │
 ├── files/                 ← Your files (readable/writable)
 ├── skills/
-│   └── custom/            ← Custom skills (SKILL.md)
+│   └── custom/            ← Custom skills (`*.skill.md`)
 ├── db/
 │   └── alfred.db          ← Database (conversations, audit, token usage)
 └── logs/                  ← Audit logs
