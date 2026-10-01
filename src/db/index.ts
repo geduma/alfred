@@ -33,6 +33,19 @@ function runSchema(db: Database.Database): void {
   }
 
   db.exec(schema);
+  runMigrations(db);
+}
+
+function runMigrations(db: Database.Database): void {
+  try {
+    const cols = db.prepare('PRAGMA table_info(token_usage_log)').all() as Array<{ name: string }>;
+    if (cols.length > 0 && !cols.some(c => c.name === 'source')) {
+      db.exec("ALTER TABLE token_usage_log ADD COLUMN source TEXT NOT NULL DEFAULT 'interactive'");
+      getLogger().info('Database migrated: token_usage_log.source added');
+    }
+  } catch (error: any) {
+    getLogger().warn({ error: error.message }, 'Database migration check failed, continuing');
+  }
 }
 
 export function getDatabase(): Database.Database {

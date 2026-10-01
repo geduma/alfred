@@ -22,7 +22,7 @@ import { Message, LLMResponse, LLMStreamEvent } from './types/llm';
 import { ContextCompressor } from './services/context-compressor';
 import { PromptCompressor } from './services/prompt-compressor';
 import { approximateSystemPromptTokens, estimateTokenCount, estimateMessagesTokens } from './utils/token-counter';
-import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET, isBudgetBlockedError } from './utils/provider-errors';
+import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_BUDGET, isBudgetBlockedError, BudgetBlockedError, BudgetBlockReason } from './utils/provider-errors';
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RetentionService } from './services/retention';
@@ -39,6 +39,9 @@ import { SystemTool } from './tools/system';
 import { VoiceService } from './services/voice';
 import { WORKSPACE_PATHS } from './utils/workspace';
 import { spendingLimitsWarningActive } from './utils/agent-jobs';
+import { PREFERENCE_KEYS, readPreferences, writePreference } from './services/preferences-store';
+import { extractPreferencesFromMessage } from './services/preference-extractor';
+import { listQuickActions, runQuickAction } from './services/quick-actions';
 
 interface GatewayRequest {
   type: 'req';
@@ -89,7 +92,6 @@ const MAX_WEB_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_TEXT_PREFIX_BYTES = 8192;
 const LATENCY_WINDOW = 50;
 const WEB_AUDIO_MARKER = '[AUDIO]';
-const PREFERENCE_KEYS = new Set(['language', 'tone', 'formality', 'verbosity', 'user_name', 'voice_replies']);
 const AUDIO_EXTS = new Set(['wav', 'ogg', 'mp3', 'm4a', 'webm', 'oga', 'opus']);
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
 const TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'xml', 'html']);
@@ -241,8 +243,12 @@ export class Gateway {
       }
       try {
         blockList.addAddress(value);
-      } catch (error: any) {
-        getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
+      } catch {
+        try {
+          blockList.addAddress(value, value.includes(':') ? 'ipv6' : 'ipv4');
+        } catch (error: any) {
+          getLogger().warn({ entry: value, error: error.message }, 'Invalid web allowlist address, skipping');
+        }
       }
     }
     return blockList;
@@ -914,7 +920,8 @@ export class Gateway {
     session: StoredSession,
     systemPrompt: string,
     currentMessage?: string,
-    skipCompression = false
+    skipCompression = false,
+    source = 'interactive'
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const budgetPercent = await this.getBudgetRemainingPercent();
     if (budgetPercent !== null && budgetPercent < 20) {
@@ -922,7 +929,7 @@ export class Gateway {
     }
 
     try {
-      return await this.prepareContextInner(session, systemPrompt, currentMessage, skipCompression);
+      return await this.prepareContextInner(session, systemPrompt, currentMessage, skipCompression, source);
     } finally {
       this.contextCompressor.clearThresholdOverride();
     }
@@ -932,7 +939,8 @@ export class Gateway {
     session: StoredSession,
     systemPrompt: string,
     _currentMessage?: string,
-    skipCompression = false
+    skipCompression = false,
+    source = 'interactive'
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const systemPromptTokens = approximateSystemPromptTokens(systemPrompt);
     const extraTokens = this.getToolSchemaTokens();
@@ -965,6 +973,7 @@ export class Gateway {
       {
         component: 'req_payload',
         sessionId: session.id,
+        source,
         systemTokens: systemPromptTokens,
         toolTokens: extraTokens,
         messagesTokens: estimateMessagesTokens(contextMessages),
@@ -1138,6 +1147,12 @@ export class Gateway {
         case 'tool_list':
           this.handleToolList(ws);
           break;
+        case 'quick_actions_list':
+          this.handleQuickActionsList(ws, req);
+          break;
+        case 'quick_action':
+          await this.handleQuickAction(ws, req);
+          break;
         case 'metrics':
           await this.handleMetrics(ws, req);
           break;
@@ -1218,7 +1233,7 @@ export class Gateway {
         maxTokens: this.getOutputTokens(),
       });
 
-      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem, onLLMEvent);
+      const response = await this.callWithAdaptiveRetry(session, messages, finalSystem, onLLMEvent, source);
 
       const parsedToolCalls = response.tool_calls || [];
       this.writeAgentTrace({
@@ -1387,7 +1402,7 @@ export class Gateway {
       }
 
       iteration++;
-      const contextResult = await this.prepareContext(session, finalSystem, undefined, true);
+      const contextResult = await this.prepareContext(session, finalSystem, undefined, true, source);
       messages = contextResult.messages;
       finalSystem = contextResult.systemPrompt;
     }
@@ -1412,7 +1427,8 @@ export class Gateway {
     session: StoredSession,
     messages: Message[],
     system: string,
-    onEvent?: (event: LLMStreamEvent) => void
+    onEvent?: (event: LLMStreamEvent) => void,
+    source = 'interactive'
   ): Promise<LLMResponse> {
     let attempt = 0;
     let callMessages = messages;
@@ -1427,6 +1443,7 @@ export class Gateway {
           tools,
           max_tokens: this.getOutputTokens(),
           onEvent,
+          source,
         });
       } catch (error: any) {
         if (!isThrottleError(error.message)) throw error;
@@ -1739,7 +1756,7 @@ export class Gateway {
         ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
         : systemPrompt;
 
-      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, text);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, text, false, 'interactive');
 
       const startedAt = Date.now();
       const { content, toolCalls, usage, model } = await this.runAgentLoop(
@@ -1770,6 +1787,7 @@ export class Gateway {
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', finalContent);
       this.debounceSave(session);
       await this.checkBudgetAlert();
+      this.persistLearnedPreferences(text);
 
       this.sendEvent(ws, 'agent_complete', {
         runId,
@@ -1782,9 +1800,10 @@ export class Gateway {
       getLogger().error({ error: error.message, runId }, 'Agent request failed');
       try {
         if (isBudgetBlockedError(error)) {
+          const reason = error instanceof BudgetBlockedError ? error.reason : undefined;
           this.sendEvent(ws, 'agent_complete', {
             runId,
-            content: this.buildDegradedMessage(),
+            content: this.buildDegradedMessage(reason),
             toolCalls: [],
             usage: undefined,
             degraded: true,
@@ -1845,54 +1864,23 @@ export class Gateway {
   }
 
   private readPreferences(): Record<string, string> {
-    const prefs: Record<string, string> = {};
-    try {
-      const raw = fs.readFileSync(WORKSPACE_PATHS.preferences(), 'utf-8');
-      let inDynamic = false;
-      for (const line of raw.split('\n')) {
-        if (/^#+\s*Dynamic Preferences\s*$/i.test(line)) {
-          inDynamic = true;
-          continue;
-        }
-        if (!inDynamic) continue;
-        if (/^#+/.test(line)) break;
-        const m = line.match(/^([a-z_]+):\s*(.*)$/i);
-        if (m) prefs[m[1].toLowerCase()] = m[2].trim();
-      }
-    } catch {
-      // preferences file missing — return empty map
-    }
-    return prefs;
+    return readPreferences();
   }
 
   private writePreference(key: string, value: string): void {
-    const filePath = WORKSPACE_PATHS.preferences();
-    const header = '## Dynamic Preferences';
-    let raw = '';
+    writePreference(key, value);
+  }
+
+  /** Deterministic safety net: explicit user statements persist even if the agent skips file_ops. */
+  private persistLearnedPreferences(userText: string): void {
     try {
-      raw = fs.readFileSync(filePath, 'utf-8');
-    } catch {
-      // file missing — will create it
+      for (const { key, value } of extractPreferencesFromMessage(userText)) {
+        writePreference(key, value);
+        getLogger().info({ key, source: 'post_turn_extractor' }, 'Preference learned from conversation');
+      }
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Post-turn preference extraction failed');
     }
-
-    let content = raw.trimEnd();
-    const hasHeader = /^#+\s*Dynamic Preferences\s*$/m.test(content);
-    if (!hasHeader) {
-      content = content ? `${content}\n\n${header}\n` : `${header}\n`;
-    }
-
-    const keyRe = new RegExp(`^(${key}:).*$`, 'm');
-    if (keyRe.test(content)) {
-      content = content.replace(keyRe, `${key}: ${value}`);
-    } else {
-      const headerMatch = content.match(/^#+\s*Dynamic Preferences\s*$/m);
-      const insertAt = headerMatch ? (headerMatch.index || 0) + headerMatch[0].length : 0;
-      content = `${content.slice(0, insertAt)}\n${key}: ${value}${content.slice(insertAt)}`;
-    }
-
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf-8');
-    getLogger().info({ key }, 'Web preference updated');
   }
 
   async processMessage(params: {
@@ -1923,7 +1911,11 @@ export class Gateway {
 
     try {
       this.pushUserMessage(session, params.content);
-      const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(
+        session,
+        params.content,
+        isJobTriggered ? 'job' : 'interactive'
+      );
 
       const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content, strictUnattended) : undefined;
 
@@ -1940,11 +1932,14 @@ export class Gateway {
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
       this.debounceSave(session);
       await this.checkBudgetAlert();
+      this.persistLearnedPreferences(params.content);
       return { content, blockedActions };
     } catch (error: any) {
       getLogger().error({ error: error.message, runId }, 'Message processing failed');
       if (isBudgetBlockedError(error)) {
-        return { content: this.buildDegradedMessage(), blockedActions: [] };
+        const reason: BudgetBlockReason | undefined =
+          error instanceof BudgetBlockedError ? error.reason : undefined;
+        return { content: this.buildDegradedMessage(reason), blockedActions: [] };
       }
       return { content: `I'm sorry. An error occurred: ${error.message}`, blockedActions: [] };
     }
@@ -2011,7 +2006,8 @@ export class Gateway {
 
   private async buildPromptContext(
     session: StoredSession,
-    content: string
+    content: string,
+    source = 'interactive'
   ): Promise<{ messages: Message[]; systemPrompt: string }> {
     const [systemPrompt, skillsContext] = await Promise.all([
       this.promptBuilder.buildSystemPrompt(),
@@ -2022,7 +2018,19 @@ export class Gateway {
       ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
       : systemPrompt;
 
-    const { messages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, content);
+    getLogger().debug(
+      {
+        component: 'prompt_parts',
+        sessionId: session.id,
+        source,
+        systemTokens: approximateSystemPromptTokens(systemPrompt),
+        skillsTokens: skillsContext ? approximateSystemPromptTokens(skillsContext) : 0,
+        skillsCount: skillsContext ? skillsContext.split('### ').length - 1 : 0,
+      },
+      'System prompt parts estimate'
+    );
+
+    const { messages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, content, false, source);
     return { messages, systemPrompt: finalSystem };
   }
 
@@ -2039,12 +2047,12 @@ export class Gateway {
       return { completed: true, text: setup.text };
     }
     const { session } = setup;
-    const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+    const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content, 'fast_probe');
 
     let probe: LLMResponse;
     try {
       probe = await withTimeout(
-        this.callWithAdaptiveRetry(session, contextMessages, finalSystem, undefined),
+        this.callWithAdaptiveRetry(session, contextMessages, finalSystem, undefined, 'fast_probe'),
         this.config.ecosystem.sync_fast_path_timeout_ms
       );
     } catch (error: any) {
@@ -2099,6 +2107,7 @@ export class Gateway {
         try {
           const check = await budgetTracker.checkBudget();
           const usage = await budgetTracker.getTokenUsage();
+          const bySource = await budgetTracker.getSourceUsage();
           budget = {
             enabled: !!limits?.enabled,
             allowed: check.allowed,
@@ -2106,6 +2115,7 @@ export class Gateway {
             today: usage.today,
             thisMonth: usage.thisMonth,
             byProvider: usage.byProvider,
+            bySource,
             remainingPercent: check.remainingPercent,
             dailyRemainingPercent: check.dailyRemainingPercent,
             monthlyRemainingPercent: check.monthlyRemainingPercent,
@@ -2226,6 +2236,41 @@ export class Gateway {
       }
     }
     return total;
+  }
+
+  private handleQuickActionsList(ws: WebSocket, req: GatewayRequest): void {
+    this.sendResponse(ws, req.id, { actions: listQuickActions() });
+  }
+
+  private async handleQuickAction(ws: WebSocket, req: GatewayRequest): Promise<void> {
+    const action = String(req.params?.action || '').trim().toLowerCase();
+    if (!action) {
+      this.sendError(ws, req.id, 'Action is required');
+      return;
+    }
+    const sessionId = String((req.params?.sessionId as string) || 'web-user');
+    const rateLimit = this.config.security?.rate_limiting;
+    if (rateLimit) {
+      if (!this.rateLimiter.checkUser(sessionId, rateLimit.requests_per_user_per_hour || 100)) {
+        this.sendError(ws, req.id, 'Rate limit exceeded for user');
+        return;
+      }
+      if (!this.rateLimiter.checkChannel('ws', rateLimit.requests_per_channel_per_hour || 1000)) {
+        this.sendError(ws, req.id, 'Rate limit exceeded for channel');
+        return;
+      }
+    }
+    try {
+      const result = await runQuickAction(action);
+      if (!result.ok) {
+        this.sendError(ws, req.id, result.output);
+        return;
+      }
+      this.sendResponse(ws, req.id, result);
+    } catch (error: any) {
+      getLogger().warn({ error: error?.message, action }, 'Quick action failed');
+      this.sendError(ws, req.id, `Quick action failed: ${error?.message || error}`);
+    }
   }
 
   private handleToolList(ws: WebSocket): void {

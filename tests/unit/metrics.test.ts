@@ -66,6 +66,7 @@ describe('Gateway metrics', () => {
         thisMonth: 1000,
         byProvider: { primary: { tokens: 1000, requests: 3, is_paid: true } },
       }),
+      getSourceUsage: jest.fn().mockResolvedValue({ interactive: 800, compaction: 200 }),
     };
     const fakeRouter: any = {
       call: jest.fn(),
@@ -106,6 +107,7 @@ describe('Gateway metrics', () => {
     expect(m.budget.today).toBe(200);
     expect(m.budget.thisMonth).toBe(1000);
     expect(m.budget.byProvider.primary.tokens).toBe(1000);
+    expect(m.budget.bySource).toEqual({ interactive: 800, compaction: 200 });
     expect(m.budget.remainingPercent).toBe(80);
 
     expect(m.sessions.active).toBe(0);

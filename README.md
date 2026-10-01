@@ -59,9 +59,9 @@ WORKSPACE=./workspace npm run dev
 
 | Channel | Access |
 |---|---|
-| **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`) |
+| **CLI** | `docker attach alfred-agent` (Docker) or runs in terminal (`npm run dev`). Under the native `systemd` service stdin is not a TTY, so the in-process CLI prompt auto-disables (no restart loop) — use `node system/alfred-cli.js` from the repo root for interactive CLI instead. The unit also sets `ALFRED_NO_CLI=1` as a second guard |
 | **Telegram** | Chat with your bot after setting `bot_token` in config |
-| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. Reachable from other LAN devices via the host IP. Access is restricted to `channels.web.permissions.allow_from` (IP/CIDR allowlist) in `alfred.json` — leave it empty to allow everyone; on Docker, host networking is required so the container sees real client IPs |
+| **Web** | Open `http://YOUR_HOST:18789` — web UI + live updates over `/ws`. Reachable from other LAN devices via the host IP. Access is restricted to `channels.web.permissions.allow_from` (IP/CIDR allowlist) in `alfred.json` — leave it empty to allow everyone; on Docker, host networking is required so the container sees real client IPs. For a LAN behind a reverse proxy, add your subnet (e.g. `192.168.10.0/24`) to `allow_from`, list the proxy in `trusted_proxies`, and forward `X-Forwarded-For`/`X-Real-IP` from the proxy. `::1` needs no entry — it normalizes to `127.0.0.1` |
 
 ## Configuration
 
@@ -134,7 +134,7 @@ Interaction: `initial` covers the window until the first token; `idle` governs g
 
 ### Spending limits
 
-Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request and checked against daily/monthly caps:
+Optional section — if absent, spending control is disabled (v2.1 behavior unchanged). Token usage is persisted per request (labeled by source: `interactive`, `fast_probe`, `agent`/`job` rounds, `compaction`, retries) and checked against daily/monthly caps:
 
 ```json
 {
@@ -142,13 +142,15 @@ Optional section — if absent, spending control is disabled (v2.1 behavior unch
     "enabled": true,
     "warn_threshold": 0.8,
     "on_limit_reached": "block_paid_providers",
-    "daily_token_limit": 500000,
-    "monthly_token_limit": 10000000
+    "daily_token_limit": 2000000,
+    "monthly_token_limit": 30000000
   }
 }
 ```
 
-Providers can be marked `"paid": true` so `block_paid_providers` excludes only the paid ones from the fallback chain. When the budget is exhausted the gateway replies with a degraded message, warns you (Telegram/web) at the threshold, and Alfred can report the budget via the `health` tool (`health budget` / `health status`). If remaining usage drops below 20%, context compaction is tightened for that request.
+Sizing: one LLM call carries ~6k tokens (full context + tools), and a single user message fans out into several calls (fast-path probe, agent-loop rounds, retries, background jobs). 500k/day ≈ 80 calls — too tight for daily use. Minimums: 2M daily / 30M monthly; below that Alfred warns at startup. Windows are calendar day/month in server-local time.
+
+Providers can be marked `"paid": true` so `block_paid_providers` excludes only the paid ones from the fallback chain. When the budget is exhausted the gateway replies with a degraded message naming the exact period (daily/monthly), warns you (Telegram/web) at the threshold, and Alfred can report the budget via the `health` tool (`health budget` / `health status`, now with per-source breakdown). If remaining usage drops below 20%, context compaction is tightened for that request.
 
 ### Web server
 
@@ -276,8 +278,10 @@ Periodically scans application logs for errors and warnings, categorizes them, a
 ## Personality System
 
 - **SOUL.md** — Core identity. Only the user may edit it.
-- **preferences.md** — Dynamic preferences (language, tone, style). Managed by Alfred via `file_ops` when you request changes.
+- **preferences.md** (`~/.alfred/memory/personality/preferences.md`, keys: language, tone, formality, verbosity, user_name, voice_replies) — the single canonical store for identity and behavior prefs. The agent writes it via `file_ops`, and the gateway also persists explicit statements automatically ("me llamo X", "háblame en español"). `memory.md` holds narrative facts only, never identity.
 - **alfred-rules.md** — Rulebook describing file access permissions, personality protocol, skill implementation protocol, and secrets management protocol. Injected into every system prompt.
+
+Example: _"Respond in English and be more concise"_ → Alfred adds `language: english` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences. Verify with: `cat ~/.alfred/memory/personality/preferences.md`.
 
 Example: _"Respond in English and be more concise"_ → Alfred adds `language: english` and `verbosity: concise` to preferences.md. Every subsequent response follows these preferences.
 
@@ -455,6 +459,17 @@ Steps performed:
 7. `docker image prune -f` — cleans up old images
 
 > **Tip:** Run `./deploy.sh` from the repo root (`~/alfred`) on your Raspberry Pi after SSH'ing in. Note the two separate locations: the repo lives in `~/alfred` (code) while the workspace lives in `~/.alfred` (data — config, database, files, logs, memory, skills). Preview the skills sync without writing anything with `DRY_RUN=1 ./deploy.sh`.
+
+### Health check (`alfred-doctor.sh`)
+
+Read-only diagnostic for native installs — checks the systemd unit (active state, restart count, `ALFRED_NO_CLI`), Node/dist, gateway port, `alfred.json` validity (channels, web allowlist, Telegram token presence), recent `journalctl` errors, workspace sizes, and host resources (load, RAM, disk, temp). It changes nothing.
+
+```bash
+bash scripts/alfred-doctor.sh
+# overrides: SERVICE_NAME=alfred WORKSPACE_DIR=~/.alfred PORT=18789 SINCE="30 min ago"
+```
+
+Exit codes: `0` ok, `1` warnings, `2` failures.
 
 ## Recent Improvements (v2.2)
 

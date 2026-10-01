@@ -7,13 +7,13 @@ import { LLMRouter } from '../agent/llm-router';
 export class HealthTool implements ToolHandler {
   tool: Tool = {
     name: 'health',
-    description: 'Query consolidated system status, view recent health findings, trigger an immediate health check, or view token budget usage',
+    description: 'System status, health findings, on-demand check, or token budget usage',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['status', 'findings', 'check', 'budget', 'configure'] },
-        severity_threshold: { type: 'string', enum: ['warn', 'error'], description: 'Filter findings by severity' },
-        category: { type: 'string', description: 'Filter findings by category' },
+        severity_threshold: { type: 'string', enum: ['warn', 'error'], description: 'Severity filter' },
+        category: { type: 'string', description: 'Category filter' },
       },
       required: ['action'],
     },
@@ -93,6 +93,12 @@ export class HealthTool implements ToolHandler {
     const providers = Object.entries(usage.byProvider);
     if (providers.length > 0) {
       lines.push(`- By provider: ${providers.map(([name, p]) => `${name}: ${p.tokens.toLocaleString()}`).join(', ')}`);
+    }
+
+    const bySource = await this.budgetTracker.getSourceUsage();
+    const sources = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
+    if (sources.length > 0) {
+      lines.push(`- By source (this month): ${sources.map(([name, tokens]) => `${name}: ${tokens.toLocaleString()}`).join(', ')}`);
     }
 
     return { success: true, output: lines.join('\n') };

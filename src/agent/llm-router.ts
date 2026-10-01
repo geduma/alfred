@@ -103,18 +103,22 @@ export class LLMRouter {
 
   async call(params: LLMCallParams): Promise<LLMResponse> {
     const limits = this.config.llmConfig.spending_limits;
+    const source = params.source || 'interactive';
     let budgetBlocked = false;
+    let blockReason: 'daily_limit' | 'monthly_limit' | undefined;
     if (limits?.enabled) {
       const budget = await this.budgetTracker.checkBudget();
       budgetBlocked = !budget.allowed;
+      blockReason = budget.reason;
       if (budgetBlocked && limits.on_limit_reached === 'block_all') {
         throw new BudgetBlockedError(
-          'The token budget for this period has been exhausted. Alfred is in degraded service mode until the next period. Adjust the limits in alfred.json to continue.'
+          'The token budget for this period has been exhausted. Alfred is in degraded service mode until the next period. Adjust the limits in alfred.json to continue.',
+          blockReason
         );
       }
     }
 
-    const chain = this.buildChain(budgetBlocked, limits);
+    const chain = this.buildChain(budgetBlocked, limits, blockReason);
     const startIndex = this.currentIndex;
     const attempts: Array<{ provider: string; error?: string }> = [];
 
@@ -187,7 +191,12 @@ export class LLMRouter {
           this.currentIndex = 0;
 
           if (response.usage) {
-            this.budgetTracker.trackUsage(response.usage, providerName);
+            await this.budgetTracker.trackUsage(response.usage, providerName, source);
+            const tracked = response.usage.input_tokens + response.usage.output_tokens;
+            getLogger().info(
+              { provider: providerName, source, input: response.usage.input_tokens, output: response.usage.output_tokens, total: tracked },
+              'LLM usage tracked'
+            );
           }
 
           return response;
@@ -245,12 +254,13 @@ export class LLMRouter {
     );
   }
 
-  private buildChain(budgetBlocked: boolean, limits?: SpendingLimitsConfig): string[] {
+  private buildChain(budgetBlocked: boolean, limits?: SpendingLimitsConfig, reason?: 'daily_limit' | 'monthly_limit'): string[] {
     if (budgetBlocked && limits?.on_limit_reached === 'block_paid_providers') {
       const free = this.providerChain.filter(name => !this.isPaid(name));
       if (free.length === 0) {
         throw new BudgetBlockedError(
-          'The token limit was reached and no free providers are available. Alfred is in degraded service mode until the next period.'
+          'The token limit was reached and no free providers are available. Alfred is in degraded service mode until the next period.',
+          reason
         );
       }
       return free;

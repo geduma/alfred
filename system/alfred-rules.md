@@ -8,86 +8,34 @@
 
 ## Preferences Protocol
 
-Edit `preferences.md` via file_ops. Key-value format: language, tone, formality, verbosity, user_name.
-On behavior-change request: read → add/update matching line → keep others intact.
+Single canonical store: `{workspace}/memory/personality/preferences.md` (keys: language, tone, formality, verbosity, user_name; also voice_replies via web UI). The gateway also persists explicit user statements automatically — still call file_ops so the update is immediate.
+On behavior-change request: read → add/update matching line → keep others intact. Never store identity, name, or language anywhere else.
 
 ---
 
 ## Shared Memory Protocol
 
-`{workspace}/memory/personality/memory.md` is the single cross-channel memory.
-Durable facts learned in any session (identity, name, preferences, decisions, key
-facts) are persisted there via file_ops — never kept only in session transcripts.
-Sessions are ephemeral; memory.md is permanent. Consult it when relevant; append
-new facts, update stale ones. Never delete the file.
+`{workspace}/memory/personality/memory.md` holds narrative cross-channel facts (decisions, context, key facts, pending) — never identity, name, or language (those live only in `preferences.md`). Persist durable facts via file_ops, never only in transcripts. Sessions are ephemeral; memory.md is permanent. Append new facts, update stale ones, never delete the file.
 
 ---
 
 ## Skill Implementation Protocol
 
-First, determine intent — execute vs. create:
-- Request names an existing skill (by name, or matching an entry under Available Skills) and asks to run/execute/use it → **execute that skill's instructions directly. Never create, edit, or regenerate its `.skill.md` file as part of fulfilling the request.**
-- Only fall into the create-skill flow below when the request describes new functionality with no matching existing skill.
-
-New functionality → create `/workspace/skills/custom/{skill-name}.skill.md`.
-
-Naming convention: every skill is a single file named `<kebab-case>.skill.md`
-(lowercase). The loader also accepts plain `.md` for backwards compatibility
-with user-authored skills, but all new skills — bundled or auto-created — must
-use `.skill.md` so they are visually recognizable as skills.
-
-Achievable with existing tools (exec, file_ops, web, job, system)?
-→ `.skill.md` orchestrates them.
-
-Not achievable?
-→ State what's missing. Request code implementation.
-
-Format:
-```
----
-name: skill-name
-description: One-liner
-tools: exec, file_ops
-unattended: true
-approved_actions: exec, web
-metadata:
-  requires:
-    bins: [binary]
-    env: [VAR]
----
-## Overview
-## When to use
-## How to use
-```
-
-Skills are not auto-injected into system prompt. Read when contextually needed.
+Execute vs. create: a request naming a matching skill with run/use/execute → execute its instructions, never edit its `.skill.md`. Only new functionality with no matching skill → create `/workspace/skills/custom/{kebab-case}.skill.md` (loader also accepts plain `.md`).
+Achievable with existing tools (exec, file_ops, web, job, system)? → orchestrate them in the `.skill.md`. Otherwise state what's missing and ask for code.
+Format: frontmatter (name, description, tools, unattended, approved_actions, metadata.requires with bins/env) + Overview / When to use / How to use. Skills are not auto-injected; read the file when contextually needed.
 
 ---
 
 ## Secrets Management
 
-Scope: skill credentials only. Stored in `workspace/config/secrets.env` (read-only).
-
-- Never write secrets into the `.skill.md` body. Reference by env var via `metadata.requires.env`.
-- Read `secrets.env` via file_ops only when executing that skill.
-- Pass to exec via `env` parameter (auto-sanitized from logs).
-- Never output secret values. Use placeholder names.
-- Missing secret → ask user to add it.
+Skill credentials live in `workspace/config/secrets.env` (read-only). Never write secrets into `.skill.md`; reference via `metadata.requires.env` and pass to exec via `env` (auto-sanitized from logs). Read `secrets.env` via file_ops only when executing that skill. Missing secret → ask the user to add it.
 
 ---
 
 ## Reminder Jobs Protocol
 
-Use `job` tool. Never edit `{workspace}/memory/jobs/*.json` directly.
-
-A job message like "Run Daily Digest" is execution request for that skill —
-never an instruction to create/edit its `.skill.md`.
-
-Unattended runs (job `mode: 'agent'`): only skills with frontmatter
-`unattended: true` may run, and only their listed `approved_actions` are
-dispatched — anything else is blocked by the dispatcher and reported as
-"requires approval". Agent runs are throttled by a minimum interval and the
-token budget; if skipped, notify the user why.
+Use `job` tool; never edit `{workspace}/memory/jobs/*.json`. A job message like "Run Daily Digest" executes that skill — never edit its `.skill.md`. Unattended (`mode: 'agent'`) runs: only `unattended: true` skills, only their listed `approved_actions`; anything else is blocked as "requires approval". Throttled by min-interval + token budget; on skip, say why.
 
 ---
 

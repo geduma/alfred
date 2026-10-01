@@ -130,6 +130,26 @@
     if (extra && extra.audioUrl) attachAudio(body, extra.audioUrl, extra.mime);
   }
 
+  function appendQuickActionResult(title, output, meta) {
+    const { body } = createMsg('agent');
+    const head = document.createElement('div');
+    head.className = 'qa-result-head';
+    head.textContent = title;
+    body.appendChild(head);
+    const pre = document.createElement('pre');
+    pre.className = 'qa-result-pre';
+    pre.textContent = output;
+    body.appendChild(pre);
+    if (meta) {
+      const foot = document.createElement('div');
+      foot.className = 'qa-result-meta';
+      foot.textContent = meta;
+      body.appendChild(foot);
+    }
+    const messagesEl = document.getElementById('messages');
+    if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
   function appendNotify(message) {
     const { body } = createMsg('notify');
     setText(body, message);
@@ -233,6 +253,8 @@
     appendUserText,
     appendUserAudio,
     appendUserFile,
+    appendAgentText,
+    appendQuickActionResult,
     appendError,
     SESSION_ID,
   };

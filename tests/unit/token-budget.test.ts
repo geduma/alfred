@@ -7,6 +7,7 @@ jest.mock('../../src/db/repositories/token-usage', () => ({
     insert: jest.fn().mockResolvedValue(undefined),
     sumBetween: jest.fn().mockResolvedValue(0),
     sumByProviderBetween: jest.fn().mockResolvedValue({}),
+    sumBySourceBetween: jest.fn().mockResolvedValue({}),
   })),
 }));
 
@@ -71,7 +72,20 @@ describe('TokenBudgetTracker', () => {
   test('should persist usage to the repository when a provider is given', async () => {
     const tracker = new TokenBudgetTracker(makeConfig(), fixedDate('2026-08-08T12:00:00Z'));
     await tracker.trackUsage({ input_tokens: 100, output_tokens: 50 }, 'anthropic');
-    expect(getRepo(tracker).insert).toHaveBeenCalledWith('2026-08-08', 'anthropic', 150, true);
+    expect(getRepo(tracker).insert).toHaveBeenCalledWith('2026-08-08', 'anthropic', 150, true, 'interactive');
+  });
+
+  test('should persist the call source when given', async () => {
+    const tracker = new TokenBudgetTracker(makeConfig(), fixedDate('2026-08-08T12:00:00Z'));
+    await tracker.trackUsage({ input_tokens: 10, output_tokens: 5 }, 'ollama', 'fast_probe');
+    expect(getRepo(tracker).insert).toHaveBeenCalledWith('2026-08-08', 'ollama', 15, false, 'fast_probe');
+  });
+
+  test('getSourceUsage: should return monthly usage grouped by source', async () => {
+    const tracker = new TokenBudgetTracker(makeConfig(), fixedDate('2026-08-08T12:00:00Z'));
+    getRepo(tracker).sumBySourceBetween.mockResolvedValue({ interactive: 1000, compaction: 200 });
+    await expect(tracker.getSourceUsage()).resolves.toEqual({ interactive: 1000, compaction: 200 });
+    expect(getRepo(tracker).sumBySourceBetween).toHaveBeenCalledWith('2026-08-01', '2026-08-08');
   });
 
   test('isPaid: anthropic defaults to paid, openai-compatible defaults to free', () => {

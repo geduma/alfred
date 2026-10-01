@@ -7,11 +7,17 @@ export interface ProviderUsageSummary {
 }
 
 export class TokenUsageRepository {
-  async insert(date: string, provider: string, tokensUsed: number, isPaid: boolean): Promise<void> {
+  async insert(date: string, provider: string, tokensUsed: number, isPaid: boolean, source = 'interactive'): Promise<void> {
     const db = getDatabase();
-    db.prepare(
-      'INSERT INTO token_usage_log (date, provider, tokens_used, is_paid, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(date, provider, tokensUsed, isPaid ? 1 : 0, new Date().toISOString());
+    try {
+      db.prepare(
+        'INSERT INTO token_usage_log (date, provider, tokens_used, is_paid, source, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(date, provider, tokensUsed, isPaid ? 1 : 0, source, new Date().toISOString());
+    } catch {
+      db.prepare(
+        'INSERT INTO token_usage_log (date, provider, tokens_used, is_paid, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(date, provider, tokensUsed, isPaid ? 1 : 0, new Date().toISOString());
+    }
   }
 
   async sumBetween(fromDate: string, toDate: string): Promise<number> {
@@ -36,5 +42,21 @@ export class TokenUsageRepository {
       };
     }
     return summary;
+  }
+
+  async sumBySourceBetween(fromDate: string, toDate: string): Promise<Record<string, number>> {
+    const db = getDatabase();
+    try {
+      const rows = db
+        .prepare('SELECT source, SUM(tokens_used) AS tokens FROM token_usage_log WHERE date >= ? AND date <= ? GROUP BY source')
+        .all(fromDate, toDate) as Array<{ source: string; tokens: number }>;
+      const bySource: Record<string, number> = {};
+      for (const row of rows || []) {
+        bySource[row.source || 'interactive'] = Number(row.tokens);
+      }
+      return bySource;
+    } catch {
+      return {};
+    }
   }
 }

@@ -38,7 +38,7 @@ export class ExecTool implements ToolHandler {
         command: { type: 'string' },
         cwd: { type: 'string' },
         timeout: { type: 'number' },
-        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables (secrets are sanitized from logs)' },
+        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Env vars (sanitized in logs)' },
       },
       required: ['command'],
     },

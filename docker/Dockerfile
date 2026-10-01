@@ -12,6 +12,7 @@ COPY src ./src
 COPY tsconfig.json ./
 COPY system/ ./system/
 COPY web/ ./web/
+COPY scripts/ ./scripts/
 
 RUN npm run build
 
@@ -21,7 +22,7 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-RUN apk add --no-cache su-exec
+RUN apk add --no-cache su-exec bash curl python3 procps
 
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -30,6 +31,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY --from=builder /build/dist ./dist
 COPY system/ ./system/
 COPY web/ ./web/
+COPY scripts/ ./scripts/
 
 RUN cp system/alfred-cli.js /usr/local/bin/alfred-cli && \
     chmod +x /usr/local/bin/alfred-cli

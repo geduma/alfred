@@ -67,6 +67,7 @@
     <section id="panel-center" class="col-center mobile-open" aria-label="Chat">
       <div id="messages" class="messages" aria-live="polite" aria-label="Conversation"></div>
       <div id="input-bar" class="input-bar">
+        <div id="quick-actions" class="quick-actions" aria-label="Acciones rápidas"></div>
         <div id="rec-indicator" class="rec-indicator hidden" role="status">
           <span class="rec-dot"></span>
           <span id="rec-timer">0:00</span>
@@ -93,6 +94,10 @@
 
     <aside id="panel-right" class="col-right" aria-label="Context">
       <div class="panel-head">
+        <h2>Acciones rápidas</h2>
+      </div>
+      <div id="quick-actions-side" class="quick-actions-side" aria-label="Acciones rápidas"></div>
+      <div class="panel-head">
         <h2>Context</h2>
       </div>
       <div id="context-grid" class="context-grid"></div>
@@ -102,6 +107,7 @@
   <script src="js/ws-client.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/chat.js"></script>
+  <script src="js/quick-actions.js"></script>
   <script src="js/metrics.js"></script>
   <script src="js/context.js"></script>
   <script src="js/audio-recorder.js"></script>

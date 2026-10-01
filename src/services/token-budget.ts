@@ -69,7 +69,7 @@ export class TokenBudgetTracker {
     return isPaidProvider(provider.type, provider.paid);
   }
 
-  async trackUsage(usage: { input_tokens?: number; output_tokens?: number }, provider?: string): Promise<void> {
+  async trackUsage(usage: { input_tokens?: number; output_tokens?: number }, provider?: string, source?: string): Promise<void> {
     const input = usage.input_tokens || 0;
     const output = usage.output_tokens || 0;
     const total = input + output;
@@ -81,7 +81,7 @@ export class TokenBudgetTracker {
 
     try {
       if (isDatabaseInitialized()) {
-        await this.repo.insert(this.getDateStr(this.dateProvider()), provider, total, this.isPaid(provider));
+        await this.repo.insert(this.getDateStr(this.dateProvider()), provider, total, this.isPaid(provider), source || 'interactive');
       }
     } catch (error: any) {
       getLogger().warn({ error: error.message }, 'Token usage persistence failed, in-memory only');
@@ -109,6 +109,17 @@ export class TokenBudgetTracker {
       getLogger().warn({ error: error.message }, 'Token usage read failed, using in-memory totals');
       const total = this.getTotalUsage().total_tokens;
       return { today: total, thisMonth: total, byProvider: {} };
+    }
+  }
+
+  async getSourceUsage(): Promise<Record<string, number>> {
+    if (!isDatabaseInitialized()) return {};
+    const now = this.dateProvider();
+    try {
+      return await this.repo.sumBySourceBetween(this.getMonthStartStr(now), this.getDateStr(now));
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Token source usage read failed');
+      return {};
     }
   }
 

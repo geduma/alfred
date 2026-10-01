@@ -11,14 +11,14 @@ export class WebTool implements ToolHandler {
 
   tool: Tool = {
     name: 'web',
-    description: 'Search the web or fetch content from a URL. Use action "search" for queries or "fetch" for specific URLs.',
+    description: 'Web search ("search") or URL fetch ("fetch").',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['search', 'fetch'] },
-        query: { type: 'string', description: 'Search query (required for search action)' },
-        url: { type: 'string', description: 'URL to fetch (required for fetch action)' },
-        limit: { type: 'number', description: 'Max results for search (default: 5)' },
+        query: { type: 'string', description: 'Query (search only)' },
+        url: { type: 'string', description: 'URL (fetch only)' },
+        limit: { type: 'number', description: 'Max results (default: 5)' },
       },
       required: ['action'],
     },
