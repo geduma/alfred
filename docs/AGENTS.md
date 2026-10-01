@@ -408,8 +408,8 @@ so a fresh volume boots without manual edits.
 
 ## Deploy
 
-- Native (default, RPi): `./deploy.sh` (dispatcher, same as `./deploy-native.sh`)
-- Docker: `./deploy.sh --docker` (same as `./deploy-docker.sh`)
+- Native (default, RPi, Linux only): `./deploy.sh` (dispatcher, same as `./deploy-native.sh`)
+- Docker: `./deploy.sh --docker` (same as `./deploy-docker.sh`) — required path on Windows/macOS
 
 ## Docker
 

@@ -5,7 +5,7 @@ Multi-channel, LLM-agnostic AI assistant with persistent personality, web access
 ## Requirements
 
 - **Node.js >= 22** and **npm >= 10** (`node --version`)
-- **Linux** for the service install (Raspberry Pi OS 64-bit recommended; `systemd` for autostart). macOS/Windows: code install only, no service management.
+- **Linux** (Raspberry Pi OS 64-bit recommended; `systemd` for autostart). The native deploy supports Linux only — on Windows/macOS use the Docker deploy (`./deploy.sh --docker`).
 - **Build tools for `better-sqlite3`** on ARM (`python3`, `make`, `g++`) — `deploy-native.sh` prints the exact `apt` command if `npm ci` fails for this reason.
 - **64-bit OS (arm64 or x86_64)**. On Raspberry Pi: use the **64-bit OS** (e.g. Raspberry Pi OS Lite 64-bit) — the LanceDB vector store ships prebuilt binaries only for 64-bit platforms (`arm64`/`x86_64`), so 32-bit systems (armv7 / RPi 3) will fail to start with the vector store enabled. If you must run 32-bit, set `memory.vector_store.enabled` to `false` and `memory.snapshots.enabled` to `false`.
 - **RAM/swap**: installing runs `npm ci` + `tsc`; on a Pi 4/5 with 4GB this is fine, on 2GB systems add at least 2GB of swap (`fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`).

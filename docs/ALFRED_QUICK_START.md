@@ -36,9 +36,9 @@ sudo systemctl restart alfred
 node system/alfred-cli.js
 ```
 
-Docker alternative: `./deploy.sh --docker`, then
+Windows/macOS must use Docker: `./deploy.sh --docker`, then
 `docker compose -f docker/docker-compose.yml restart alfred` and
-`docker attach alfred-agent`.
+`docker attach alfred-agent`. Native deploy (`./deploy.sh`) is Linux-only.
 
 ---
 

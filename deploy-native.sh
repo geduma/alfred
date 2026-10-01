@@ -7,6 +7,15 @@ SERVICE_NAME="${SERVICE_NAME:-alfred}"
 PORT="${PORT:-18789}"
 HEALTH_WAIT="${HEALTH_WAIT_SECONDS:-60}"
 
+OS="$(uname -s)"
+if [ "$OS" != "Linux" ]; then
+  echo ""
+  echo "❌ Native deploy supports Linux only (detected: $OS)."
+  echo "   On Windows/macOS, use the Docker deploy instead:"
+  echo "     ./deploy.sh --docker"
+  exit 1
+fi
+
 fail() {
   echo ""
   echo "❌ $*"
@@ -23,8 +32,6 @@ echo "╚═══════════════════════�
 echo ""
 echo "   Repo:      $SCRIPT_DIR"
 echo "   Workspace: $WORKSPACE_DIR"
-
-OS="$(uname -s)"
 
 echo ""
 echo "🔍 Checking prerequisites..."
@@ -67,16 +74,6 @@ echo ""
 echo "♻️  Syncing bundled skills (db/, config/ and memory/ stay untouched)..."
 DRY_RUN="${DRY_RUN:-0}" WORKSPACE_DIR="$WORKSPACE_DIR" ALFRED_UID="$(id -u)" \
   bash "$SCRIPT_DIR/scripts/sync-bundled-skills.sh"
-
-if [ "$OS" != "Linux" ]; then
-  echo ""
-  echo "✅ Install complete (code + workspace ready)."
-  warn "Non-Linux system detected ($OS): systemd service not installed (Linux only)."
-  echo "   Start Alfred manually from the repo root:"
-  echo "     WORKSPACE=\"$WORKSPACE_DIR\" node dist/index.js"
-  echo "   Then edit $WORKSPACE_DIR/config/alfred.json with your providers/channels."
-  exit 0
-fi
 
 if ! command -v systemctl >/dev/null 2>&1; then
   echo ""
