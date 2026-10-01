@@ -6,12 +6,22 @@ import { isDatabaseInitialized, getDatabase } from '../db';
 
 const SUPPORTED_SUBDIRS = ['system', 'web', 'files'];
 
+export interface SkillTrigger {
+  type: 'schedule' | 'condition';
+  cron?: string;
+  check_tool?: string;
+  check_command?: string;
+  notify_if?: string;
+  cooldown_hours?: number;
+}
+
 export interface Skill {
   name: string;
   description: string;
   tools?: string[];
   unattended?: boolean;
   approvedActions?: string[];
+  trigger?: SkillTrigger;
   instructions: string;
   filePath: string;
 }
@@ -130,6 +140,7 @@ export class SkillLoader {
     const approvedActions = frontmatter?.approved_actions
       ? String(frontmatter.approved_actions).split(',').map(a => a.trim().toLowerCase()).filter(Boolean)
       : undefined;
+    const trigger = this.parseTrigger(content, frontmatter);
 
     if (!name) {
       getLogger().warn({ file: fileName }, 'Skill file missing title (# heading), skipping');
@@ -146,6 +157,7 @@ export class SkillLoader {
       tools,
       unattended,
       approvedActions: approvedActions && approvedActions.length > 0 ? approvedActions : undefined,
+      trigger,
       instructions,
       filePath: fileName,
     };
@@ -154,6 +166,49 @@ export class SkillLoader {
   private parseUnattendedFlag(value?: string): boolean | undefined {
     if (value === undefined || value === '') return undefined;
     return ['true', 'yes', '1'].includes(String(value).trim().toLowerCase());
+  }
+
+  private parseTrigger(content: string, frontmatter: Record<string, string> | null): SkillTrigger | undefined {
+    const nested = this.parseTriggerBlock(content);
+    const flat = frontmatter || {};
+    const type = (nested.type || flat.trigger_type || '').trim();
+    if (type !== 'schedule' && type !== 'condition') return undefined;
+
+    if (type === 'schedule') {
+      return { type, cron: nested.cron || flat.trigger_cron || undefined };
+    }
+
+    const cooldown = Number(nested.cooldown_hours || flat.trigger_cooldown_hours || '');
+    return {
+      type,
+      check_tool: nested.check_tool || flat.trigger_check_tool || undefined,
+      check_command: nested.check_command || flat.trigger_check_command || undefined,
+      notify_if: nested.notify_if || flat.trigger_notify_if || undefined,
+      cooldown_hours: Number.isFinite(cooldown) && cooldown > 0 ? cooldown : undefined,
+    };
+  }
+
+  private parseTriggerBlock(content: string): Record<string, string> {
+    if (!content.startsWith('---\n')) return {};
+    const end = content.indexOf('\n---\n', 4);
+    if (end < 0) return {};
+    const lines = content.slice(4, end).split('\n');
+    const nested: Record<string, string> = {};
+    let inside = false;
+    for (const line of lines) {
+      if (!inside) {
+        if (/^trigger:\s*$/.test(line)) inside = true;
+        continue;
+      }
+      if (/^\S/.test(line)) break;
+      const idx = line.indexOf(':');
+      if (idx > 0) {
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+        if (key) nested[key] = value;
+      }
+    }
+    return nested;
   }
 
   private parseFrontmatter(content: string): Record<string, string> | null {

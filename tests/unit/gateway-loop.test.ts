@@ -7,6 +7,7 @@ import { ToolHandler } from '../../src/types/tool';
 import { Message, ToolCall } from '../../src/types/llm';
 import { TokenBudgetTracker } from '../../src/services/token-budget';
 import { WORKSPACE_PATHS } from '../../src/utils/workspace';
+import { initializeDatabase, closeDatabase, getDatabase } from '../../src/db';
 
 function buildConfig() {
   return {
@@ -494,30 +495,37 @@ describe('Gateway runAgentLoop', () => {
       ...overrides,
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      const jobDbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-loop-jobs-'));
+      (gateway as any).jobDbDir = jobDbDir;
+      await initializeDatabase(path.join(jobDbDir, 'test.db'));
       allowBudget();
       processSpy = jest.spyOn(gateway, 'processMessage').mockResolvedValue('Good morning ☀️');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       processSpy.mockRestore();
       (gateway as any).lastAgentJobFire.clear();
+      await closeDatabase();
+      fs.rmSync((gateway as any).jobDbDir, { recursive: true, force: true });
     });
 
-    test('should route an agent job through processMessage with a dedicated session and send the reply to the channel', async () => {
+    test('should enqueue an agent job as a scheduled_job task instead of answering directly', async () => {
       await (gateway as any).handleAgentJobFire(makeJob());
 
-      expect(processSpy).toHaveBeenCalledTimes(1);
-      expect(processSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
-        channel: 'telegram',
-        userId: 'u1',
-        content: 'Run the Daily Digest skill',
-        sessionId: 'telegram_u1_jobs',
-        metadata: { source: 'job', jobId: 'job_digest' },
-      }));
+      expect(processSpy).not.toHaveBeenCalled();
+      expect((gateway as any).channelManager.sendMessage).not.toHaveBeenCalled();
 
-      expect((gateway as any).channelManager.sendMessage)
-        .toHaveBeenCalledWith('telegram', 'u1', 'Good morning ☀️', { chat_id: 42 });
+      const rows = getDatabase().prepare('SELECT * FROM tasks').all() as any[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        origin_channel: 'telegram',
+        origin_chat_id: '42',
+        session_id: 'telegram_u1_jobs',
+        kind: 'scheduled_job',
+        input: 'Run the Daily Digest skill',
+        status: 'pending',
+      });
     });
 
     test('should skip an agent job when the min interval has not elapsed', async () => {

@@ -67,4 +67,26 @@ CREATE TABLE IF NOT EXISTS token_usage_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage_log(date);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  origin_channel TEXT NOT NULL,
+  origin_chat_id TEXT,
+  session_id TEXT,
+  kind TEXT NOT NULL,
+  skill_name TEXT,
+  input TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT,
+  error_detail TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  notified_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_origin ON tasks(origin_channel, origin_chat_id);
 `;

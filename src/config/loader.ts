@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { z } from 'zod';
-import { AlfredConfig, ChannelConfig, DatabaseConfig, LoggingConfig, RetentionConfig, SecurityConfig, ToolSpecificConfig, VoiceConfig } from '../types/config';
+import { AlfredConfig, ChannelConfig, DatabaseConfig, EcosystemConfig, LoggingConfig, RetentionConfig, SecurityConfig, ToolSpecificConfig, VoiceConfig } from '../types/config';
 import { LLMConfig, ProviderConfig } from '../types/llm';
 import { resolvePath } from '../utils/workspace';
 
@@ -172,6 +172,15 @@ const RetentionConfigSchema = z.object({
   token_usage_log_days: z.number().positive().default(400),
 }).optional();
 
+const EcosystemConfigSchema = z.object({
+  executor_poll_interval_ms: z.number().positive().default(5000),
+  conductor_poll_interval_ms: z.number().positive().default(3000),
+  sync_fast_path_timeout_ms: z.number().positive().default(8000),
+  max_task_attempts: z.number().int().positive().default(2),
+  orphan_reap_on_startup: z.boolean().default(true),
+  proactive_notify_to: z.object({ channel: z.string().min(1), chat_id: z.string().min(1) }).optional(),
+}).optional();
+
 const AlfredConfigSchema = z.object({
   agent: z.object({
     name: z.string().min(1),
@@ -187,6 +196,7 @@ const AlfredConfigSchema = z.object({
   database: DatabaseConfigSchema,
   memory: MemoryConfigSchema.optional(),
   retention: RetentionConfigSchema,
+  ecosystem: EcosystemConfigSchema,
   logging: LoggingConfigSchema,
   security: SecurityConfigSchema,
   health_monitor: HealthMonitorConfigSchema.optional(),
@@ -309,6 +319,17 @@ export class ConfigLoader {
       command_log_days: 90,
       token_usage_log_days: 400,
       ...this.config.retention,
+    };
+  }
+
+  get ecosystem(): EcosystemConfig {
+    return {
+      executor_poll_interval_ms: 5000,
+      conductor_poll_interval_ms: 3000,
+      sync_fast_path_timeout_ms: 8000,
+      max_task_attempts: 2,
+      orphan_reap_on_startup: true,
+      ...this.config.ecosystem,
     };
   }
 

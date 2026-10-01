@@ -168,6 +168,13 @@
     "command_log_days": 90,
     "token_usage_log_days": 400
   },
+  "ecosystem": {
+    "executor_poll_interval_ms": 5000,
+    "conductor_poll_interval_ms": 3000,
+    "sync_fast_path_timeout_ms": 8000,
+    "max_task_attempts": 2,
+    "orphan_reap_on_startup": true
+  },
   "database": {
     "type": "sqlite",
     "config": {

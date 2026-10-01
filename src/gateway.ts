@@ -24,11 +24,14 @@ import { isThrottleError, parseRequestedTokens, nextContextBudget, MIN_CONTEXT_B
 import { HealthMonitor } from './services/health-monitor';
 import { NotificationService } from './services/notification';
 import { RetentionService } from './services/retention';
+import { Watcher } from './services/watcher';
 import { RateLimiter } from './security/rate-limiter';
 import { SkillLoader } from './services/skill-loader';
 import { SessionRepository } from './db/repositories/sessions';
 import { MessageRepository } from './db/repositories/messages';
 import { CommandRepository } from './db/repositories/commands';
+import { TaskRepository } from './db/repositories/tasks';
+import { Task } from './types/task';
 import { isDatabaseInitialized } from './db/index';
 import { SystemTool } from './tools/system';
 import { VoiceService } from './services/voice';
@@ -40,6 +43,23 @@ interface GatewayRequest {
   id: string;
   method: string;
   params: Record<string, unknown>;
+}
+
+export class FastPathTimeout extends Error {
+  constructor(ms: number) {
+    super(`Fast path timed out after ${ms}ms`);
+    this.name = 'FastPathTimeout';
+  }
+}
+
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new FastPathTimeout(ms)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 interface UnattendedGate {
@@ -107,7 +127,7 @@ export class Gateway {
   private sessions: Map<string, StoredSession> = new Map();
   private sessionStore: SessionStore;
   private jobScheduler: JobSchedulerTool;
-  private jobRunnerTimer: ReturnType<typeof setInterval> | null = null;
+  private watcher: Watcher;
   private sessionPurgeTimer: ReturnType<typeof setInterval> | null = null;
   private lastAgentJobFire: Map<string, number> = new Map();
   private port: number;
@@ -122,6 +142,7 @@ export class Gateway {
   private sessionRepo: SessionRepository;
   private messageRepo: MessageRepository;
   private commandRepo: CommandRepository;
+  private taskRepository: TaskRepository;
   private dbSessionIds: Map<string, string> = new Map();
   private wsSessions: Map<WebSocket, string> = new Map();
   private connectionLimits: Map<string, { count: number; resetAt: number }> = new Map();
@@ -163,6 +184,7 @@ export class Gateway {
     this.sessionRepo = new SessionRepository();
     this.messageRepo = new MessageRepository();
     this.commandRepo = new CommandRepository();
+    this.taskRepository = new TaskRepository();
     this.contextCompressor = new ContextCompressor(config.memoryConfig);
     this.contextCompressor.setLlmRouter(llmRouter);
     this.loadProviderBudgets();
@@ -170,6 +192,17 @@ export class Gateway {
     this.promptCompressor = new PromptCompressor(config.memoryConfig?.prompt_compression);
     this.retentionService = new RetentionService(config.retention);
     this.skillLoader = new SkillLoader(WORKSPACE_PATHS.skills());
+    this.watcher = new Watcher({
+      tasks: this.taskRepository,
+      skillLoader: this.skillLoader,
+      jobScheduler: this.jobScheduler,
+      channelManager: this.channelManager,
+      getHealthMonitor: () => this.healthMonitor,
+      getSeverityThreshold: () => this.config.healthMonitor?.severity_threshold ?? 'warn',
+      onJobFire: (job) => this.handleAgentJobFire(job),
+      runCheck: (command) => this.runCheckCommand(command),
+      getEcosystem: () => this.config.ecosystem,
+    });
 
     const voiceConfig = config.allConfig.voice;
     if (voiceConfig?.enabled) {
@@ -735,10 +768,7 @@ export class Gateway {
   }
 
   private startJobRunner(): void {
-    this.jobRunnerTimer = setInterval(() => {
-      this.jobScheduler.fireDueJobs(this.channelManager, (job) => this.handleAgentJobFire(job));
-    }, 30000);
-    getLogger().info('Job runner started (30s interval)');
+    this.watcher.start();
   }
 
   private startSessionPurge(): void {
@@ -765,25 +795,20 @@ export class Gateway {
   }
 
   private async handleAgentJobFire(job: Job): Promise<void> {
-    const { channel, user_id, chat_id } = job.created_by;
-    const metadata = chat_id !== undefined ? { chat_id } : undefined;
-
     if (await this.skipAgentJob(job)) {
       return;
     }
 
-    const content = await this.processMessage({
-      channel,
-      userId: user_id,
-      userName: undefined,
-      content: job.message,
-      sessionId: `${channel}_${user_id}_jobs`,
-      metadata: { source: 'job', jobId: job.id },
+    const { channel, user_id, chat_id } = job.created_by;
+    await this.taskRepository.create({
+      origin_channel: channel,
+      origin_chat_id: chat_id !== undefined ? String(chat_id) : user_id,
+      session_id: `${channel}_${user_id}_jobs`,
+      kind: 'scheduled_job',
+      input: job.message,
+      max_attempts: this.config.ecosystem.max_task_attempts,
     });
-
-    if (content) {
-      await this.channelManager.sendMessage(channel, user_id, content, metadata);
-    }
+    getLogger().info({ jobId: job.id }, 'Agent job enqueued as task');
   }
 
   private async skipAgentJob(job: Job): Promise<boolean> {
@@ -854,10 +879,19 @@ export class Gateway {
   }
 
   private stopJobRunner(): void {
-    if (this.jobRunnerTimer) {
-      clearInterval(this.jobRunnerTimer);
-      this.jobRunnerTimer = null;
+    this.watcher.stop();
+  }
+
+  private async runCheckCommand(command: string): Promise<string> {
+    const tool = this.tools.find(t => t.tool.name === 'exec');
+    if (!tool) {
+      throw new Error('exec tool is not available for condition checks');
     }
+    const result = await tool.execute({ command });
+    if (!result.success) {
+      throw new Error(result.error || 'condition check command failed');
+    }
+    return result.output;
   }
 
   private async prepareContext(
@@ -1139,7 +1173,7 @@ export class Gateway {
     _onEvent: (event: string, payload: any) => void,
     onLLMEvent?: (event: LLMStreamEvent) => void,
     unattendedGate?: UnattendedGate
-  ): Promise<{ content: string; toolCalls: any[]; usage: any; model?: string }> {
+  ): Promise<{ content: string; toolCalls: any[]; usage: any; model?: string; blockedActions: string[] }> {
     let finalSystem = systemPrompt;
     let messages = contextMessages;
     let finalContent = '';
@@ -1356,7 +1390,7 @@ export class Gateway {
       getLogger().warn({ runId, blocked: Array.from(blockedUnattendedActions) }, 'Unattended run completed with blocked actions');
     }
 
-    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage, model: finalModel };
+    return { content: finalContent, toolCalls: allToolCalls, usage: totalUsage, model: finalModel, blockedActions: Array.from(blockedUnattendedActions) };
   }
 
   private async callWithAdaptiveRetry(
@@ -1854,16 +1888,74 @@ export class Gateway {
     sessionId: string;
     metadata?: Record<string, unknown>;
   }): Promise<string | null> {
+    return (await this.processMessageFull(params)).content;
+  }
+
+  async processMessageFull(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ content: string | null; blockedActions: string[] }> {
+    const isJobTriggered = params.metadata?.source === 'job';
+    const setup = await this.setupSessionContext(params);
+    if (!('session' in setup)) {
+      return { content: setup.text, blockedActions: [] };
+    }
+    const { session, runId, ingestParams } = setup;
+
+    try {
+      this.pushUserMessage(session, params.content);
+      const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+
+      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content) : undefined;
+
+      const { content, blockedActions } = await this.runAgentLoop(
+        session, finalSystem, contextMessages, ingestParams,
+        runId,
+        () => {},
+        undefined,
+        unattendedGate
+      );
+
+      const assistantMsg: Message = { role: 'assistant', content };
+      session.messages.push(assistantMsg);
+      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
+      this.debounceSave(session);
+      await this.checkBudgetAlert();
+      return { content, blockedActions };
+    } catch (error: any) {
+      getLogger().error({ error: error.message, runId }, 'Message processing failed');
+      if (isBudgetBlockedError(error)) {
+        return { content: this.buildDegradedMessage(), blockedActions: [] };
+      }
+      return { content: `I'm sorry. An error occurred: ${error.message}`, blockedActions: [] };
+    }
+  }
+
+  private async setupSessionContext(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<
+    | { session: StoredSession; runId: string; ingestParams: { channel: string; userId: string; metadata?: Record<string, unknown> } }
+    | { text: string }
+  > {
     const isJobTriggered = params.metadata?.source === 'job';
     const rateLimit = this.config.security?.rate_limiting;
     if (rateLimit && !isJobTriggered) {
       if (!this.rateLimiter.checkUser(params.userId, rateLimit.requests_per_user_per_hour || 100)) {
         getLogger().warn({ userId: params.userId }, 'Rate limit exceeded for user');
-        return 'Rate limit exceeded. Please wait before sending another message.';
+        return { text: 'Rate limit exceeded. Please wait before sending another message.' };
       }
       if (!this.rateLimiter.checkChannel(params.channel, rateLimit.requests_per_channel_per_hour || 1000)) {
         getLogger().warn({ channel: params.channel }, 'Rate limit exceeded for channel');
-        return 'Rate limit exceeded for this channel. Please wait.';
+        return { text: 'Rate limit exceeded for this channel. Please wait.' };
       }
     }
 
@@ -1890,47 +1982,86 @@ export class Gateway {
       void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
       const content = this.buildDegradedMessage(degraded.reason);
       void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
-      return content;
+      return { text: content };
     }
 
+    return { session, runId, ingestParams };
+  }
+
+  private pushUserMessage(session: StoredSession, content: string): void {
+    const userMsg: Message = { role: 'user', content };
+    session.messages.push(userMsg);
+    void this.persistMessage(this.dbSessionIds.get(session.id), 'user', content);
+  }
+
+  private async buildPromptContext(
+    session: StoredSession,
+    content: string
+  ): Promise<{ messages: Message[]; systemPrompt: string }> {
+    const [systemPrompt, skillsContext] = await Promise.all([
+      this.promptBuilder.buildSystemPrompt(),
+      this.loadSkillsContext(),
+    ]);
+
+    const finalSkillsPrompt = skillsContext
+      ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
+      : systemPrompt;
+
+    const { messages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, content);
+    return { messages, systemPrompt: finalSystem };
+  }
+
+  async tryFastPath(params: {
+    channel: string;
+    userId: string;
+    userName?: string;
+    content: string;
+    sessionId: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ completed: boolean; text?: string }> {
+    const setup = await this.setupSessionContext(params);
+    if (!('session' in setup)) {
+      return { completed: true, text: setup.text };
+    }
+    const { session } = setup;
+    const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content);
+
+    let probe: LLMResponse;
     try {
-      const userMsg: Message = { role: 'user', content: params.content };
-      session.messages.push(userMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'user', params.content);
-      const [systemPrompt, skillsContext] = await Promise.all([
-        this.promptBuilder.buildSystemPrompt(),
-        this.loadSkillsContext(),
-      ]);
-
-      const finalSkillsPrompt = skillsContext
-        ? `${systemPrompt}\n\n## Available Skills\n${skillsContext}`
-        : systemPrompt;
-
-      const { messages: contextMessages, systemPrompt: finalSystem } = await this.prepareContext(session, finalSkillsPrompt, params.content);
-
-      const unattendedGate = isJobTriggered ? await this.resolveUnattendedGate(params.content) : undefined;
-
-      const { content } = await this.runAgentLoop(
-        session, finalSystem, contextMessages, ingestParams,
-        runId,
-        () => {},
-        undefined,
-        unattendedGate
+      probe = await withTimeout(
+        this.callWithAdaptiveRetry(session, contextMessages, finalSystem, undefined),
+        this.config.ecosystem.sync_fast_path_timeout_ms
       );
-
-      const assistantMsg: Message = { role: 'assistant', content };
-      session.messages.push(assistantMsg);
-      void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', content);
-      this.debounceSave(session);
-      await this.checkBudgetAlert();
-      return content;
     } catch (error: any) {
-      getLogger().error({ error: error.message, runId }, 'Message processing failed');
-      if (isBudgetBlockedError(error)) {
-        return this.buildDegradedMessage();
+      if (error instanceof FastPathTimeout) {
+        return { completed: false };
       }
-      return `I'm sorry. An error occurred: ${error.message}`;
+      return { completed: true, text: (await this.processMessage(params)) ?? undefined };
     }
+
+    if ((probe.tool_calls || []).length > 0) {
+      return { completed: false };
+    }
+
+    const text = probe.content || '';
+    this.pushUserMessage(session, params.content);
+    const assistantMsg: Message = { role: 'assistant', content: text };
+    session.messages.push(assistantMsg);
+    void this.persistMessage(this.dbSessionIds.get(session.id), 'assistant', text);
+    this.debounceSave(session);
+    await this.checkBudgetAlert();
+    return { completed: true, text };
+  }
+
+  async executeTask(task: Task): Promise<{ content: string | null; blockedActions: string[] }> {
+    const unattended = task.kind !== 'user_request';
+    return this.processMessageFull({
+      channel: task.origin_channel,
+      userId: task.origin_chat_id ?? 'unknown',
+      content: task.input,
+      sessionId: task.session_id ?? `${task.origin_channel}_${task.origin_chat_id ?? 'unknown'}`,
+      metadata: unattended ? { source: 'job', taskId: task.id } : { taskId: task.id },
+    });
   }
 
   private async handleMetrics(ws: WebSocket, req: GatewayRequest): Promise<void> {

@@ -103,6 +103,15 @@ export interface RetentionConfig {
   token_usage_log_days: number;
 }
 
+export interface EcosystemConfig {
+  executor_poll_interval_ms: number;
+  conductor_poll_interval_ms: number;
+  sync_fast_path_timeout_ms: number;
+  max_task_attempts: number;
+  orphan_reap_on_startup: boolean;
+  proactive_notify_to?: { channel: string; chat_id: string };
+}
+
 export interface AlfredConfig {
   agent: {
     name: string;
@@ -118,6 +127,7 @@ export interface AlfredConfig {
   database: DatabaseConfig;
   memory?: MemoryConfig;
   retention?: RetentionConfig;
+  ecosystem?: EcosystemConfig;
   logging: LoggingConfig;
   security: SecurityConfig;
   health_monitor?: import('./notification').HealthMonitorConfig;

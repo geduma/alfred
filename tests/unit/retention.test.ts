@@ -48,10 +48,9 @@ describe('RetentionService', () => {
 
   test('should purge tasks table with epoch-ms created_at once it exists', async () => {
     const db = getDatabase();
-    db.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)');
     const oldMs = Date.now() - 100 * 24 * 60 * 60 * 1000;
-    db.prepare('INSERT INTO tasks (id, created_at) VALUES (?, ?)').run('t-old', oldMs);
-    db.prepare('INSERT INTO tasks (id, created_at) VALUES (?, ?)').run('t-fresh', Date.now());
+    db.prepare("INSERT INTO tasks (id, origin_channel, kind, input, created_at) VALUES (?, 'watcher', 'proactive_check', 'x', ?)").run('t-old', oldMs);
+    db.prepare("INSERT INTO tasks (id, origin_channel, kind, input, created_at) VALUES (?, 'watcher', 'proactive_check', 'y', ?)").run('t-fresh', Date.now());
 
     const svc = new RetentionService({ tasks_days: 90 });
     const result = svc.run();
