@@ -134,4 +134,12 @@ export class TaskRepository {
     const row = db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE status = ?').get(status) as any;
     return Number(row?.n) || 0;
   }
+
+  async countPendingBySession(sessionId: string): Promise<number> {
+    const db = getDatabase();
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id = ? AND status IN ('pending', 'running')")
+      .get(sessionId) as any;
+    return Number(row?.n) || 0;
+  }
 }

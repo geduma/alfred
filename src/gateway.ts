@@ -40,6 +40,7 @@ import { VoiceService } from './services/voice';
 import { WORKSPACE_PATHS } from './utils/workspace';
 import { spendingLimitsWarningActive } from './utils/agent-jobs';
 import { PREFERENCE_KEYS, readPreferences, writePreference } from './services/preferences-store';
+import { resolveConductorMessage } from './agent/conductor-messages';
 import { extractPreferencesFromMessage } from './services/preference-extractor';
 import { listQuickActions, runQuickAction } from './services/quick-actions';
 
@@ -828,12 +829,16 @@ export class Gateway {
 
     if (last !== undefined && now - last < AGENT_JOB_MIN_INTERVAL_MS) {
       getLogger().warn({ jobId: job.id, skip_reason: 'min_interval' }, 'Agent job skipped (min interval)');
-      await this.channelManager.sendMessage(
-        job.created_by.channel,
-        job.created_by.user_id,
-        'Skipped: minimum interval between agent runs for this job has not elapsed.',
-        metadata
-      );
+      try {
+        await this.channelManager.sendMessage(
+          job.created_by.channel,
+          job.created_by.user_id,
+          'Skipped: minimum interval between agent runs for this job has not elapsed.',
+          metadata
+        );
+      } catch (error: any) {
+        getLogger().warn({ jobId: job.id, error: error.message }, 'Agent job skip notice failed');
+      }
       return true;
     }
 
@@ -845,12 +850,16 @@ export class Gateway {
           { jobId: job.id, skip_reason: 'budget', remainingPercent: budget.remainingPercent, reason: budget.reason },
           'Agent job skipped (budget)'
         );
-        await this.channelManager.sendMessage(
-          job.created_by.channel,
-          job.created_by.user_id,
-          'Skipped: token budget for this period is exhausted or near its limit.',
-          metadata
-        );
+        try {
+          await this.channelManager.sendMessage(
+            job.created_by.channel,
+            job.created_by.user_id,
+            'Skipped: token budget for this period is exhausted or near its limit.',
+            metadata
+          );
+        } catch (error: any) {
+          getLogger().warn({ jobId: job.id, error: error.message }, 'Agent job skip notice failed');
+        }
         return true;
       }
     }
@@ -1434,6 +1443,8 @@ export class Gateway {
     let callMessages = messages;
     const callSystem = system;
     let tools = this.getToolSchemas();
+    const trailing = messages.length > 0 ? messages[messages.length - 1] : null;
+    const trailingInSession = trailing ? session.messages.includes(trailing) : true;
 
     for (;;) {
       try {
@@ -1478,6 +1489,12 @@ export class Gateway {
         }
         this.ensureToolResponses(session.messages);
         callMessages = session.messages;
+        if (trailing && !trailingInSession && trailing.role === 'user') {
+          const last = callMessages.length > 0 ? callMessages[callMessages.length - 1] : null;
+          if (last !== trailing && (!last || last.role !== 'user' || last.content !== trailing.content)) {
+            callMessages = [...callMessages, trailing];
+          }
+        }
 
         getLogger().warn(
           { attempt, budget: this.getContextBudget() },
@@ -1958,14 +1975,14 @@ export class Gateway {
   > {
     const isJobTriggered = params.metadata?.source === 'job';
     const rateLimit = this.config.security?.rate_limiting;
-    if (rateLimit && !isJobTriggered) {
+    if (rateLimit && !isJobTriggered && !params.metadata?.__rateChecked) {
       if (!this.rateLimiter.checkUser(params.userId, rateLimit.requests_per_user_per_hour || 100)) {
         getLogger().warn({ userId: params.userId }, 'Rate limit exceeded for user');
-        return { text: 'Rate limit exceeded. Please wait before sending another message.' };
+        return { text: resolveConductorMessage('rate.limited_user') };
       }
       if (!this.rateLimiter.checkChannel(params.channel, rateLimit.requests_per_channel_per_hour || 1000)) {
         getLogger().warn({ channel: params.channel }, 'Rate limit exceeded for channel');
-        return { text: 'Rate limit exceeded for this channel. Please wait.' };
+        return { text: resolveConductorMessage('rate.limited_channel') };
       }
     }
 
@@ -2034,6 +2051,20 @@ export class Gateway {
     return { messages, systemPrompt: finalSystem };
   }
 
+  checkRateLimit(channel: string, userId: string): string | null {
+    const rateLimit = this.config.security?.rate_limiting;
+    if (!rateLimit) return null;
+    if (!this.rateLimiter.checkUser(userId, rateLimit.requests_per_user_per_hour || 100)) {
+      getLogger().warn({ userId }, 'Rate limit exceeded for user');
+      return resolveConductorMessage('rate.limited_user');
+    }
+    if (!this.rateLimiter.checkChannel(channel, rateLimit.requests_per_channel_per_hour || 1000)) {
+      getLogger().warn({ channel }, 'Rate limit exceeded for channel');
+      return resolveConductorMessage('rate.limited_channel');
+    }
+    return null;
+  }
+
   async tryFastPath(params: {
     channel: string;
     userId: string;
@@ -2041,25 +2072,30 @@ export class Gateway {
     content: string;
     sessionId: string;
     metadata?: Record<string, unknown>;
-  }): Promise<{ completed: boolean; text?: string }> {
+  }, opts?: { skipRateLimit?: boolean }): Promise<{ completed: boolean; text?: string }> {
+    if (opts?.skipRateLimit) {
+      params = { ...params, metadata: { ...params.metadata, __rateChecked: true } };
+    }
     const setup = await this.setupSessionContext(params);
     if (!('session' in setup)) {
       return { completed: true, text: setup.text };
     }
     const { session } = setup;
     const { messages: contextMessages, systemPrompt: finalSystem } = await this.buildPromptContext(session, params.content, 'fast_probe');
+    const probeMessages: Message[] = [...contextMessages, { role: 'user', content: params.content }];
 
     let probe: LLMResponse;
     try {
       probe = await withTimeout(
-        this.callWithAdaptiveRetry(session, contextMessages, finalSystem, undefined, 'fast_probe'),
+        this.callWithAdaptiveRetry(session, probeMessages, finalSystem, undefined, 'fast_probe'),
         this.config.ecosystem.sync_fast_path_timeout_ms
       );
     } catch (error: any) {
       if (error instanceof FastPathTimeout) {
         return { completed: false };
       }
-      return { completed: true, text: (await this.processMessage(params)) ?? undefined };
+      getLogger().warn({ error: error.message }, 'Fast path probe failed, falling back to task queue');
+      return { completed: false };
     }
 
     if ((probe.tool_calls || []).length > 0) {

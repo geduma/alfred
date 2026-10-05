@@ -13,6 +13,25 @@ const VOICE_REPLY_MARKER = '[AUDIO]';
 const MAX_CAPTION_LENGTH = 1024;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+function splitTelegramMessage(message: string): string[] {
+  if (!message) return [''];
+  if (message.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return [message];
+  const chunks: string[] = [];
+  let rest = message;
+  while (rest.length > TELEGRAM_MAX_MESSAGE_LENGTH) {
+    let cut = TELEGRAM_MAX_MESSAGE_LENGTH;
+    const newline = rest.lastIndexOf('\n', TELEGRAM_MAX_MESSAGE_LENGTH);
+    if (newline > TELEGRAM_MAX_MESSAGE_LENGTH / 2) {
+      cut = newline + 1;
+    }
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
 
 export class TelegramChannel implements Channel {
   private bot: Bot;
@@ -167,10 +186,14 @@ export class TelegramChannel implements Channel {
 
   async sendMessage(userId: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
     const chatId = metadata?.chat_id ? Number(metadata.chat_id) : Number(userId);
+    const chunks = splitTelegramMessage(message);
     try {
-      await this.bot.api.sendMessage(chatId, message);
+      for (const chunk of chunks) {
+        await this.bot.api.sendMessage(chatId, chunk);
+      }
     } catch (error: any) {
-      getLogger().error({ error: error.message, chatId }, 'Telegram sendMessage failed');
+      getLogger().error({ error: error.message, chatId, chunks: chunks.length }, 'Telegram sendMessage failed');
+      throw error;
     }
   }
 
