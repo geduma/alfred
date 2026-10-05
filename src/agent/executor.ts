@@ -3,6 +3,7 @@ import { Task } from '../types/task';
 import { TaskRepository } from '../db/repositories/tasks';
 import { Gateway } from '../gateway';
 import { getLogger } from '../utils/logger';
+import { resolveConductorMessage } from './conductor-messages';
 
 export interface ExecutorDeps {
   gateway: Gateway;
@@ -39,6 +40,10 @@ export class Executor {
 
   private async run(task: Task): Promise<void> {
     const maxAttempts = task.max_attempts || this.getEcosystem().max_task_attempts;
+    getLogger().info(
+      { taskId: task.id, sessionId: task.session_id, attempt: task.attempts, kind: task.kind },
+      'Executor claimed task'
+    );
     let content: string | null;
     let blockedActions: string[];
     try {
@@ -55,16 +60,18 @@ export class Executor {
         return;
       }
       getLogger().error({ taskId: task.id, error: error.message }, 'Executor task failed permanently');
-      await this.tasks.markFailed(task.id, 'La tarea falló tras varios intentos.', error.message);
+      await this.tasks.markFailed(task.id, resolveConductorMessage('task.failed_retries'), error.message);
       return;
     }
 
-    const text = content || 'Listo.';
+    const text = content || resolveConductorMessage('task.done_fallback');
     if (blockedActions.length > 0 && task.kind !== 'user_request') {
       await this.tasks.markNeedsApproval(task.id, text);
+      getLogger().info({ taskId: task.id, blocked: blockedActions }, 'Executor task needs approval');
       return;
     }
     await this.tasks.markDone(task.id, text);
+    getLogger().info({ taskId: task.id, sessionId: task.session_id }, 'Executor task done');
   }
 
   start(): void {

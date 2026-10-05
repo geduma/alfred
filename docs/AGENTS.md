@@ -204,6 +204,21 @@ Alfred must never output secret values in responses or log them. The `exec` tool
   - Skips log `skip_reason: 'min_interval' | 'budget'` and notify the channel; the job simply waits for its next scheduled fire (no retry). If no handler is wired, an agent-mode job falls back to a static reminder.
   - **Unattended contract**: only skills with `unattended: true` in frontmatter may run; only their listed "Approved actions" are allowed; anything else is skipped and reported as "requires approval". Prompt-level contract, not a code-level permission gate.
 
+## Request Pipeline (Conductor/Executor)
+
+Every user message flows through `Conductor.handleMessage` (`src/agent/conductor.ts`):
+
+- **Rate pre-check first**: `Gateway.checkRateLimit()` consumes exactly one quota unit; denials are i18n keys (`rate.limited_*`), never hardcoded literals.
+- **Fast path**: `Gateway.tryFastPath()` probes the LLM with history **plus the current message appended** (never persisted until the probe succeeds without tool calls). Timeout or tool calls → task queue, no session mutation.
+- **Session queue**: if `session_id` already has `pending`/`running` tasks, the message is enqueued with a position reply (`ack.queued_with_position`) and the LLM probe is skipped. FIFO order per session; single global worker (`Executor.tick` + `claimNext`).
+- **Proactive notify**: `Conductor.pollUnnotified()` pushes finished tasks to their `origin_chat_id` with 3 attempts and backoff; `notified_at` is set only after successful delivery, so failures retry on the next tick instead of being lost.
+- **Telegram delivery**: `TelegramChannel.sendMessage()` splits at 4096 chars (newline-aware, sequential, order-preserving) and throws on failure so the conductor can retry. `ChannelManager.sendMessage()` throws on unknown channels.
+- **User-facing strings**: all Conductor/Executor/rate-limit texts live as keys in `src/agent/conductor-messages.ts` (EN/ES via the `language` preference). No Spanish or English literals in logic files.
+
+Key implementation files:
+- `src/agent/conductor.ts`, `src/agent/conductor-messages.ts`, `src/agent/executor.ts`
+- `src/gateway.ts` (`tryFastPath`, `checkRateLimit`, `executeTask`), `src/channels/telegram.ts`, `src/db/repositories/tasks.ts`
+
 ## Session Persistence
 
 - Sessions stored in `workspace/memory/sessions/{sessionId}.json`

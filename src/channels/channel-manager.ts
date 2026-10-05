@@ -42,7 +42,7 @@ export class ChannelManager {
     const channel = this.channels.get(channelName);
     if (!channel) {
       getLogger().warn({ channel: channelName }, 'Channel not found for sending message');
-      return;
+      throw new Error(`Channel not found: ${channelName}`);
     }
     await channel.sendMessage(userId, message, metadata);
   }

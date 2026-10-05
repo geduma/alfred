@@ -31,6 +31,7 @@ describe('Conductor/Executor', () => {
 
   test('fast path should answer directly without touching tasks', async () => {
     const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null),
       tryFastPath: jest.fn().mockResolvedValue({ completed: true, text: 'son las 3' }),
     };
     const conductor = new Conductor({
@@ -52,7 +53,8 @@ describe('Conductor/Executor', () => {
   });
 
   test('tool path should enqueue and acknowledge immediately', async () => {
-    const gateway: any = { tryFastPath: jest.fn().mockResolvedValue({ completed: false }) };
+    const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null), tryFastPath: jest.fn().mockResolvedValue({ completed: false }) };
     const conductor = new Conductor({
       gateway,
       tasks,
@@ -75,6 +77,7 @@ describe('Conductor/Executor', () => {
 
   test('executor should run a pending task to done and conductor should notify once', async () => {
     const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null),
       tryFastPath: jest.fn().mockResolvedValue({ completed: false }),
       executeTask: jest.fn().mockResolvedValue({ content: 'vence en 12 días', blockedActions: [] }),
     };
@@ -101,6 +104,7 @@ describe('Conductor/Executor', () => {
 
   test('executor should retry then fail permanently', async () => {
     const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null),
       executeTask: jest.fn().mockRejectedValue(new Error('llm down')),
     };
     const executor = new Executor({ gateway, tasks, getEcosystem: () => ECO });
@@ -116,6 +120,7 @@ describe('Conductor/Executor', () => {
 
   test('executor should mark needs_approval for blocked watcher tasks only', async () => {
     const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null),
       executeTask: jest.fn().mockResolvedValue({ content: 'blocked text', blockedActions: ['exec'] }),
     };
     const executor = new Executor({ gateway, tasks, getEcosystem: () => ECO });
@@ -133,7 +138,8 @@ describe('Conductor/Executor', () => {
     const created = await tasks.create({ origin_channel: 'cli', origin_chat_id: 'u1', kind: 'user_request', input: 'x' });
     tasks.claimNext();
 
-    const gateway: any = {};
+    const gateway: any = {
+      checkRateLimit: jest.fn().mockReturnValue(null),};
     const sendMessage = jest.fn();
     const conductor = new Conductor({
       gateway,
@@ -150,6 +156,6 @@ describe('Conductor/Executor', () => {
 
     await conductor.pollUnnotified();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage.mock.calls[0][2]).toMatch(/no pudo completarse/);
+    expect(sendMessage.mock.calls[0][2]).toMatch(/could not be completed|no pudo completarse/);
   });
 });

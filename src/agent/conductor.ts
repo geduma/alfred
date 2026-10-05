@@ -5,14 +5,22 @@ import { ChannelManager } from '../channels/channel-manager';
 import { TaskRepository } from '../db/repositories/tasks';
 import { Gateway } from '../gateway';
 import { getLogger } from '../utils/logger';
+import { CONDUCTOR_ACK, resolveConductorMessage } from './conductor-messages';
 
-export const CONDUCTOR_ACK = 'Entendido, trabajando en ello. Le aviso en cuanto termine.';
+export { CONDUCTOR_ACK };
 
 export interface ConductorDeps {
   gateway: Gateway;
   tasks: TaskRepository;
   channelManager: ChannelManager;
   getEcosystem: () => EcosystemConfig;
+}
+
+const NOTIFY_MAX_ATTEMPTS = 3;
+const NOTIFY_BASE_DELAY_MS = 400;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class Conductor {
@@ -30,6 +38,22 @@ export class Conductor {
   }
 
   async handleMessage(msg: ChannelMessage): Promise<string | null> {
+    const denied = this.gateway.checkRateLimit(msg.channel, msg.userId);
+    if (denied) return denied;
+
+    const pending = await this.safeCountPending(msg.sessionId);
+    if (pending > 0) {
+      await this.tasks.create({
+        origin_channel: msg.channel,
+        origin_chat_id: msg.metadata?.chat_id !== undefined ? String(msg.metadata.chat_id) : msg.userId,
+        session_id: msg.sessionId,
+        kind: 'user_request',
+        input: msg.content,
+        max_attempts: this.getEcosystem().max_task_attempts,
+      });
+      return resolveConductorMessage('ack.queued_with_position', { pending });
+    }
+
     const fast = await this.gateway.tryFastPath({
       channel: msg.channel,
       userId: msg.userId,
@@ -37,7 +61,7 @@ export class Conductor {
       content: msg.content,
       sessionId: msg.sessionId,
       metadata: msg.metadata,
-    });
+    }, { skipRateLimit: true });
     if (fast.completed) {
       return fast.text ?? null;
     }
@@ -50,7 +74,17 @@ export class Conductor {
       input: msg.content,
       max_attempts: this.getEcosystem().max_task_attempts,
     });
-    return CONDUCTOR_ACK;
+    return resolveConductorMessage('ack.enqueued');
+  }
+
+  private async safeCountPending(sessionId: string): Promise<number> {
+    try {
+      if (!sessionId) return 0;
+      return await this.tasks.countPendingBySession(sessionId);
+    } catch (error: any) {
+      getLogger().warn({ error: error.message }, 'Conductor pending count failed, falling back to fast path');
+      return 0;
+    }
   }
 
   async pollUnnotified(): Promise<void> {
@@ -64,12 +98,32 @@ export class Conductor {
 
     for (const task of pending) {
       try {
-        await this.notify(task);
+        await this.notifyWithRetry(task);
         await this.tasks.markNotified(task.id);
       } catch (error: any) {
         getLogger().warn({ taskId: task.id, error: error.message }, 'Conductor notify failed for task');
       }
     }
+  }
+
+  private async notifyWithRetry(task: Task): Promise<void> {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= NOTIFY_MAX_ATTEMPTS; attempt++) {
+      try {
+        await this.notify(task);
+        return;
+      } catch (error: any) {
+        lastError = error;
+        getLogger().warn(
+          { taskId: task.id, attempt, error: error.message },
+          'Conductor notify attempt failed'
+        );
+        if (attempt < NOTIFY_MAX_ATTEMPTS) {
+          await delay(NOTIFY_BASE_DELAY_MS * 2 ** (attempt - 1));
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async notify(task: Task): Promise<void> {
@@ -93,12 +147,12 @@ export class Conductor {
 
   private format(task: Task): string {
     if (task.status === 'done') {
-      return task.result || 'Listo.';
+      return task.result || resolveConductorMessage('task.done_fallback');
     }
     if (task.status === 'needs_approval') {
-      return `Necesito su aprobación antes de continuar:\n\n${task.result || ''}`.trim();
+      return resolveConductorMessage('task.needs_approval', { result: task.result || '' }).trim();
     }
-    return `La tarea no pudo completarse: ${task.result || 'error desconocido'}\n¿Reintento?`.trim();
+    return resolveConductorMessage('task.failed', { result: task.result || '' }).trim();
   }
 
   start(): void {
