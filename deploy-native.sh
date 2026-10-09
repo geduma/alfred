@@ -143,6 +143,35 @@ fi
 
 echo "   ✅ Gateway reachable on 127.0.0.1:${PORT}"
 echo ""
+echo "🔁 Final restart (service $SERVICE_NAME)..."
+if [ "$(id -u)" -eq 0 ]; then
+  systemctl restart "$SERVICE_NAME"
+else
+  sudo systemctl restart "$SERVICE_NAME"
+fi
+
+echo ""
+echo "🩺 Verifying gateway after final restart (port $PORT)..."
+HEALTH_OK=0
+FINAL_WAIT=30
+for i in $(seq 1 "$FINAL_WAIT"); do
+  if timeout 1 bash -c "</dev/tcp/127.0.0.1/${PORT}" 2>/dev/null; then
+    HEALTH_OK=1
+    break
+  fi
+  echo "   waiting for gateway on 127.0.0.1:${PORT} (${i}/${FINAL_WAIT})..."
+  sleep 1
+done
+
+if [ "$HEALTH_OK" -ne 1 ]; then
+  echo ""
+  echo "❌ Healthcheck failed after final restart: gateway did not open port ${PORT} within ${FINAL_WAIT}s."
+  echo "   Check logs: journalctl -u $SERVICE_NAME -n 100"
+  exit 1
+fi
+
+echo "   ✅ Gateway reachable on 127.0.0.1:${PORT} after restart"
+echo ""
 echo "✅ Deploy complete! Alfred is running."
 echo "   Workspace: $WORKSPACE_DIR"
 echo "   1. Edit providers/channels: $WORKSPACE_DIR/config/alfred.json"

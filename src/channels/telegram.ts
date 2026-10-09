@@ -10,6 +10,7 @@ import { VoiceConfig } from '../types/config';
 import { WORKSPACE_PATHS } from '../utils/workspace';
 
 const VOICE_REPLY_MARKER = '[AUDIO]';
+const TEXT_REPLY_MARKER = '[TEXT]';
 const MAX_CAPTION_LENGTH = 1024;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
@@ -132,11 +133,12 @@ export class TelegramChannel implements Channel {
         clearInterval(typingInterval);
 
         if (response) {
-          const { text: replyText, synthesizeVoice } = this.shouldSynthesizeVoice(response);
+          const { text: replyText, synthesizeVoice } = this.shouldSynthesizeVoice(response, inputType);
           if (synthesizeVoice && this.voiceService) {
             try {
+              ctx.api.sendChatAction(chatId, 'upload_voice').catch(() => {});
               const audio = await this.voiceService.synthesize(replyText);
-              await this.bot.api.sendAudio(chatId, new InputFile(audio, 'alfred.wav'), {
+              await this.bot.api.sendVoice(chatId, new InputFile(audio, 'alfred.ogg'), {
                 caption: replyText.slice(0, MAX_CAPTION_LENGTH),
               });
             } catch (error: any) {
@@ -201,23 +203,27 @@ export class TelegramChannel implements Channel {
     await this.bot.stop();
   }
 
-  private shouldSynthesizeVoice(response: string): { text: string; synthesizeVoice: boolean } {
-    const markerMatch = response.match(/\n?\[AUDIO\]\s*$/);
+  private shouldSynthesizeVoice(response: string, inputType = 'text'): { text: string; synthesizeVoice: boolean } {
+    const trailingBlock = response.match(/(?:\n?\[(?:AUDIO|TEXT)\]\s*)+$/);
     let text = response;
-    if (markerMatch) {
-      text = response.slice(0, response.length - markerMatch[0].length).trimEnd();
+    let explicit: 'audio' | 'text' | null = null;
+    if (trailingBlock) {
+      const markers = trailingBlock[0].match(/\[(?:AUDIO|TEXT)\]/g) || [];
+      const last = markers[markers.length - 1];
+      explicit = last === '[AUDIO]' ? 'audio' : 'text';
+      text = response.slice(0, response.length - trailingBlock[0].length).trimEnd();
     }
 
     if (!this.voiceService || !this.voiceConfig) {
       return { text, synthesizeVoice: false };
     }
 
-    if (markerMatch && this.voiceService.isExposedToModel()) {
-      return { text, synthesizeVoice: true };
+    if (explicit && this.voiceService.isExposedToModel()) {
+      return { text, synthesizeVoice: explicit === 'audio' };
     }
 
-    return { text, synthesizeVoice: false };
+    return { text, synthesizeVoice: inputType === 'voice' };
   }
 }
 
-export { VOICE_REPLY_MARKER };
+export { VOICE_REPLY_MARKER, TEXT_REPLY_MARKER };

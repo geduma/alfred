@@ -17,37 +17,50 @@ speaks HTTP following the OpenAI convention, so it is agnostic to both provider 
 
 - **Input (STT):** a Telegram voice note is downloaded, transcribed, and the text enters
   Alfred's normal pipeline.
-- **Output (TTS):** on demand only — when the user explicitly asks for an audio reply, the
-  reply is synthesized and sent as audio + text. Requires `voice.tts.expose_to_model: true`.
+- **Output (TTS):** mirror by default — a voice-note input gets a voice reply,
+  a text input gets a text reply. The model only overrides with an explicit
+  marker when the user asks for the opposite modality in the conversation.
+  Requires `voice.tts.expose_to_model: true` for markers to take effect.
 
 The automatic STT/TTS implementation is **code-driven** (the `VoiceService`), not orchestrated
 via tools. This skill covers on-demand behavior, configuration, and manual verification.
 
 ## When to use
 
-- Automatic: the user sends a voice note → it is transcribed on its own. No model action required.
-- **On demand:** the user asks for an audio reply ("send it to me as audio", "reply by voice").
-  The model must signal this with the `[AUDIO]` marker (see protocol below).
+- Automatic: the user sends a voice note → it is transcribed on its own, and the
+  reply defaults to voice. A text message defaults to a text reply. No model action required.
+- **Override:** the user asks for the opposite modality in the conversation
+  ("reply in text only", "send it to me as audio"). The model signals this
+  with the `[TEXT]` / `[AUDIO]` marker (see protocol below).
 
 ## How to use
 
-### On-demand protocol — `[AUDIO]` marker
+### Reply protocol — mirror by default, `[AUDIO]` / `[TEXT]` override
 
-Works when `voice.tts.expose_to_model` is `true` in `alfred.json`. Audio is produced only on
-demand; by default replies are plain text:
+Works when `voice.tts.expose_to_model` is `true` in `alfred.json`. The channel
+decides deterministically: voice input → voice reply, text input → text reply,
+unless the reply ends with an explicit marker:
 
-1. The user explicitly asks for an audio reply.
-2. At the end of your reply, add a final line containing exactly `[AUDIO]`.
-3. The Telegram channel detects the marker, removes it from the text, synthesizes the rest,
-   and sends **audio + text**.
-4. Do not use `[AUDIO]` unless voice is requested, nor in channels that do not support it
-   (CLI/web).
+1. Default mirror needs no marker: answer normally and stop.
+2. To override, end your reply with a final line containing exactly `[AUDIO]`
+   (force a voice reply for a text input) or `[TEXT]` (force a text reply for
+   a voice input). When both appear, the last one wins.
+3. The Telegram channel strips the marker, synthesizes the rest when voice is
+   selected, and sends it as a voice bubble (`sendVoice`) with the text as caption.
+4. Do not use markers in channels that do not support them (CLI/web).
 
-Example reply with audio:
+Example reply forcing audio:
 
 ```
 Sure, here's your summary for the day: two overdue reminders and the system is healthy.
 [AUDIO]
+```
+
+Example reply forcing text:
+
+```
+Here is the code you asked for, in writing so you can copy it.
+[TEXT]
 ```
 
 ### Where to find the voice provider URL
@@ -138,8 +151,8 @@ its base URL: `GET <VOICE_BASE_URL>/models`.
   it. Do not block the conversation because of a voice failure.
 - **Invalid audio:** transcription fails → Alfred replies "I could not understand the audio."
   without going through the pipeline.
-- **`[AUDIO]` ignored:** if `expose_to_model` is `false`, the marker is ignored and the reply
-  is text-only.
+- **`[AUDIO]` / `[TEXT]` ignored:** if `expose_to_model` is `false`, markers are
+  stripped and the reply follows the input modality (voice → voice, text → text).
 
 ## Summary
 
