@@ -37,10 +37,13 @@ if ! grep -qF "~/.alfred:" "$COMPOSE_FILE" && ! grep -qF "$WORKSPACE_DIR:" "$COM
 fi
 
 # 1. Pull latest code
-if [ -d .git ]; then
+if [ -d "$SCRIPT_DIR/.git" ]; then
   echo ""
   echo "📦 Pulling latest changes from git..."
-  git pull
+  if ! git -C "$SCRIPT_DIR" pull; then
+    echo ""
+    echo "⚠️  git pull failed (offline?). Continuing with local code."
+  fi
 else
   echo ""
   echo "⚠️  Not a git repository, skipping git pull"
@@ -97,6 +100,33 @@ echo "   ✅ Gateway reachable on ${HOST}:${PORT}"
 echo ""
 echo "🧹 Cleaning unused Docker images..."
 docker image prune -f
+
+# 6. Final restart — guarantee the container runs the new image.
+echo ""
+echo "🔁 Final restart (container alfred-agent)..."
+docker compose -f "$COMPOSE_FILE" restart alfred
+
+echo ""
+echo "🩺 Verifying gateway after final restart..."
+HEALTH_OK=0
+FINAL_WAIT=30
+for i in $(seq 1 "$FINAL_WAIT"); do
+  if nc -z "$HOST" "$PORT" 2>/dev/null; then
+    HEALTH_OK=1
+    break
+  fi
+  echo "   waiting for gateway on ${HOST}:${PORT} (${i}/${FINAL_WAIT})..."
+  sleep 1
+done
+
+if [ "$HEALTH_OK" -ne 1 ]; then
+  echo ""
+  echo "❌ Healthcheck failed after final restart: gateway did not open port ${PORT} within ${FINAL_WAIT}s."
+  echo "   Check logs: docker compose -f $COMPOSE_FILE logs alfred"
+  exit 1
+fi
+
+echo "   ✅ Gateway reachable on ${HOST}:${PORT} after restart"
 
 echo ""
 echo "✅ Deploy complete! Alfred is running."
