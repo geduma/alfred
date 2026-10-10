@@ -208,15 +208,15 @@ Alfred must never output secret values in responses or log them. The `exec` tool
 
 Every user message flows through `Conductor.handleMessage` (`src/agent/conductor.ts`):
 
-- **Rate pre-check first**: `Gateway.checkRateLimit()` consumes exactly one quota unit; denials are i18n keys (`rate.limited_*`), never hardcoded literals.
+- **Rate pre-check first**: `Gateway.checkRateLimit()` consumes exactly one quota unit; denials are display keys (`rate.limited_*`) resolved via `getDisplay()`, never hardcoded literals.
 - **Fast path**: `Gateway.tryFastPath()` probes the LLM with history **plus the current message appended** (never persisted until the probe succeeds without tool calls). Timeout or tool calls → task queue, no session mutation.
 - **Session queue**: if `session_id` already has `pending`/`running` tasks, the message is enqueued with a position reply (`ack.queued_with_position`) and the LLM probe is skipped. FIFO order per session; single global worker (`Executor.tick` + `claimNext`).
-- **Proactive notify**: `Conductor.pollUnnotified()` pushes finished tasks to their `origin_chat_id` with 3 attempts and backoff; `notified_at` is set only after successful delivery, so failures retry on the next tick instead of being lost.
+- **Proactive notify**: `Conductor.pollUnnotified()` pushes finished tasks to their `origin_chat_id` with 3 attempts and backoff; `notified_at` is set only after successful delivery, so failures retry on the next tick instead of being lost. Overlapping ticks are guarded by a `notifying` flag plus an in-flight set (same pattern as `Executor.busy`), so a slow voice reply is never sent twice.
 - **Telegram delivery**: `TelegramChannel.sendMessage()` splits at 4096 chars (newline-aware, sequential, order-preserving) and throws on failure so the conductor can retry. `ChannelManager.sendMessage()` throws on unknown channels.
-- **User-facing strings**: all Conductor/Executor/rate-limit texts live as keys in `src/agent/conductor-messages.ts` (EN/ES via the `language` preference). No Spanish or English literals in logic files.
+- **User-facing strings**: control texts live as English-only keys in `src/agent/conductor-messages.ts`. Display localization lives outside code in `workspace/config/messages.json` (copy-if-missing from `system/messages.json.example`) via `src/services/display-strings.ts` (`getDisplay()` by `preferences.language`). No Spanish literals in `src/`. The system prompt carries a Response Language rule so the LLM answers in `preferences.language`.
 
 Key implementation files:
-- `src/agent/conductor.ts`, `src/agent/conductor-messages.ts`, `src/agent/executor.ts`
+- `src/agent/conductor.ts`, `src/agent/conductor-messages.ts`, `src/agent/executor.ts`, `src/services/display-strings.ts`
 - `src/gateway.ts` (`tryFastPath`, `checkRateLimit`, `executeTask`), `src/channels/telegram.ts`, `src/db/repositories/tasks.ts`
 
 ## Session Persistence

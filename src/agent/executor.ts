@@ -3,7 +3,7 @@ import { Task } from '../types/task';
 import { TaskRepository } from '../db/repositories/tasks';
 import { Gateway } from '../gateway';
 import { getLogger } from '../utils/logger';
-import { resolveConductorMessage } from './conductor-messages';
+import { getDisplay } from '../services/display-strings';
 
 export interface ExecutorDeps {
   gateway: Gateway;
@@ -60,11 +60,11 @@ export class Executor {
         return;
       }
       getLogger().error({ taskId: task.id, error: error.message }, 'Executor task failed permanently');
-      await this.tasks.markFailed(task.id, resolveConductorMessage('task.failed_retries'), error.message);
+      await this.tasks.markFailed(task.id, getDisplay('task.failed_retries'), error.message);
       return;
     }
 
-    const text = content || resolveConductorMessage('task.done_fallback');
+    const text = content || getDisplay('task.done_fallback');
     if (blockedActions.length > 0 && task.kind !== 'user_request') {
       await this.tasks.markNeedsApproval(task.id, text);
       getLogger().info({ taskId: task.id, blocked: blockedActions }, 'Executor task needs approval');

@@ -67,6 +67,23 @@ async function ensureWorkspace(): Promise<void> {
   }
 
   await copyDefaultSkills();
+  await copyDefaultMessages();
+}
+
+async function copyDefaultMessages(): Promise<void> {
+  const source = path.resolve(__dirname, '../system/messages.json.example');
+  const target = path.join(WORKSPACE_ROOT, 'config', 'messages.json');
+  try {
+    await fs.promises.access(target);
+  } catch {
+    try {
+      await fs.promises.mkdir(path.dirname(target), { recursive: true }).catch(() => {});
+      await fs.promises.copyFile(source, target);
+      console.log(`Created ${target} from template.`);
+    } catch {
+      // skip on failure
+    }
+  }
 }
 
 async function copyDefaultSkills(): Promise<void> {

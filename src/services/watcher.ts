@@ -149,7 +149,7 @@ export class Watcher {
         await this.tasks.create({
           origin_channel: 'watcher',
           kind: 'proactive_check',
-          input: `La tarea ${task.id} (${task.kind}, origen ${task.origin_channel}) falló y no pudo notificarse: ${task.result || 'sin detalle'}. Revisa y avisa.`,
+          input: `Task ${task.id} (${task.kind}, origin ${task.origin_channel}) failed and could not be notified: ${task.result || 'no detail'}. Review and report.`,
           max_attempts: this.getEcosystem().max_task_attempts,
         });
         getLogger().warn({ taskId: task.id }, 'Watcher escalated an unnotified failed task');
@@ -204,7 +204,7 @@ export class Watcher {
           origin_channel: 'watcher',
           kind: 'proactive_check',
           skill_name: skill.name,
-          input: `Condición cumplida para la skill "${skill.name}" (${skill.trigger.notify_if}). Ejecuta la skill "${skill.name}".`,
+          input: `Condition met for skill "${skill.name}" (${skill.trigger.notify_if}). Run skill "${skill.name}".`,
           max_attempts: this.getEcosystem().max_task_attempts,
         });
       } catch (error: any) {

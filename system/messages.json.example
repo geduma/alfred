@@ -1,0 +1,10 @@
+{
+  "ack.enqueued": "En seguida, señor...",
+  "ack.queued_with_position": "En seguida, señor... ({pending})",
+  "task.done_fallback": "Listo.",
+  "task.needs_approval": "Necesito su aprobación antes de continuar:\n\n{result}",
+  "task.failed": "La tarea no pudo completarse: {result}\n¿Reintento?",
+  "task.failed_retries": "La tarea falló tras varios intentos.",
+  "rate.limited_user": "Límite de peticiones excedido. Espere antes de enviar otro mensaje.",
+  "rate.limited_channel": "Límite de peticiones excedido para este canal. Espere."
+}
