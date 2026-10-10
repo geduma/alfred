@@ -43,6 +43,11 @@ function runMigrations(db: Database.Database): void {
       db.exec("ALTER TABLE token_usage_log ADD COLUMN source TEXT NOT NULL DEFAULT 'interactive'");
       getLogger().info('Database migrated: token_usage_log.source added');
     }
+    const taskCols = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
+    if (taskCols.length > 0 && !taskCols.some(c => c.name === 'input_type')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN input_type TEXT NOT NULL DEFAULT 'text'");
+      getLogger().info('Database migrated: tasks.input_type added');
+    }
   } catch (error: any) {
     getLogger().warn({ error: error.message }, 'Database migration check failed, continuing');
   }

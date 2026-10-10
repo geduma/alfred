@@ -11,6 +11,7 @@ function toTask(row: any): Task {
     kind: row.kind,
     skill_name: row.skill_name ?? null,
     input: row.input,
+    input_type: row.input_type ?? 'text',
     status: row.status,
     result: row.result ?? null,
     error_detail: row.error_detail ?? null,
@@ -29,8 +30,8 @@ export class TaskRepository {
     const id = randomUUID();
     const now = Date.now();
     db.prepare(
-      `INSERT INTO tasks (id, origin_channel, origin_chat_id, session_id, kind, skill_name, input, status, attempts, max_attempts, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`
+      `INSERT INTO tasks (id, origin_channel, origin_chat_id, session_id, kind, skill_name, input, input_type, status, attempts, max_attempts, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`
     ).run(
       id,
       input.origin_channel,
@@ -39,6 +40,7 @@ export class TaskRepository {
       input.kind,
       input.skill_name ?? null,
       input.input,
+      input.input_type ?? 'text',
       input.max_attempts ?? 1,
       now
     );

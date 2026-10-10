@@ -12,12 +12,12 @@ export type ConductorMessageKey =
 
 const MESSAGES: Record<ConductorMessageKey, { en: string; es: string }> = {
   'ack.enqueued': {
-    en: 'Understood, working on it. I will notify you as soon as it is done.',
-    es: 'Entendido, trabajando en ello. Le aviso en cuanto termine.',
+    en: 'Right away, sir. I will notify you.',
+    es: 'Enseguida, señor. Le aviso.',
   },
   'ack.queued_with_position': {
-    en: 'Understood, working on it. {pending} ahead in queue — I will notify you as soon as each finishes.',
-    es: 'Entendido, trabajando en ello. {pending} delante en cola — le aviso en cuanto termine cada una.',
+    en: 'Right away, sir. {pending} ahead in queue — I will notify you.',
+    es: 'Enseguida, señor. {pending} en cola — le aviso.',
   },
   'task.done_fallback': {
     en: 'Done.',
@@ -68,3 +68,18 @@ export function resolveConductorMessage(key: ConductorMessageKey, vars?: Record<
 }
 
 export const CONDUCTOR_ACK = MESSAGES['ack.enqueued'].en;
+
+const CONTROL_PATTERNS: RegExp[] = (Object.keys(MESSAGES) as ConductorMessageKey[]).flatMap((key) =>
+  (['en', 'es'] as const).map((lang) => {
+    const template = MESSAGES[key][lang]
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\\\{[^}]+\\\}/g, '.+');
+    return new RegExp(`^${template}$`);
+  })
+);
+
+export function isControlMessage(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+  return CONTROL_PATTERNS.some((pattern) => pattern.test(normalized));
+}

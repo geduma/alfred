@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
+import { isControlMessage } from '../agent/conductor-messages';
 import { getLogger } from '../utils/logger';
 import { VoiceService } from '../services/voice';
 import { VoiceConfig } from '../types/config';
@@ -133,21 +134,7 @@ export class TelegramChannel implements Channel {
         clearInterval(typingInterval);
 
         if (response) {
-          const { text: replyText, synthesizeVoice } = this.shouldSynthesizeVoice(response, inputType);
-          if (synthesizeVoice && this.voiceService) {
-            try {
-              ctx.api.sendChatAction(chatId, 'upload_voice').catch(() => {});
-              const audio = await this.voiceService.synthesize(replyText);
-              await this.bot.api.sendVoice(chatId, new InputFile(audio, 'alfred.ogg'), {
-                caption: replyText.slice(0, MAX_CAPTION_LENGTH),
-              });
-            } catch (error: any) {
-              getLogger().error({ error: error.message, userId }, 'Voice reply synthesis failed, falling back to text');
-              await this.sendMessage(userId, replyText, { chat_id: chatId });
-            }
-          } else {
-            await this.sendMessage(userId, replyText, { chat_id: chatId });
-          }
+          await this.sendMessage(userId, response, { chat_id: chatId, input_type: inputType });
         } else {
           getLogger().warn({ userId }, 'Empty response from handler');
           await ctx.reply("I'm sorry, I didn't get a response. Could you repeat that?");
@@ -188,7 +175,21 @@ export class TelegramChannel implements Channel {
 
   async sendMessage(userId: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
     const chatId = metadata?.chat_id ? Number(metadata.chat_id) : Number(userId);
-    const chunks = splitTelegramMessage(message);
+    const inputType = metadata?.input_type === 'voice' ? 'voice' : 'text';
+    const { text: replyText, synthesizeVoice } = this.shouldSynthesizeVoice(message, inputType);
+    if (synthesizeVoice && this.voiceService) {
+      try {
+        await this.bot.api.sendChatAction(chatId, 'upload_voice').catch(() => {});
+        const audio = await this.voiceService.synthesize(replyText);
+        await this.bot.api.sendVoice(chatId, new InputFile(audio, 'alfred.ogg'), {
+          caption: replyText.slice(0, MAX_CAPTION_LENGTH),
+        });
+        return;
+      } catch (error: any) {
+        getLogger().error({ error: error.message, chatId }, 'Voice reply synthesis failed, falling back to text');
+      }
+    }
+    const chunks = splitTelegramMessage(replyText);
     try {
       for (const chunk of chunks) {
         await this.bot.api.sendMessage(chatId, chunk);
@@ -204,6 +205,9 @@ export class TelegramChannel implements Channel {
   }
 
   private shouldSynthesizeVoice(response: string, inputType = 'text'): { text: string; synthesizeVoice: boolean } {
+    if (isControlMessage(response)) {
+      return { text: response, synthesizeVoice: false };
+    }
     const trailingBlock = response.match(/(?:\n?\[(?:AUDIO|TEXT)\]\s*)+$/);
     let text = response;
     let explicit: 'audio' | 'text' | null = null;
