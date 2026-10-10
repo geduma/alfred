@@ -6,6 +6,13 @@ import { WORKSPACE_PATHS } from '../utils/workspace';
 const DEFAULT_BASE_PROMPT_PATH = path.resolve(__dirname, '../../system/system-prompt-base.txt');
 const RULES_PATH = path.resolve(__dirname, '../../system/alfred-rules.md');
 const PREFERENCES_PATH = WORKSPACE_PATHS.preferences();
+const LANGUAGE_RULE = [
+  '## Response Language',
+  'Always respond in the language set in preferences.language (default English).',
+  'System control strings are stored in English only; translate them to the user language before showing them.',
+  'Never expose an English control string verbatim to a non-English user.',
+  'Never invent a voice tool; the only audio mechanism is the trailing [AUDIO] marker.',
+].join('\n');
 const MEMORY_PATH = WORKSPACE_PATHS.memoryFile();
 
 export class PromptBuilder {
@@ -54,6 +61,8 @@ export class PromptBuilder {
     if (rules) {
       systemPrompt += `\n\n---\n\n${rules}`;
     }
+
+    systemPrompt += `\n\n---\n\n${LANGUAGE_RULE}`;
 
     if (skillsContext) {
       systemPrompt += `\n\n## Available Skills\n${skillsContext}`;

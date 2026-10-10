@@ -5,6 +5,7 @@ import path from 'path';
 import { Channel, ChannelMessage } from '../types/channel';
 import { ChannelManager } from './channel-manager';
 import { isControlMessage } from '../agent/conductor-messages';
+import { isDisplayControlMessage } from '../services/display-strings';
 import { getLogger } from '../utils/logger';
 import { VoiceService } from '../services/voice';
 import { VoiceConfig } from '../types/config';
@@ -205,7 +206,7 @@ export class TelegramChannel implements Channel {
   }
 
   private shouldSynthesizeVoice(response: string, inputType = 'text'): { text: string; synthesizeVoice: boolean } {
-    if (isControlMessage(response)) {
+    if (isControlMessage(response) || isDisplayControlMessage(response)) {
       return { text: response, synthesizeVoice: false };
     }
     const trailingBlock = response.match(/(?:\n?\[(?:AUDIO|TEXT)\]\s*)+$/);

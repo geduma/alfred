@@ -40,7 +40,7 @@ import { VoiceService } from './services/voice';
 import { WORKSPACE_PATHS } from './utils/workspace';
 import { spendingLimitsWarningActive } from './utils/agent-jobs';
 import { PREFERENCE_KEYS, readPreferences, writePreference } from './services/preferences-store';
-import { resolveConductorMessage } from './agent/conductor-messages';
+import { getDisplay } from './services/display-strings';
 import { extractPreferencesFromMessage } from './services/preference-extractor';
 import { listQuickActions, runQuickAction } from './services/quick-actions';
 
@@ -1978,11 +1978,11 @@ export class Gateway {
     if (rateLimit && !isJobTriggered && !params.metadata?.__rateChecked) {
       if (!this.rateLimiter.checkUser(params.userId, rateLimit.requests_per_user_per_hour || 100)) {
         getLogger().warn({ userId: params.userId }, 'Rate limit exceeded for user');
-        return { text: resolveConductorMessage('rate.limited_user') };
+        return { text: getDisplay('rate.limited_user') };
       }
       if (!this.rateLimiter.checkChannel(params.channel, rateLimit.requests_per_channel_per_hour || 1000)) {
         getLogger().warn({ channel: params.channel }, 'Rate limit exceeded for channel');
-        return { text: resolveConductorMessage('rate.limited_channel') };
+        return { text: getDisplay('rate.limited_channel') };
       }
     }
 
@@ -2056,11 +2056,11 @@ export class Gateway {
     if (!rateLimit) return null;
     if (!this.rateLimiter.checkUser(userId, rateLimit.requests_per_user_per_hour || 100)) {
       getLogger().warn({ userId }, 'Rate limit exceeded for user');
-      return resolveConductorMessage('rate.limited_user');
+      return getDisplay('rate.limited_user');
     }
     if (!this.rateLimiter.checkChannel(channel, rateLimit.requests_per_channel_per_hour || 1000)) {
       getLogger().warn({ channel }, 'Rate limit exceeded for channel');
-      return resolveConductorMessage('rate.limited_channel');
+      return getDisplay('rate.limited_channel');
     }
     return null;
   }

@@ -5,7 +5,8 @@ import { ChannelManager } from '../channels/channel-manager';
 import { TaskRepository } from '../db/repositories/tasks';
 import { Gateway } from '../gateway';
 import { getLogger } from '../utils/logger';
-import { CONDUCTOR_ACK, resolveConductorMessage } from './conductor-messages';
+import { CONDUCTOR_ACK } from './conductor-messages';
+import { getDisplay } from '../services/display-strings';
 
 export { CONDUCTOR_ACK };
 
@@ -29,6 +30,8 @@ export class Conductor {
   private channelManager: ChannelManager;
   private getEcosystem: () => EcosystemConfig;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private notifying = false;
+  private inFlight = new Set<string>();
 
   constructor(deps: ConductorDeps) {
     this.gateway = deps.gateway;
@@ -53,7 +56,7 @@ export class Conductor {
         input_type: inputType,
         max_attempts: this.getEcosystem().max_task_attempts,
       });
-      return resolveConductorMessage('ack.queued_with_position', { pending });
+      return getDisplay('ack.queued_with_position', { pending });
     }
 
     const fast = await this.gateway.tryFastPath({
@@ -77,7 +80,7 @@ export class Conductor {
       input_type: inputType,
       max_attempts: this.getEcosystem().max_task_attempts,
     });
-    return resolveConductorMessage('ack.enqueued');
+    return getDisplay('ack.enqueued');
   }
 
   private async safeCountPending(sessionId: string): Promise<number> {
@@ -91,21 +94,31 @@ export class Conductor {
   }
 
   async pollUnnotified(): Promise<void> {
-    let pending: Task[];
+    if (this.notifying) return;
+    this.notifying = true;
     try {
-      pending = await this.tasks.getUnnotified();
-    } catch (error: any) {
-      getLogger().warn({ error: error.message }, 'Conductor notify poll failed');
-      return;
-    }
-
-    for (const task of pending) {
+      let pending: Task[];
       try {
-        await this.notifyWithRetry(task);
-        await this.tasks.markNotified(task.id);
+        pending = await this.tasks.getUnnotified();
       } catch (error: any) {
-        getLogger().warn({ taskId: task.id, error: error.message }, 'Conductor notify failed for task');
+        getLogger().warn({ error: error.message }, 'Conductor notify poll failed');
+        return;
       }
+
+      for (const task of pending) {
+        if (this.inFlight.has(task.id)) continue;
+        this.inFlight.add(task.id);
+        try {
+          await this.notifyWithRetry(task);
+          await this.tasks.markNotified(task.id);
+        } catch (error: any) {
+          getLogger().warn({ taskId: task.id, error: error.message }, 'Conductor notify failed for task');
+        } finally {
+          this.inFlight.delete(task.id);
+        }
+      }
+    } finally {
+      this.notifying = false;
     }
   }
 
@@ -152,12 +165,12 @@ export class Conductor {
 
   private format(task: Task): string {
     if (task.status === 'done') {
-      return task.result || resolveConductorMessage('task.done_fallback');
+      return task.result || getDisplay('task.done_fallback');
     }
     if (task.status === 'needs_approval') {
-      return resolveConductorMessage('task.needs_approval', { result: task.result || '' }).trim();
+      return getDisplay('task.needs_approval', { result: task.result || '' }).trim();
     }
-    return resolveConductorMessage('task.failed', { result: task.result || '' }).trim();
+    return getDisplay('task.failed', { result: task.result || '' }).trim();
   }
 
   start(): void {

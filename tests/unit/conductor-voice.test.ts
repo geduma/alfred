@@ -5,6 +5,7 @@ import { initializeDatabase, closeDatabase, getDatabase } from '../../src/db';
 import { TaskRepository } from '../../src/db/repositories/tasks';
 import { Conductor } from '../../src/agent/conductor';
 import { resolveConductorMessage, isControlMessage } from '../../src/agent/conductor-messages';
+import { getDisplay, isDisplayControlMessage, isControlMessageAny, clearDisplayCache } from '../../src/services/display-strings';
 import { TelegramChannel } from '../../src/channels/telegram';
 import { Executor } from '../../src/agent/executor';
 
@@ -43,6 +44,7 @@ describe('voice async + ack', () => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-async-'));
     await initializeDatabase(path.join(testDir, 'test.db'));
     tasks = new TaskRepository();
+    clearDisplayCache();
   });
 
   afterEach(async () => {
@@ -51,21 +53,29 @@ describe('voice async + ack', () => {
   });
 
   test('ack message is brief', () => {
-    expect(resolveConductorMessage('ack.enqueued')).toBe('Right away, sir. I will notify you.');
+    mockLang = 'en';
+    expect(resolveConductorMessage('ack.enqueued')).toBe('Right away, sir...');
     expect(resolveConductorMessage('ack.queued_with_position', { pending: 2 })).toContain('2');
     expect(resolveConductorMessage('ack.enqueued').length).toBeLessThan(60);
   });
 
-  test('control messages are detected in both languages', () => {
+  test('control messages are detected (canonical EN + display ES)', () => {
     mockLang = 'en';
     const ackEn = resolveConductorMessage('ack.enqueued');
     const queuedEn = resolveConductorMessage('ack.queued_with_position', { pending: 3 });
+    expect(isControlMessage(ackEn)).toBe(true);
+    expect(isControlMessage(queuedEn)).toBe(true);
     mockLang = 'es';
-    const ackEs = resolveConductorMessage('ack.enqueued');
-    const queuedEs = resolveConductorMessage('ack.queued_with_position', { pending: 3 });
+    clearDisplayCache();
+    const ackEs = getDisplay('ack.enqueued');
+    const queuedEs = getDisplay('ack.queued_with_position', { pending: 3 });
+    expect(isControlMessage(ackEs)).toBe(false);
+    expect(isDisplayControlMessage(ackEs)).toBe(true);
+    expect(isDisplayControlMessage(queuedEs)).toBe(true);
     mockLang = 'en';
+    clearDisplayCache();
     for (const text of [ackEn, queuedEn, ackEs, queuedEs]) {
-      expect(isControlMessage(text)).toBe(true);
+      expect(isControlMessageAny(text)).toBe(true);
     }
     expect(isControlMessage(resolveConductorMessage('task.done_fallback'))).toBe(true);
     expect(isControlMessage('')).toBe(false);
@@ -77,8 +87,10 @@ describe('voice async + ack', () => {
     const decide = (text: string, inputType: string): boolean =>
       (channel as any).shouldSynthesizeVoice(text, inputType).synthesizeVoice;
     mockLang = 'es';
-    const ackEs = resolveConductorMessage('ack.enqueued');
+    clearDisplayCache();
+    const ackEs = getDisplay('ack.enqueued');
     mockLang = 'en';
+    clearDisplayCache();
     expect(decide(resolveConductorMessage('ack.enqueued'), 'voice')).toBe(false);
     expect(decide(ackEs, 'voice')).toBe(false);
     expect(decide('Regular answer', 'voice')).toBe(true);
