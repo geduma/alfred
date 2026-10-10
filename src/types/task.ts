@@ -10,6 +10,7 @@ export interface Task {
   kind: TaskKind;
   skill_name: string | null;
   input: string;
+  input_type: string;
   status: TaskStatus;
   result: string | null;
   error_detail: string | null;
@@ -28,5 +29,6 @@ export interface NewTask {
   kind: TaskKind;
   skill_name?: string | null;
   input: string;
+  input_type?: string;
   max_attempts?: number;
 }

@@ -42,12 +42,15 @@ decides deterministically: voice input → voice reply, text input → text repl
 unless the reply ends with an explicit marker:
 
 1. Default mirror needs no marker: answer normally and stop.
-2. To override, end your reply with a final line containing exactly `[AUDIO]`
+2. There is no voice tool. Never call, search for, or mention a tool to produce
+   audio — the TTS step runs in the channel code, outside your tools. The ONLY
+   mechanism for a voice reply is the trailing marker described here.
+3. To override, end your reply with a final line containing exactly `[AUDIO]`
    (force a voice reply for a text input) or `[TEXT]` (force a text reply for
    a voice input). When both appear, the last one wins.
-3. The Telegram channel strips the marker, synthesizes the rest when voice is
+4. The Telegram channel strips the marker, synthesizes the rest when voice is
    selected, and sends it as a voice bubble (`sendVoice`) with the text as caption.
-4. Do not use markers in channels that do not support them (CLI/web).
+5. Do not use markers in channels that do not support them (CLI/web).
 
 Example reply forcing audio:
 

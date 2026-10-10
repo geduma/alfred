@@ -42,6 +42,7 @@ export class Conductor {
     if (denied) return denied;
 
     const pending = await this.safeCountPending(msg.sessionId);
+    const inputType = msg.metadata?.input_type === 'voice' ? 'voice' : 'text';
     if (pending > 0) {
       await this.tasks.create({
         origin_channel: msg.channel,
@@ -49,6 +50,7 @@ export class Conductor {
         session_id: msg.sessionId,
         kind: 'user_request',
         input: msg.content,
+        input_type: inputType,
         max_attempts: this.getEcosystem().max_task_attempts,
       });
       return resolveConductorMessage('ack.queued_with_position', { pending });
@@ -72,6 +74,7 @@ export class Conductor {
       session_id: msg.sessionId,
       kind: 'user_request',
       input: msg.content,
+      input_type: inputType,
       max_attempts: this.getEcosystem().max_task_attempts,
     });
     return resolveConductorMessage('ack.enqueued');
@@ -141,7 +144,9 @@ export class Conductor {
       getLogger().warn({ taskId: task.id }, 'Conductor skips notify: watcher-only task');
       return;
     }
-    const metadata = task.origin_channel === 'telegram' ? { chat_id: task.origin_chat_id } : undefined;
+    const metadata = task.origin_channel === 'telegram'
+      ? { chat_id: task.origin_chat_id, input_type: task.input_type || 'text' }
+      : undefined;
     await this.channelManager.sendMessage(task.origin_channel, task.origin_chat_id, this.format(task), metadata);
   }
 

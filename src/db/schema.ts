@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   kind TEXT NOT NULL,
   skill_name TEXT,
   input TEXT NOT NULL,
+  input_type TEXT NOT NULL DEFAULT 'text',
   status TEXT NOT NULL DEFAULT 'pending',
   result TEXT,
   error_detail TEXT,
